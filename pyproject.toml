@@ -1,0 +1,7 @@
+[project]
+name = "church-legal-db"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []

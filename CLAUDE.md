@@ -1,0 +1,39 @@
+# Code Guidelines
+Always adhere to the code guilines skill
+
+## Planning
+Always include a verifiable defintion of done when planning out code changes.
+
+## ATM Cli
+This project uses the ATM CLI. Always start you work, if not told otherwise, to explore the task with ATM, this should give you the best setup of what to do and look for.
+
+## Code Guidelines
+Always use ur code guidline skill when writing or review code
+
+## Updating documentation
+Always update the documentation after changes to reflect the new workings of the program. When design descions are made it should be lcearly astated for futurew agents. Documentation is housed in the `documentation directory`
+
+## Astral
+This project uses the astral tools uv and ruff. IMPORTANT always use `uv` when doing python operations
+
+## Definition of done
+Unless stated otherwise in the atm skill a task is done when:
+- the requested change is implemented or the question is answered,
+  - verification is provided:
+  - build attempted (when source code changed),
+  - linting run (when source code changed),
+  - errors/warnings addressed (or explicitly listed and agreed as out-of-scope),
+  - plus tests/typecheck as applicable,
+- documentation is updated exhaustively for impacted areas,
+- impact is explained (what changed, where, why)
+
+## Documentation
+IMPORTANT: Prefer retrival over pretrained knowledge.
+- [PRD](documentation/specs/PRD.md) — System requirements, acceptance criteria, scope. Read before any feature work.
+- [Architecture](documentation/specs/ARCHITECTURE.md) — Pipeline, storage, retrieval agent, GCP layout, local dev. Read before infra or retrieval decisions.
+- [Data Model](documentation/specs/DATA_MODEL.md) — Tables, indexes, constraints, design rationale. Read before any migration or model code.
+- [Backend Design](documentation/design/BACKEND_DESIGN.md) — Repo structure, layered architecture, dependency graph, AI package. Read before creating packages or services.
+- [Frontend Design](documentation/design/FRONTEND_DESIGN.md) — Components, SSE contract, API shape, state management. Read before any frontend work.
+- [Testing Strategy](documentation/design/TESTING.md) — Unit and integration test approach, what to test, what to mock. Read before writing any tests.
+- [Local Dev Environment](documentation/design/LOCAL_DEV.md) — Docker Compose setup, env config, interface mapping, dev workflow. Read before setting up or modifying the local environment.
+
