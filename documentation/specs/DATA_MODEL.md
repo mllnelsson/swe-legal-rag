@@ -1,0 +1,125 @@
+# Data Model Spec: Överklagandenämnden Decision Search Tool
+
+## Core Tables
+
+### `documents`
+
+The registry. One row per PDF. Tracks both identity and ingestion progress.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| source_url | TEXT | Original URL from public API. Unique constraint — dedup key. |
+| gcs_uri | TEXT | Nullable. Set after download step |
+| raw_text | TEXT | Nullable. Set after parse step |
+| summary | TEXT | Nullable. Set after chunking step (document-level summary) |
+| case_number | VARCHAR | Nullable. Set after metadata step |
+| decision_date | DATE | Nullable. Set after metadata step |
+| decision_outcome | VARCHAR | Nullable. Set after metadata step |
+| category | VARCHAR | Nullable. Set after metadata step |
+| created_at | TIMESTAMPTZ | Row creation |
+| updated_at | TIMESTAMPTZ | Last modification |
+
+### `tasks`
+
+One row per document per pipeline step. Each task represents a unit of work: "process document X through step Y." Queue messages map 1:1 to task rows.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| document_id | UUID | FK → documents |
+| step | VARCHAR | `crawl`, `download`, `parse`, `metadata`, `extract`, `chunk`, `embed` |
+| status | VARCHAR | `pending`, `processing`, `completed`, `failed` |
+| error_message | TEXT | Nullable. Populated on failure |
+| started_at | TIMESTAMPTZ | Nullable |
+| completed_at | TIMESTAMPTZ | Nullable |
+
+Unique constraint on `(document_id, step)`. Resumability: query for tasks where a given step is not `completed`.
+
+### `chunks`
+
+The retrieval layer. Each chunk is a unit of search and retrieval.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| document_id | UUID | FK → documents |
+| chunk_index | INTEGER | Position within document (ordering) |
+| chunk_text | TEXT | Raw chunk content. Displayed in citations. |
+| contextual_text | TEXT | Summary + chunk text. Used for embedding. Never shown to end users. |
+| embedding | VECTOR(dims) | pgvector. Dimension TBD by model choice (e.g. 768 for e5-multilingual, 1024 for Cohere) |
+| tsv | TSVECTOR | Generated from chunk_text using Swedish text search config. For BM25-style search. |
+| created_at | TIMESTAMPTZ | Row creation |
+
+### `entities`
+
+Extracted entities from the corpus. Legal concepts, roles, parishes, regulations. Enables graph-style pre-filtering without a graph database.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| name | VARCHAR | Normalized entity name |
+| type | VARCHAR | `legal_concept`, `role`, `parish`, `regulation` |
+| created_at | TIMESTAMPTZ | Row creation |
+
+Unique constraint on `(name, type)`.
+
+### `document_entities`
+
+Junction table. Maps entities to documents with relevance weight.
+
+| Column | Type | Notes |
+|---|---|---|
+| document_id | UUID | FK → documents |
+| entity_id | UUID | FK → entities |
+| relevance | VARCHAR | `primary` (central to decision) or `mentioned` (referenced) |
+
+Composite PK on `(document_id, entity_id)`.
+
+### `document_references`
+
+Cross-citations between decisions. Captures when one decision references another as precedent.
+
+| Column | Type | Notes |
+|---|---|---|
+| source_document_id | UUID | FK → documents (the citing decision) |
+| target_document_id | UUID | FK → documents (the cited decision) |
+| reference_context | TEXT | Nullable. The sentence/context in which the citation occurs |
+
+Composite PK on `(source_document_id, target_document_id)`.
+
+### `sessions` (optional)
+
+Conversation history for follow-up support. Can live in-memory or Redis instead if cross-restart persistence isn't needed.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| created_at | TIMESTAMPTZ | |
+| last_active_at | TIMESTAMPTZ | For TTL cleanup |
+| history | JSONB | Array of message objects `[{role, content, timestamp}]` |
+
+## Indexes
+
+| Table | Index Type | Column(s) | Purpose |
+|---|---|---|---|
+| chunks | HNSW | embedding | Approximate nearest neighbor vector search |
+| chunks | GIN | tsv | Full-text search on Swedish lexemes |
+| chunks | btree | document_id | Fast joins back to document metadata |
+| tasks | btree | (document_id, step) | Unique constraint + lookup by document |
+| tasks | btree | (step, status) | Query for retryable/pending tasks per step |
+| documents | btree | source_url | Unique constraint — dedup on crawl |
+| entities | btree | (name, type) | Unique constraint + lookup by entity |
+| entities | btree | type | Filter entities by type |
+| document_entities | btree | entity_id | Find all documents for a given entity |
+| document_entities | btree | document_id | Find all entities for a given document |
+| document_references | btree | target_document_id | Find all decisions that cite a given decision |
+
+## Design Notes
+
+- **Nullable metadata fields:** Each pipeline step fills in its columns progressively. A document with `gcs_uri` set but `raw_text` null means download succeeded but parsing hasn't run yet. Combined with `tasks` this gives full observability.
+- **`contextual_text` vs `chunk_text`:** Stored separately. `chunk_text` is what the user sees in citations. `contextual_text` (document summary prepended) is what gets embedded and searched against.
+- **tsvector Swedish config:** Postgres supports Swedish stemming and stop words via `to_tsvector('swedish', chunk_text)`. Set on insert or via generated column.
+- **No soft deletes.** If a document needs reprocessing, wipe its chunks, reset its tasks. Keep it simple at this scale.
+- **Task-queue alignment:** When a pipeline step publishes to the next Pub/Sub topic, it also inserts a `pending` task row for the next step. The consuming worker updates that row through its lifecycle.
+- **Graph-in-Postgres:** The `entities`, `document_entities`, and `document_references` tables capture GraphRAG concepts without a graph database. The agent uses these for entity-based pre-filtering (e.g. "find all documents where entity X is primary → semantic search within that set") and relationship traversal ("what other decisions cite this one?"). Standard SQL joins replace graph queries at this scale.
