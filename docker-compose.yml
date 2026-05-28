@@ -1,0 +1,32 @@
+services:
+  db:
+    image: ankane/pgvector
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: overklagan
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  minio:
+    image: minio/minio
+    profiles: [full]
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address :9001
+    volumes:
+      - minio_data:/data
+
+  redis:
+    image: redis:7-alpine
+    profiles: [full]
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:
+  minio_data:

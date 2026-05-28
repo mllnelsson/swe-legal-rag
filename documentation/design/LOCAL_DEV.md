@@ -80,12 +80,22 @@ The `sync` queue backend calls the next worker's service layer directly in-proce
 
 For testing async/concurrent behavior, switch to `redis` and run workers as separate processes.
 
+## First-time Setup
+
+```bash
+cp .env.example .env        # copy config template
+uv sync --all-packages      # install all workspace packages
+docker compose up -d        # start Postgres
+uv run alembic upgrade head # apply migrations
+```
+
 ## Typical Dev Workflow
 
 1. `docker compose up -d` — starts Postgres (and optionally MinIO/Redis)
 2. `uv run alembic upgrade head` — apply migrations
-3. `uv run` the API server or a specific worker
-4. Iterate — code changes reflect immediately, no container rebuilds
+3. Start the API: `uv run --package api uvicorn api.main:app --reload`
+4. Run a worker: `uv run --package worker-crawl python -m worker_crawl`
+5. Iterate — code changes reflect immediately, no container rebuilds
 
 ## Data Seeding
 

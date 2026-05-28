@@ -24,7 +24,13 @@ packages/
   worker-extract/      — entity & reference extraction (GraphRAG-lite)
   worker-chunk/
   worker-embed/
+alembic/             — migration scripts (root-level, runs against shared.db.Base metadata)
+alembic.ini          — Alembic config (sqlalchemy.url set via DATABASE_URL env var in env.py)
+docker-compose.yml   — Postgres+pgvector default, MinIO+Redis under "full" profile
+docker/init.sql      — enables pgvector extension on first DB creation
 ```
+
+All packages use src layout (`packages/<name>/src/<python_name>/`) with `py.typed` markers. Python package names use underscores for hyphenated directory names (e.g. `worker-crawl` → `worker_crawl`).
 
 Each worker is its own deployable unit (Cloud Run service), own `pyproject.toml`, depends on `shared`. The `ai` package is consumed by `api` (query decomposition, synthesis), `worker-metadata` (LLM fallback extraction), `worker-extract` (entity & reference extraction), `worker-chunk` (summary generation), and `worker-embed` (embedding generation).
 
