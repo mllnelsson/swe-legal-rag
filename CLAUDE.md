@@ -6,6 +6,7 @@ Always include a verifiable defintion of done when planning out code changes.
 
 ## ATM Cli
 This project uses the ATM CLI. Always start you work, if not told otherwise, to explore the task with ATM, this should give you the best setup of what to do and look for.
+You need not use the --porject. Project ID is already infered from repo.
 
 ## Code Guidelines
 Always use ur code guidline skill when writing or review code
