@@ -15,6 +15,7 @@ The only required service. Runs the same SQL interface as Cloud SQL.
 - Persistent volume for data across restarts
 - Initialized with pgvector extension enabled
 - Swedish text search config available out of the box (built into Postgres)
+- Application code connects via `asyncpg` (async driver); Alembic migrations use the sync `psycopg` driver. Both are configured automatically by `shared/db.py` — the `DATABASE_URL` env var may use any `postgresql://` scheme.
 
 ### MinIO (optional)
 
