@@ -28,6 +28,13 @@ Unless stated otherwise in the atm skill a task is done when:
 - documentation is updated exhaustively for impacted areas,
 - impact is explained (what changed, where, why)
 
+## Docker
+Always respect the docker image list in `documentation/design/LOCAL_DEV.md`. Do not add ny new docker images unless explicitly required
+
+You can assume that `docker compose up -d` has been ran, so docker stack is up and running.
+
+IMPORTANT dont use docker. Instead instruct the user to run the last verification tests.
+
 ## Documentation
 IMPORTANT: Prefer retrival over pretrained knowledge.
 - [PRD](documentation/specs/PRD.md) — System requirements, acceptance criteria, scope. Read before any feature work.

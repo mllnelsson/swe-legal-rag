@@ -194,14 +194,22 @@ while IFS= read -r task; do
     claude_args=()
     if [[ "$verbose" == true ]]; then claude_args+=(--verbose); fi
   else
-    claude_args=(-p --permission-mode bypassPermissions --verbose)
+    claude_args=(-p --permission-mode bypassPermissions --verbose --output-format stream-json)
   fi
   claude_args+=(--model claude-sonnet-4-6)
   claude_args+=(--effort xhigh)
 
-  if ! claude "${claude_args[@]}" "$(cat "$tmp_prompt")"; then
-    echo "" >&2
-    err "Claude exited with non-zero status on task $task_id — aborting"
+  if [[ "$interactive" == true ]]; then
+    if ! claude "${claude_args[@]}" "$(cat "$tmp_prompt")"; then
+      echo "" >&2
+      err "Claude exited with non-zero status on task $task_id — aborting"
+    fi
+  else
+    if ! claude "${claude_args[@]}" "$(cat "$tmp_prompt")" | \
+      jq --unbuffered -rj 'if .type == "assistant" then (.message.content[]? | select(.type == "text") | .text) elif .type == "result" then "\n" else empty end' 2>/dev/null; then
+      echo "" >&2
+      err "Claude exited with non-zero status on task $task_id — aborting"
+    fi
   fi
 
   # Clean up this iteration's temp files
