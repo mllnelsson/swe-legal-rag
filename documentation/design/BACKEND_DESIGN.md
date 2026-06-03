@@ -71,7 +71,22 @@ The `packages/shared/src/shared/` package is the single source of truth for data
 
 ### `config.py`
 
-Reads `EMBEDDING_DIMENSION` environment variable (default `768`). Imported by the `Chunk` model to configure vector dimension at startup.
+Centralized, pydantic-settings-backed configuration for the entire shared package.
+
+| Class | Reads env vars | Purpose |
+|---|---|---|
+| `DatabaseSettings` | `DATABASE_URL` | Database connection string (required) |
+| `StorageSettings` | `STORAGE_BACKEND`, `LOCAL_STORAGE_PATH`, `GCS_BUCKET` | Storage backend config; defaults to `local` |
+| `QueueSettings` | `QUEUE_BACKEND`, `PUBSUB_PROJECT_ID` | Queue backend config; defaults to `sync` |
+| `Settings` | (composes the above) | Root container; access via `get_settings()` |
+
+`StorageBackendType` (`local`, `gcs`) and `QueueBackendType` (`sync`, `pubsub`) are `StrEnum` types used for exhaustive `match`/`case` dispatch in factories.
+
+Cross-field validators enforce: GCS backend requires `GCS_BUCKET`; Pub/Sub backend requires `PUBSUB_PROJECT_ID`.
+
+`get_settings()` returns a cached singleton (`@lru_cache(maxsize=1)`). In tests, call `get_settings.cache_clear()` between cases.
+
+`EMBEDDING_DIMENSION` (int, default `768`) is also defined here. Imported by the `Chunk` model to configure vector dimension at startup.
 
 ### `models/`
 
