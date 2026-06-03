@@ -60,6 +60,9 @@ LLM_MODEL=gemini-2.0-flash
 EMBEDDING_PROVIDER=local
 EMBEDDING_MODEL=e5-multilingual
 
+# Embedding dimension (768=e5-multilingual, 1024=Cohere)
+EMBEDDING_DIMENSION=768
+
 # Optional services
 MINIO_ENDPOINT=http://localhost:9000
 REDIS_URL=redis://localhost:6379
@@ -73,6 +76,7 @@ REDIS_URL=redis://localhost:6379
 | Storage | `STORAGE_BACKEND` | `local` | `gcs` |
 | Queue | `QUEUE_BACKEND` | `sync` | `pubsub` |
 | Secrets | — | `.env` file | Secret Manager |
+| Embedding dim | `EMBEDDING_DIMENSION` | `768` | model-dependent |
 
 ## Local Queue Behavior
 
@@ -100,6 +104,19 @@ uv run alembic upgrade head # apply migrations
 ## Data Seeding
 
 For development, keep a small set of test PDFs in a `data/seed/` directory (gitignored). A seed script runs the full pipeline synchronously against these documents to populate the local database with realistic data for frontend and retrieval development.
+
+## Approved Docker Images
+
+Only the images listed below are approved for use in this project. Pin to the tags shown — do not use `latest` or switch to alternative images without discussion.
+
+| Service | Image | Tag | Purpose |
+|---|---|---|---|
+| Postgres + pgvector | `ankane/pgvector` | (default / latest stable) | SQL database with vector search |
+| MinIO | `minio/minio` | (default / latest stable) | S3-compatible object storage |
+| Redis | `redis` | `7-alpine` | Async queue / cache |
+| Python | `python` | `3.12-slim` | Application base image |
+
+When adding a new infrastructure service, add its image here before using it in `docker-compose.yml`.
 
 ## Docker Compose Profiles
 

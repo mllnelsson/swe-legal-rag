@@ -9,6 +9,13 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "pgvector>=0.3",
     "python-dotenv>=1.0",
+    "asyncpg>=0.29",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
 ]
 
 [build-system]

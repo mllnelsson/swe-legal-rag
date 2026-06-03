@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 from alembic import context
 from shared.db import Base, get_engine
+import shared.models  # noqa: F401 — registers all models with Base.metadata
 
 load_dotenv()
 

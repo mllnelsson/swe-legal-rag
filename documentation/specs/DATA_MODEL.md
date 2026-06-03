@@ -115,6 +115,12 @@ Conversation history for follow-up support. Can live in-memory or Redis instead 
 | document_entities | btree | document_id | Find all entities for a given document |
 | document_references | btree | target_document_id | Find all decisions that cite a given decision |
 
+## Implementation Decisions
+
+- **Embedding dimension**: Configurable via `EMBEDDING_DIMENSION` environment variable, default `768` (e5-multilingual). Change to `1024` for Cohere. Value is read at application startup from `shared/config.py` and applied to both the SQLAlchemy model and the Alembic migration.
+- **tsvector column**: Implemented as a PostgreSQL `GENERATED ALWAYS AS ... STORED` column: `to_tsvector('swedish', chunk_text)`. Computed at the DB layer — no application-side maintenance needed.
+- **Async repositories**: All repository classes use SQLAlchemy `AsyncSession`. Application code accesses the database exclusively through the async path.
+
 ## Design Notes
 
 - **Nullable metadata fields:** Each pipeline step fills in its columns progressively. A document with `gcs_uri` set but `raw_text` null means download succeeded but parsing hasn't run yet. Combined with `tasks` this gives full observability.
