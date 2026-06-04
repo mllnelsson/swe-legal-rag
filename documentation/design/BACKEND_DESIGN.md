@@ -122,11 +122,13 @@ Provides two database access paths:
 
 | Function | Purpose |
 |---|---|
-| `get_engine()` | Returns a sync SQLAlchemy `Engine` using `postgresql+psycopg://`. Used by Alembic. |
+| `get_engine()` | Returns a cached sync SQLAlchemy `Engine` using `postgresql+psycopg://`. Used by Alembic. |
 | `get_session()` | Sync context manager yielding a `Session`. Used for Alembic offline mode. |
 | `get_async_session()` | Async context manager yielding an `AsyncSession` with auto commit/rollback. Used by application code. |
 
-The async engine uses `postgresql+asyncpg://` (asyncpg driver). URL scheme is normalized from `DATABASE_URL` env var regardless of its original scheme.
+`get_engine()` is decorated with `@lru_cache(maxsize=1)` so the same `Engine` instance is returned on every call — connection pool is shared across the process. `pool_pre_ping=True` validates connections before checkout. The `DATABASE_URL` is read from `get_settings().database.database_url` (not `os.environ` directly).
+
+The async engine uses `postgresql+asyncpg://` (asyncpg driver). URL scheme is normalized regardless of its original scheme.
 
 ### Async session pattern (dependency injection)
 
@@ -139,6 +141,10 @@ async with get_async_session() as session:
 ```
 
 In FastAPI, wrap `get_async_session` in a dependency. In workers, use it directly in service methods.
+
+### Infrastructure Abstractions
+
+The `config.py`, `storage/`, and `queue/` modules together form the infrastructure abstraction layer. Each concern is represented by a Protocol interface, a set of backend implementations, and a factory function that selects the backend from environment variables. This makes local development and GCP deployment a config change — no code changes required.
 
 ### `storage/`
 

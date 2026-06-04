@@ -51,9 +51,11 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/overklagan
 # Storage — "local" uses filesystem, "gcs" uses GCS client
 STORAGE_BACKEND=local
 LOCAL_STORAGE_PATH=./data/pdfs
+GCS_BUCKET=                     # required when STORAGE_BACKEND=gcs
 
-# Queue — "sync" for in-process, "redis" for Redis Streams, "pubsub" for GCP
+# Queue — "sync" for in-process, "pubsub" for GCP Pub/Sub
 QUEUE_BACKEND=sync
+PUBSUB_PROJECT_ID=              # required when QUEUE_BACKEND=pubsub
 
 # AI — provider keys, model selection
 LLM_PROVIDER=gemini
@@ -74,10 +76,14 @@ REDIS_URL=redis://localhost:6379
 | Concern | Env var | Local value | GCP value |
 |---|---|---|---|
 | Database | `DATABASE_URL` | `postgresql://...@localhost:5432/...` | Cloud SQL connection string |
-| Storage | `STORAGE_BACKEND` | `local` | `gcs` |
-| Queue | `QUEUE_BACKEND` | `sync` | `pubsub` |
+| Storage | `STORAGE_BACKEND` | `local` (filesystem) | `gcs` |
+| Storage bucket | `GCS_BUCKET` | *(not needed)* | GCS bucket name |
+| Queue | `QUEUE_BACKEND` | `sync` (in-process) | `pubsub` |
+| Queue project | `PUBSUB_PROJECT_ID` | *(not needed)* | GCP project ID |
 | Secrets | — | `.env` file | Secret Manager |
 | Embedding dim | `EMBEDDING_DIMENSION` | `768` | model-dependent |
+
+Development defaults: `STORAGE_BACKEND=local` and `QUEUE_BACKEND=sync`. No GCS or Pub/Sub credentials required for local development.
 
 ## Local Queue Behavior
 
