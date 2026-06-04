@@ -28,11 +28,15 @@ name = "ai"
 version = "0.1.0"
 source = { editable = "packages/ai" }
 dependencies = [
+    { name = "llm-core" },
     { name = "shared" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "shared", editable = "packages/shared" }]
+requires-dist = [
+    { name = "llm-core", editable = "packages/llm-core" },
+    { name = "shared", editable = "packages/shared" },
+]
 
 [[package]]
 name = "alembic"
