@@ -140,6 +140,38 @@ async with get_async_session() as session:
 
 In FastAPI, wrap `get_async_session` in a dependency. In workers, use it directly in service methods.
 
+### `storage/`
+
+Storage backend abstraction for binary object storage (raw document files, etc.).
+
+| Backend | Class | Description |
+|---|---|---|
+| `local` | `LocalStorageBackend` | Persists files under `LOCAL_STORAGE_PATH` (default `./storage`) |
+| `gcs` | `GCSStorageBackend` | Wraps `google-cloud-storage`; requires `GCS_BUCKET` env var |
+
+`StorageBackend` is a `@runtime_checkable` Protocol with: `store`, `retrieve`, `exists`, `delete`, `get_url`.
+`create_storage_backend(settings)` is the factory; uses lazy imports so GCS libs are never loaded when using local backend.
+GCS is an optional dependency: `uv add 'shared[gcs]'`.
+
+### `queue/`
+
+Queue abstraction for inter-worker messaging (pipeline fan-out).
+
+| Backend | Classes | Description |
+|---|---|---|
+| `sync` | `SyncQueuePublisher`, `SyncQueueSubscriber` | In-process; publish directly invokes the registered handler. Ideal for local dev and testing. |
+| `pubsub` | `PubSubQueuePublisher`, `PubSubQueueSubscriber` | GCP Pub/Sub via streaming pull; serializes `QueueMessage` as JSON bytes. |
+
+**Key types:**
+- `QueueMessage(BaseModel)`: `task_id: UUID`, `document_id: UUID`, `payload: dict` — maps 1:1 to task rows in the DB.
+- `QueuePublisher` Protocol: `publish(topic, message) -> None`
+- `QueueSubscriber` Protocol: `subscribe(topic, handler)`, `start()`, `shutdown()`
+
+**Sync broker pattern:** `SyncQueueBroker` holds a `dict[topic, handler]`. Publisher and subscriber in the same process must share the same broker instance — `_get_sync_broker()` in `factory.py` provides a module-level singleton for this purpose.
+
+`create_queue_publisher(settings)` and `create_queue_subscriber(settings)` are the factories; backend selected by `QUEUE_BACKEND` env var (`sync` default, `pubsub` for GCP).
+Pub/Sub is an optional dependency: `uv add 'shared[pubsub]'`. Both GCS and Pub/Sub together: `uv add 'shared[gcp]'`.
+
 ## Design Principles
 
 - **Interface abstraction everywhere:** LLM provider, embedding model, storage backend (GCS/local), queue (Pub/Sub/local) — all swappable via config for local dev and future flexibility.

@@ -19,6 +19,8 @@ test = [
     "pytest-asyncio>=0.23",
 ]
 gcs = ["google-cloud-storage>=2.0"]
+pubsub = ["google-cloud-pubsub>=2.0"]
+gcp = ["google-cloud-storage>=2.0", "google-cloud-pubsub>=2.0"]
 
 [build-system]
 requires = ["hatchling"]
