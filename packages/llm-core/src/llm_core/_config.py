@@ -22,7 +22,7 @@ def create_provider(config: LLMConfig | None = None) -> LLMProvider:
 
     match config.provider:
         case "gemini":
-            from llm_core.providers.gemini import GeminiProvider
+            from llm_core.providers._gemini import GeminiProvider
 
             return GeminiProvider(config)
         case _:

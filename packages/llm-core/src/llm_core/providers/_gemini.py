@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+import uuid
+from collections.abc import AsyncGenerator, AsyncIterator
+from typing import TYPE_CHECKING, Any
+
+from llm_core._exceptions import ProviderError
+from llm_core._types import (
+    LLMResponse,
+    Message,
+    Role,
+    StreamChunk,
+    ToolCall,
+    ToolDefinition,
+)
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from llm_core._config import LLMConfig
+
+
+class GeminiProvider:
+    def __init__(self, config: LLMConfig) -> None:
+        from google import genai
+
+        if not config.gemini_api_key:
+            raise ValueError("gemini_api_key is required for GeminiProvider")
+
+        self._client = genai.Client(api_key=config.gemini_api_key)
+        self._model = config.model
+        self._temperature = config.temperature
+        self._max_tokens = config.max_tokens
+
+    def _split_system(
+        self, messages: list[Message]
+    ) -> tuple[str | None, list[Message]]:
+        if messages and messages[0].role == Role.system:
+            return messages[0].content, messages[1:]
+        return None, messages
+
+    def _to_gemini_content(self, msg: Message) -> Any:
+        from google.genai import types
+
+        if msg.role == Role.user:
+            return types.Content(
+                role="user", parts=[types.Part.from_text(text=msg.content)]
+            )
+
+        if msg.role == Role.assistant:
+            parts: list[Any] = []
+            if msg.content:
+                parts.append(types.Part.from_text(text=msg.content))
+            for tc in msg.tool_calls:
+                parts.append(
+                    types.Part.from_function_call(name=tc.name, args=tc.arguments)
+                )
+            return types.Content(role="model", parts=parts)
+
+        if msg.role == Role.tool_result:
+            return types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_function_response(
+                        name=msg.tool_name or "",
+                        response={"output": msg.content},
+                    )
+                ],
+            )
+
+        raise ValueError(f"Cannot map role {msg.role!r} to Gemini content")
+
+    def _to_gemini_tools(self, tools: list[ToolDefinition]) -> Any:
+        from google.genai import types
+
+        declarations = [
+            types.FunctionDeclaration(
+                name=t.name,
+                description=t.description,
+                parameters_json_schema=t.parameters,
+            )
+            for t in tools
+        ]
+        return types.Tool(function_declarations=declarations)
+
+    def _from_gemini_response(self, response: Any) -> LLMResponse:
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+
+        for candidate in response.candidates or []:
+            for part in candidate.content.parts or []:
+                if part.text:
+                    text_parts.append(part.text)
+                if part.function_call:
+                    fc = part.function_call
+                    call_id = fc.id or str(uuid.uuid4())
+                    tool_calls.append(
+                        ToolCall(
+                            id=call_id,
+                            name=fc.name or "",
+                            arguments=dict(fc.args or {}),
+                        )
+                    )
+
+        if tool_calls:
+            msg = Message(
+                role=Role.assistant,
+                content="".join(text_parts),
+                tool_calls=tuple(tool_calls),
+            )
+        else:
+            msg = Message(role=Role.assistant, content="".join(text_parts))
+
+        return LLMResponse(message=msg, raw=response)
+
+    async def generate(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        response_schema: type[BaseModel] | None = None,
+    ) -> LLMResponse:
+        from google.genai import types
+
+        system_instruction, remaining = self._split_system(messages)
+        contents = [self._to_gemini_content(m) for m in remaining]
+
+        config_kwargs: dict[str, Any] = {
+            "temperature": self._temperature,
+        }
+        if self._max_tokens is not None:
+            config_kwargs["max_output_tokens"] = self._max_tokens
+        if system_instruction is not None:
+            config_kwargs["system_instruction"] = system_instruction
+        if tools:
+            config_kwargs["tools"] = [self._to_gemini_tools(tools)]
+        if response_schema is not None:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_json_schema"] = response_schema.model_json_schema()
+
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=self._model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as exc:
+            raise ProviderError(str(exc), exc) from exc
+
+        return self._from_gemini_response(response)
+
+    async def generate_stream(
+        self,
+        messages: list[Message],
+    ) -> AsyncIterator[StreamChunk]:
+        from google.genai import types
+
+        system_instruction, remaining = self._split_system(messages)
+        contents = [self._to_gemini_content(m) for m in remaining]
+
+        config_kwargs: dict[str, Any] = {
+            "temperature": self._temperature,
+        }
+        if self._max_tokens is not None:
+            config_kwargs["max_output_tokens"] = self._max_tokens
+        if system_instruction is not None:
+            config_kwargs["system_instruction"] = system_instruction
+
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        try:
+            sdk_stream = await self._client.aio.models.generate_content_stream(
+                model=self._model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as exc:
+            raise ProviderError(str(exc), exc) from exc
+
+        return self._iter_stream(sdk_stream)
+
+    async def _iter_stream(self, sdk_stream: Any) -> AsyncGenerator[StreamChunk, None]:
+        try:
+            async for chunk in sdk_stream:
+                if chunk.text:
+                    yield StreamChunk(text=chunk.text, raw=chunk)
+        except Exception as exc:
+            raise ProviderError(str(exc), exc) from exc
