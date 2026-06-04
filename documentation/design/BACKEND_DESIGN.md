@@ -15,7 +15,8 @@ Monorepo with separate packages per concern. Shared code and AI tooling as inter
 ```
 packages/
   shared/            — SQLAlchemy models, Pydantic DTOs, repo layer, DB config, common utils
-  ai/                — LLM and embedding abstractions (provider interfaces, prompt templates, model config)
+  llm-core/          — standalone, project-agnostic LLM abstraction (Provider Protocol, config, service layer, Gemini impl)
+  ai/                — project-specific LLM logic: prompt templates, domain DTOs, query decomposition, synthesis, embeddings
   api/               — FastAPI app, endpoints, service layer for query/retrieval
   worker-crawl/
   worker-download/
@@ -38,7 +39,8 @@ Each worker is its own deployable unit (Cloud Run service), own `pyproject.toml`
 
 ```
 shared          ← depended on by everything
-ai              ← depends on shared (for DTOs), depended on by api + relevant workers
+llm-core        ← standalone, zero dependency on shared; depends only on pydantic, pydantic-settings, google-genai
+ai              ← depends on shared + llm-core; depended on by api + relevant workers
 api             ← depends on shared, ai
 worker-*        ← depends on shared, some depend on ai
 ```
@@ -56,14 +58,25 @@ Model (SQLAlchemy)  →  Repo (queries + ORM→DTO mapping)  →  Service (busin
 
 Workers skip the endpoint layer — they consume from Pub/Sub directly into the service layer.
 
+## LLM Core Package (`packages/llm-core/`)
+
+Standalone, project-agnostic LLM abstraction. Zero dependency on `shared` — fully reusable across projects.
+
+- **`_types.py`:** Frozen dataclasses: `Message`, `ToolCall`, `ToolDefinition`, `LLMResponse`, `StreamChunk`, `Role` (StrEnum).
+- **`_exceptions.py`:** `LLMError` base, `ProviderError`, `ToolExecutionError`, `MaxIterationsError`.
+- **`_protocol.py`:** `LLMProvider` Protocol (`@runtime_checkable`) with `generate()` and `generate_stream()`. Providers do one round-trip; tool-call loop is in the service layer.
+- **`_config.py`:** `LLMConfig(BaseSettings)` reading `LLM_PROVIDER`, `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `GEMINI_API_KEY`. `create_provider()` factory with lazy-import dispatch.
+- **`providers/gemini.py`:** Gemini implementation using `google-genai` SDK (the new unified SDK, not deprecated `google-generativeai`).
+- **`_service.py`:** Higher-level API: `generate()`, `generate_structured()`, `generate_stream()`, `tool_loop()` with optional callbacks.
+
 ## AI Package (`packages/ai/`)
 
-Abstracts all LLM and embedding interactions behind provider-agnostic interfaces.
+Project-specific LLM logic that consumes `llm-core`. Handles domain concerns.
 
-- **LLM interface:** Query decomposition, answer synthesis, metadata extraction (fallback). Provider-swappable (Gemini Flash, Haiku, etc.) via config.
-- **Embedding interface:** Chunk embedding generation. Model-swappable (e5-multilingual, Cohere, etc.) via config.
+- **Query decomposition & synthesis:** Uses `llm-core` service layer for Gemini calls.
+- **Metadata & entity extraction:** Domain-specific orchestration on top of `llm-core`.
+- **Embedding interface:** Chunk embedding generation. Model-swappable via config.
 - **Prompt templates:** Centralized, versioned. Keeps prompt engineering out of business logic.
-- **Model config:** Model selection, temperature, token limits — all config-driven, no hardcoded values.
 
 ## Shared Package Module Layout
 
