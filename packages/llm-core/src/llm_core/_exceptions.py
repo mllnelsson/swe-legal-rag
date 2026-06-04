@@ -12,7 +12,9 @@ class ProviderError(LLMError):
 
 
 class ToolExecutionError(LLMError):
-    def __init__(self, tool_name: str, message: str, cause: Exception | None = None) -> None:
+    def __init__(
+        self, tool_name: str, message: str, cause: Exception | None = None
+    ) -> None:
         super().__init__(message)
         self.tool_name = tool_name
         self.__cause__ = cause
