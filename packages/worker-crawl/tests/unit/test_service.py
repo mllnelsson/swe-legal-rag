@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
+from sqlalchemy.exc import IntegrityError
 
 import pytest
 
@@ -227,3 +228,37 @@ async def test_run_continues_after_per_url_failure() -> None:
     assert result.total_found == 2
     assert result.new_documents == 1
     assert publisher.publish.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_handles_integrity_error_as_duplicate() -> None:
+    session = MagicMock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+
+    doc_repo = MagicMock()
+    task_repo = MagicMock()
+    publisher = MagicMock()
+    client = MagicMock()
+
+    client.fetch_pdf_urls.return_value = ["https://example.com/race.pdf"]
+    doc_repo.get_by_source_url = AsyncMock(return_value=None)
+    doc_repo.create = AsyncMock(
+        side_effect=IntegrityError("insert", {}, Exception("unique constraint"))
+    )
+
+    service = CrawlService(
+        session=session,
+        document_repo=doc_repo,
+        task_repo=task_repo,
+        queue_publisher=publisher,
+        client=client,
+        source_url="https://example.com/decisions",
+        topic="download",
+    )
+
+    result = await service.run()
+
+    assert result == CrawlResult(total_found=1, new_documents=0, skipped=1)
+    session.rollback.assert_called_once()
+    publisher.publish.assert_not_called()
