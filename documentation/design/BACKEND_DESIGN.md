@@ -216,6 +216,42 @@ One-shot pipeline entry point. Scrapes an HTML page for PDF links, deduplicates 
 
 Per-URL errors (HTTP failures, unexpected DB errors) are caught, logged as warnings, and the session is rolled back so the next URL can proceed. The crawl never aborts early on a single bad URL.
 
+## Download Worker (`packages/worker-download/`)
+
+Long-running subscriber. Consumes document IDs from the download topic, fetches PDFs, stores them via the storage backend, updates the document record, and enqueues parse tasks.
+
+### Module layout
+
+| Module | Role |
+|---|---|
+| `config.py` | `DownloadSettings(BaseSettings)` — reads `DOWNLOAD_REQUEST_TIMEOUT` (default 60s), `DOWNLOAD_TOPIC` (default `"download"`), `DOWNLOAD_NEXT_TOPIC` (default `"parse"`), `DOWNLOAD_MAX_RETRIES` (default 3), `DOWNLOAD_RATE_LIMIT_DELAY` (default 0.5s). `get_download_settings()` is `@lru_cache`. |
+| `service.py` | `DownloadService` + module-level `_download_pdf()` function — orchestration. Constructor takes `session`, `document_repo`, `task_repo`, `storage`, `queue_publisher`, and config params. Async `handle_message()` method handles one `QueueMessage`. |
+| `__main__.py` | Entry point. Loads `.env`, wires dependencies, registers handler via `subscriber.subscribe()`, installs signal handlers, calls `subscriber.start()`. The handler wraps `asyncio.run()` around the async service method so it works with the sync `QueueSubscriber` protocol. |
+
+### Task checkpointing
+
+Each message transitions the task through: `pending → processing → completed | failed`. The processing status is committed immediately after it is set so it is durable before any download I/O begins.
+
+### Session management
+
+Each queued message gets its own `AsyncSession` via `get_async_session()` in the `__main__.py` handler closure. The session is also passed into `DownloadService` to give it explicit commit control (required to commit before publishing to the parse topic, same pattern as crawl worker).
+
+### Download with retry
+
+`_download_pdf(url, timeout, max_retries) -> bytes` is a module-level function (not a method). It creates an `httpx.Client`, attempts up to `max_retries` times, applies exponential backoff (`2**attempt` seconds) between retries. HTTP 4xx responses raise immediately (not retryable). HTTP 5xx, connection errors, and timeouts are retried.
+
+### Transaction ordering (sync queue)
+
+`handle_message()` calls `await session.commit()` BEFORE publishing to the parse topic. This ensures document and parse-task rows are visible to any subscriber that opens a new session (required for `QUEUE_BACKEND=sync` inline dispatch, same as crawl worker).
+
+### Idempotency
+
+Multiple guard layers: (1) task status check — if already `completed`, skip; (2) `document.gcs_uri` check — if already set, skip download but still create parse task and publish; (3) storage `store()` is overwrite-safe (same key → same result); (4) `(document_id, step)` unique constraint prevents duplicate task creation.
+
+### Error handling
+
+Per-message errors are caught in `handle_message()`. On failure: session is rolled back, task is marked `failed` with the error message committed in a fresh transaction, and the error is logged. The exception is not re-raised — one failed message does not affect others. A 0.5s rate-limit sleep follows each successful download.
+
 ## Design Principles
 
 - **Interface abstraction everywhere:** LLM provider, embedding model, storage backend (GCS/local), queue (Pub/Sub/local) — all swappable via config for local dev and future flexibility.
