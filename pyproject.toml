@@ -13,12 +13,15 @@ dev = [
     "ruff>=0.11",
     "alembic>=1.13",
     "shared",
+    "worker-crawl",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
+    "respx>=0.21",
 ]
 
 [tool.uv.sources]
 shared = { workspace = true }
+worker-crawl = { workspace = true }
 
 [tool.ruff]
 target-version = "py312"
@@ -26,4 +29,4 @@ src = ["packages/*/src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["packages/shared/tests"]
+testpaths = ["packages/shared/tests", "packages/worker-crawl/tests"]

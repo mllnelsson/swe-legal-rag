@@ -191,6 +191,31 @@ Queue abstraction for inter-worker messaging (pipeline fan-out).
 `create_queue_publisher(settings)` and `create_queue_subscriber(settings)` are the factories; backend selected by `QUEUE_BACKEND` env var (`sync` default, `pubsub` for GCP).
 Pub/Sub is an optional dependency: `uv add 'shared[pubsub]'`. Both GCS and Pub/Sub together: `uv add 'shared[gcp]'`.
 
+## Crawl Worker (`packages/worker-crawl/`)
+
+One-shot pipeline entry point. Scrapes an HTML page for PDF links, deduplicates against the documents table, and enqueues download tasks.
+
+### Module layout
+
+| Module | Role |
+|---|---|
+| `config.py` | `CrawlSettings(BaseSettings)` — reads `CRAWL_SOURCE_URL` (required), `CRAWL_REQUEST_TIMEOUT` (default 30s), `CRAWL_TOPIC` (default `"download"`). `get_crawl_settings()` is `@lru_cache`. |
+| `client.py` | `CrawlClient` — synchronous HTTP scraper. `fetch_pdf_urls(source_url) -> list[str]` GETs the page with `httpx.Client`, parses HTML with `BeautifulSoup`, extracts `<a href="*.pdf">` links, resolves to absolute URLs, and deduplicates order-preservingly with `dict.fromkeys()`. |
+| `service.py` | `CrawlService` + `CrawlResult` — orchestration. Constructor takes `session`, `document_repo`, `task_repo`, `queue_publisher`, `client`, `source_url`, `topic`. Async `run()` method processes each URL, creates `Document` + two `Task` rows (crawl:completed, download:pending), commits, then publishes. |
+| `__main__.py` | Entry point. Loads `.env`, wires all dependencies, runs `asyncio.run(_run())`, logs `CrawlResult`. |
+
+### Deduplication and idempotency
+
+`get_by_source_url()` is checked before creating a document. If the row exists, the URL is skipped. On race conditions (concurrent crawl runs), `IntegrityError` on `documents.source_url` unique constraint is caught per-URL — the session is rolled back and the URL is counted as skipped.
+
+### Transaction ordering (sync queue)
+
+`CrawlService.run()` calls `await session.commit()` per document BEFORE publishing to the queue. This is required because `QUEUE_BACKEND=sync` dispatches inline — the download handler opens its own session and must see the document as committed. For `pubsub`, the commit still happens before publish, ensuring rows are durable on the DB before any async consumer can act on the message.
+
+### Error handling
+
+Per-URL errors (HTTP failures, unexpected DB errors) are caught, logged as warnings, and the session is rolled back so the next URL can proceed. The crawl never aborts early on a single bad URL.
+
 ## Design Principles
 
 - **Interface abstraction everywhere:** LLM provider, embedding model, storage backend (GCS/local), queue (Pub/Sub/local) — all swappable via config for local dev and future flexibility.
