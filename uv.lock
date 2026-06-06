@@ -1800,11 +1800,15 @@ name = "worker-download"
 version = "0.1.0"
 source = { editable = "packages/worker-download" }
 dependencies = [
+    { name = "httpx" },
     { name = "shared" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "shared", editable = "packages/shared" }]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "shared", editable = "packages/shared" },
+]
 
 [[package]]
 name = "worker-embed"
