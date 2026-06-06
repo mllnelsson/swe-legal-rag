@@ -71,6 +71,30 @@ MINIO_ENDPOINT=http://localhost:9000
 REDIS_URL=redis://localhost:6379
 ```
 
+## Worker Environment Variables
+
+| Variable | Default | Notes |
+|---|---|---|
+| `CRAWL_SOURCE_URL` | *(required)* | URL of the HTML page listing PDFs |
+| `CRAWL_REQUEST_TIMEOUT` | `30` | HTTP timeout (seconds) for the crawl page fetch |
+| `CRAWL_TOPIC` | `download` | Queue topic crawl publishes to |
+| `DOWNLOAD_REQUEST_TIMEOUT` | `60` | HTTP timeout (seconds) for PDF downloads |
+| `DOWNLOAD_MAX_RETRIES` | `3` | Max retry attempts for transient errors |
+| `DOWNLOAD_RATE_LIMIT_DELAY` | `0.5` | Seconds to sleep after each successful download |
+
+## Running the Pipeline Locally
+
+With `QUEUE_BACKEND=sync`, publishing a message from the crawl worker dispatches it inline to the download worker in the same process:
+
+```bash
+# Full pipeline in one invocation (sync queue):
+uv run --package worker-crawl python -m worker_crawl
+
+# Or run each worker independently (useful with pubsub or for debugging):
+uv run --package worker-crawl python -m worker_crawl
+uv run --package worker-download python -m worker_download
+```
+
 ## Interface Mapping
 
 | Concern | Env var | Local value | GCP value |

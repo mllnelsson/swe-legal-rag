@@ -33,3 +33,6 @@ src = ["packages/*/src"]
 asyncio_mode = "auto"
 addopts = ["--import-mode=importlib"]
 testpaths = ["packages/shared/tests", "packages/worker-crawl/tests", "packages/worker-download/tests"]
+markers = [
+    "integration: marks tests as integration tests requiring a running database",
+]

@@ -10,7 +10,11 @@ Queue-driven (Pub/Sub), each step is a Cloud Run worker consuming from a topic a
 
 **Step 1 — Crawl:** Poll the public API, fetch PDF URLs. Deduplicate against known documents. Publish new document references to next topic. Checkpoint: document registry updated.
 
+*Implementation:* One-shot worker (`worker-crawl`). Fetches HTML from `CRAWL_SOURCE_URL`, parses `<a href="*.pdf">` links with BeautifulSoup, resolves to absolute URLs, deduplicates order-preservingly. Deduplication against DB uses `get_by_source_url()` (checks before insert) and catches `IntegrityError` on the `documents.source_url` unique constraint for concurrent runs. Per-URL: creates `documents` row + `tasks` rows (crawl:completed, download:pending), commits, then publishes to the download topic.
+
 **Step 2 — Download & Store Raw:** Download PDFs, store in GCS. Publish GCS URI. Checkpoint: PDF in bucket.
+
+*Implementation:* Subscriber worker (`worker-download`). Consumes from the download topic. Storage key format: `documents/{document_id}/original.pdf`. Retry policy: up to `DOWNLOAD_MAX_RETRIES` attempts with exponential backoff (`2**attempt` seconds); HTTP 4xx raises immediately (not retryable), 5xx and network errors are retried. Rate limiting: `DOWNLOAD_RATE_LIMIT_DELAY` seconds sleep after each successful download. Idempotency: skips download if `document.gcs_uri` already set, still creates parse task and publishes.
 
 **Step 3 — Parse & Extract Text:** PDF → structured text extraction. Legal PDFs can be ugly so we likely need a decent parser (pymupdf4llm or docling). Publish extracted text. Checkpoint: raw text stored.
 

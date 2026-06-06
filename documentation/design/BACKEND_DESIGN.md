@@ -252,6 +252,38 @@ Multiple guard layers: (1) task status check — if already `completed`, skip; (
 
 Per-message errors are caught in `handle_message()`. On failure: session is rolled back, task is marked `failed` with the error message committed in a fresh transaction, and the error is logged. The exception is not re-raised — one failed message does not affect others. A 0.5s rate-limit sleep follows each successful download.
 
+## Worker Architecture
+
+### Two worker patterns
+
+- **One-shot workers** (e.g., crawl): Run once, process all items, exit. Launched by Cloud Scheduler via Cloud Run Jobs. Entry point calls `asyncio.run()`, logs the result, then exits.
+- **Subscriber workers** (e.g., download, parse): Register a queue handler, block on messages. Suitable for Cloud Run triggered by Pub/Sub push. Entry point installs signal handlers and calls `subscriber.start()`.
+
+### Service layer pattern
+
+Each worker's service class takes `session`, repos, storage, and queue via constructor injection. No global state — all dependencies flow in through the constructor. The test suite swaps real implementations for mocks by passing different objects at construction time.
+
+### Session-per-message pattern
+
+Subscriber workers create a new `AsyncSession` for each message (via `get_async_session()` in `__main__.py`). The session is passed into the service constructor, giving the service explicit commit control. One failed message does not roll back others.
+
+### Config pattern
+
+Worker-specific settings extend `pydantic_settings.BaseSettings`. Each worker reads its own env vars alongside the shared `Settings`. `@lru_cache` is used for singleton config instances.
+
+### Commit-before-publish invariant
+
+All workers call `await session.commit()` before calling `queue_publisher.publish()`. This ensures that when `QUEUE_BACKEND=sync` dispatches inline (the subscriber opens a new session in-process), the committed rows are visible. The same ordering is correct for Pub/Sub — rows are durable before any async consumer can act on a message.
+
+### Integration test pattern
+
+Integration tests use:
+- **Real async `Session`** backed by Docker Postgres
+- **Real repos and storage** — verifies the wiring between service, repo, and storage layers
+- **Mocked HTTP** only — no actual network calls to source servers
+- **`SyncQueueBroker` with recording handler** — captures published messages without triggering downstream workers; avoids `ValueError` from unregistered topics
+- **Table truncation before each test** (`TRUNCATE documents CASCADE`) — ensures test isolation even when services commit data
+
 ## Design Principles
 
 - **Interface abstraction everywhere:** LLM provider, embedding model, storage backend (GCS/local), queue (Pub/Sub/local) — all swappable via config for local dev and future flexibility.
