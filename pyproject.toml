@@ -16,6 +16,8 @@ dev = [
     "worker-crawl",
     "worker-download",
     "worker-parse",
+    "worker-metadata",
+    "ai",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "respx>=0.21",
@@ -26,6 +28,8 @@ shared = { workspace = true }
 worker-crawl = { workspace = true }
 worker-download = { workspace = true }
 worker-parse = { workspace = true }
+worker-metadata = { workspace = true }
+ai = { workspace = true }
 
 [tool.ruff]
 target-version = "py312"

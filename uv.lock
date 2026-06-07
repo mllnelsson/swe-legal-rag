@@ -301,6 +301,7 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "ai" },
     { name = "alembic" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -309,6 +310,7 @@ dev = [
     { name = "shared" },
     { name = "worker-crawl" },
     { name = "worker-download" },
+    { name = "worker-metadata" },
     { name = "worker-parse" },
 ]
 
@@ -316,6 +318,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "ai", editable = "packages/ai" },
     { name = "alembic", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
@@ -324,6 +327,7 @@ dev = [
     { name = "shared", editable = "packages/shared" },
     { name = "worker-crawl", editable = "packages/worker-crawl" },
     { name = "worker-download", editable = "packages/worker-download" },
+    { name = "worker-metadata", editable = "packages/worker-metadata" },
     { name = "worker-parse", editable = "packages/worker-parse" },
 ]
 
