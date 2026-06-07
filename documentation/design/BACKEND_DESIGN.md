@@ -295,6 +295,52 @@ Each message transitions the task through: `pending → processing → completed
 - If `document.gcs_uri` is `None`, the task is marked `failed` (PDF not yet stored).
 - On any exception during parsing or storage retrieval: session is rolled back, task is marked `failed` with the error message, then logged.
 
+## Metadata Worker (`packages/worker-metadata/`)
+
+Long-running subscriber. Consumes metadata tasks from the metadata topic, extracts structured metadata from `documents.raw_text` using rule-based patterns first and LLM fallback for missing fields, updates the document record, and enqueues extract tasks.
+
+### Module layout
+
+| Module | Role |
+|---|---|
+| `config.py` | `MetadataSettings(BaseSettings)` — reads `METADATA_TOPIC` (default `"metadata"`), `METADATA_NEXT_TOPIC` (default `"extract"`). `get_metadata_settings()` is `@lru_cache`. |
+| `patterns.py` | `MetadataResult` dataclass + per-field pure extraction functions + combining function `extract_metadata_rule_based()` + `is_complete()` helper. |
+| `service.py` | `process_metadata()` async function — orchestration using functional DI (all deps as parameters). |
+| `__main__.py` | Entry point. Loads `.env`, wires dependencies, defines `_llm_extractor` closure, registers handler, installs signal handlers, calls `subscriber.start()`. |
+
+### Extraction strategy
+
+Two-stage extraction with rule-based first, LLM fallback only for missing fields:
+
+1. **Rule-based (`patterns.py`):** Per-field pure functions using `re` patterns for Swedish legal document formats.
+   - `extract_case_number`: Matches `Dnr`, `Diarienummer`, `ÖN`, or bare `YYYY-NNN` patterns.
+   - `extract_decision_date`: Tries ISO (`2023-01-15`), Swedish textual (`den 15 januari 2023`), Swedish abbreviated (`15 jan 2023`). Maps Swedish month names to month numbers.
+   - `extract_decision_outcome`: Searches near document end for `bifaller/avslår/avvisar överklagandet` and returns the surrounding sentence.
+   - `extract_category`: Matches `Ärende:`, `Ämne:`, or `Kategori:` header lines.
+2. **LLM fallback (via `ai` package):** Only invoked when rule-based extraction leaves fields `None`. `extract_metadata_llm(raw_text, missing_fields)` in `packages/ai/src/ai/_metadata.py` calls `llm_core.generate_structured()` with a `_LLMFields` Pydantic schema and returns `MetadataLLMResult`.
+3. **Merge:** Rule-based values always win. LLM values only fill fields that remain `None` after rule-based extraction.
+
+All metadata fields are freeform `VARCHAR` — no enum constraints. Missing metadata (all fields `None`) is a valid outcome; the task still completes.
+
+### AI Package (`packages/ai/`) — current contents
+
+- **`_metadata.py`:** `extract_metadata_llm(raw_text, missing_fields) -> MetadataLLMResult`. Uses `llm_core.generate_structured()` with a structured Pydantic response. Handles ISO date string → `datetime.date` conversion. Returns `MetadataLLMResult` (Pydantic model with `case_number`, `decision_date`, `decision_outcome`, `category`).
+- **`__init__.py`:** Exports `extract_metadata_llm` and `MetadataLLMResult`.
+
+### Service layer (functional DI)
+
+`process_metadata(document_id, task_id, document_repo, task_repo, queue_publisher, rule_extractor, llm_extractor, session, next_topic)` is a module-level async function. `rule_extractor: Callable[[str], MetadataResult]` and `llm_extractor: Callable[[str, list[str]], Awaitable[MetadataResult]]` are injected — the service has no knowledge of the concrete LLM provider.
+
+### Error handling
+
+- LLM failure is non-fatal: logged as warning, extraction continues with partial metadata.
+- Only DB errors and unhandled crashes mark the task as `failed`.
+- Missing metadata is valid — task completes with `None` fields written to the document.
+
+### Task checkpointing
+
+Each message transitions the task through: `pending → processing → completed | failed`. Processing status committed immediately before I/O begins. Follows the commit-before-publish invariant (session committed before publishing to extract topic).
+
 ## Worker Architecture
 
 ### Two worker patterns
