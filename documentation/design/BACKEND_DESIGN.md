@@ -252,6 +252,49 @@ Multiple guard layers: (1) task status check — if already `completed`, skip; (
 
 Per-message errors are caught in `handle_message()`. On failure: session is rolled back, task is marked `failed` with the error message committed in a fresh transaction, and the error is logged. The exception is not re-raised — one failed message does not affect others. A 0.5s rate-limit sleep follows each successful download.
 
+## Parse Worker (`packages/worker-parse/`)
+
+Long-running subscriber. Consumes parse tasks from the parse topic, retrieves the stored PDF bytes from the storage backend, extracts text using pypdfium2, stores the text in `documents.raw_text`, and enqueues metadata extraction tasks.
+
+### Module layout
+
+| Module | Role |
+|---|---|
+| `config.py` | `ParseSettings(BaseSettings)` — reads `PARSE_TOPIC` (default `"parse"`), `PARSE_NEXT_TOPIC` (default `"metadata"`). `get_parse_settings()` is `@lru_cache`. |
+| `parser.py` | `Parser` Protocol + `parse_pdf_with_pypdfium2()` function. The protocol decouples the service from the concrete PDF library. `ParseError` is the domain exception for parse failures. |
+| `service.py` | `process_parse()` async function — orchestration using functional dependency injection (all deps as parameters). |
+| `__main__.py` | Entry point. Loads `.env`, wires dependencies, registers handler via `subscriber.subscribe()`, installs signal handlers, calls `subscriber.start()`. |
+
+### Parser abstraction
+
+`Parser` is a `typing.Protocol` with a single `__call__(pdf_bytes: bytes) -> str` signature. Any function with this signature satisfies the protocol without inheritance. The concrete `parse_pdf_with_pypdfium2` function:
+- Loads the PDF from bytes using `pypdfium2.PdfDocument(pdf_bytes)`
+- Iterates pages, extracts text via `page.get_textpage().get_text_range()`
+- Joins page texts with `"\n\n---\n\n"` separators
+- Wraps pypdfium2 exceptions in `ParseError`
+
+`pypdfium2` uses the Apache 2.0 license (permissive), unlike PyMuPDF/pymupdf4llm which is AGPL.
+
+### Service layer (functional DI)
+
+`process_parse(document_id, task_id, storage, document_repo, task_repo, queue_publisher, parser, session, next_topic)` is a module-level async function. All dependencies are passed as arguments — no global state, no class instance. The `__main__.py` handler closure captures the shared infrastructure objects (storage, publisher) and creates per-message repos.
+
+Storage retrieval uses the deterministic key `documents/{document_id}/original.pdf`, which matches the key the download worker used when storing the PDF.
+
+### Task checkpointing
+
+Each message transitions the task through: `pending → processing → completed | failed`. The processing status is committed immediately after it is set so it is durable before PDF I/O begins.
+
+### Transaction ordering
+
+`process_parse()` calls `await session.commit()` BEFORE publishing to the metadata topic, following the commit-before-publish invariant shared by all workers.
+
+### Idempotency and error handling
+
+- If the task is already `completed` or not found, the message is skipped.
+- If `document.gcs_uri` is `None`, the task is marked `failed` (PDF not yet stored).
+- On any exception during parsing or storage retrieval: session is rolled back, task is marked `failed` with the error message, then logged.
+
 ## Worker Architecture
 
 ### Two worker patterns
@@ -261,7 +304,7 @@ Per-message errors are caught in `handle_message()`. On failure: session is roll
 
 ### Service layer pattern
 
-Each worker's service class takes `session`, repos, storage, and queue via constructor injection. No global state — all dependencies flow in through the constructor. The test suite swaps real implementations for mocks by passing different objects at construction time.
+Workers use dependency injection with no global state. Earlier workers (crawl, download) use a service class with constructor injection. The parse worker (and subsequent workers) use a functional approach: a module-level `process_*` async function that takes all dependencies as parameters. Both patterns are equivalent — the `__main__.py` handler closure captures the shared infrastructure objects and passes them on each call.
 
 ### Session-per-message pattern
 

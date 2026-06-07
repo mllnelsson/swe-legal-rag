@@ -3,7 +3,14 @@ name = "worker-parse"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "pypdfium2>=4.0",
     "shared",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
 ]
 
 [tool.uv.sources]
