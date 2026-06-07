@@ -1,0 +1,23 @@
+import pytest
+
+from worker_parse.parser import ParseError, Parser, parse_pdf_with_pypdfium2
+
+
+def test_parse_valid_pdf_returns_nonempty_string(minimal_pdf_bytes: bytes) -> None:
+    result = parse_pdf_with_pypdfium2(minimal_pdf_bytes)
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert "Test Content" in result
+
+
+def test_parse_invalid_bytes_raises_parse_error() -> None:
+    with pytest.raises(ParseError):
+        parse_pdf_with_pypdfium2(b"not a pdf at all")
+
+
+def test_custom_function_satisfies_parser_protocol() -> None:
+    def my_parser(pdf_bytes: bytes) -> str:
+        return f"parsed {len(pdf_bytes)} bytes"
+
+    parser: Parser = my_parser
+    assert parser(b"hello") == "parsed 5 bytes"
