@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import signal
 
 from dotenv import load_dotenv
 
-from ai import MetadataLLMResult, extract_metadata_llm
+from ai.services import extract_metadata as _ai_extract_metadata
 from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_publisher, create_queue_subscriber
@@ -21,12 +22,18 @@ logger = logging.getLogger(__name__)
 
 
 async def _llm_extractor(raw_text: str, missing_fields: list[str]) -> MetadataResult:
-    llm_result: MetadataLLMResult = await extract_metadata_llm(raw_text, missing_fields)
+    ai_result = await _ai_extract_metadata(raw_text)
+    decision_date: datetime.date | None = None
+    if ai_result.decision_date:
+        try:
+            decision_date = datetime.date.fromisoformat(ai_result.decision_date)
+        except ValueError:
+            pass
     return MetadataResult(
-        case_number=llm_result.case_number if "case_number" in missing_fields else None,
-        decision_date=llm_result.decision_date if "decision_date" in missing_fields else None,
-        decision_outcome=llm_result.decision_outcome if "decision_outcome" in missing_fields else None,
-        category=llm_result.category if "category" in missing_fields else None,
+        case_number=ai_result.case_number,
+        decision_date=decision_date,
+        decision_outcome=ai_result.decision_outcome,
+        category=ai_result.category,
     )
 
 
