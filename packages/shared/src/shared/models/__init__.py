@@ -6,6 +6,7 @@ from shared.models.document_reference import DocumentReference
 from shared.models.entity import Entity
 from shared.models.session import Session
 from shared.models.task import Task
+from shared.models.unresolved_reference import UnresolvedReference
 
 __all__ = [
     "Base",
@@ -16,4 +17,5 @@ __all__ = [
     "Entity",
     "Session",
     "Task",
+    "UnresolvedReference",
 ]

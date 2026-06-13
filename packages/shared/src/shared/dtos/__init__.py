@@ -5,6 +5,7 @@ from shared.dtos.document_reference import DocumentReferenceCreate, DocumentRefe
 from shared.dtos.entity import EntityCreate, EntityRead
 from shared.dtos.session import SessionCreate, SessionRead, SessionUpdate
 from shared.dtos.task import TaskCreate, TaskRead, TaskStatusUpdate
+from shared.dtos.unresolved_reference import UnresolvedReferenceCreate, UnresolvedReferenceRead
 
 __all__ = [
     "ChunkCreate",
@@ -24,4 +25,6 @@ __all__ = [
     "TaskCreate",
     "TaskRead",
     "TaskStatusUpdate",
+    "UnresolvedReferenceCreate",
+    "UnresolvedReferenceRead",
 ]

@@ -5,6 +5,7 @@ from shared.repositories.document_reference import DocumentReferenceRepository
 from shared.repositories.entity import EntityRepository
 from shared.repositories.session import SessionRepository
 from shared.repositories.task import TaskRepository
+from shared.repositories.unresolved_reference import UnresolvedReferenceRepository
 
 __all__ = [
     "ChunkRepository",
@@ -14,4 +15,5 @@ __all__ = [
     "EntityRepository",
     "SessionRepository",
     "TaskRepository",
+    "UnresolvedReferenceRepository",
 ]

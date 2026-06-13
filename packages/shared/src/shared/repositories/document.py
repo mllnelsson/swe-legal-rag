@@ -37,6 +37,11 @@ class DocumentRepository:
         await self._session.refresh(doc)
         return DocumentRead.model_validate(doc)
 
+    async def get_by_case_number(self, case_number: str) -> DocumentRead | None:
+        result = await self._session.execute(select(Document).where(Document.case_number == case_number))
+        doc = result.scalar_one_or_none()
+        return DocumentRead.model_validate(doc) if doc else None
+
     async def list(self, skip: int = 0, limit: int = 100) -> list[DocumentRead]:
         result = await self._session.execute(select(Document).offset(skip).limit(limit))
         return [DocumentRead.model_validate(row) for row in result.scalars()]
