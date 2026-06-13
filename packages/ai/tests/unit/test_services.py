@@ -79,7 +79,10 @@ async def test_extract_entities() -> None:
             )
         ],
         references=[
-            ExtractedReference(target_case_number="2022-0100", reference_type="följer")
+            ExtractedReference(
+                case_number="2022-0100",
+                reference_context="Se ärende 2022-0100 för liknande avgörande.",
+            )
         ],
     )
     with patch("ai.services.generate_structured", new=AsyncMock(return_value=expected)):
@@ -87,7 +90,7 @@ async def test_extract_entities() -> None:
     assert len(result.entities) == 1
     assert result.entities[0].name == "överklaganderätt"
     assert len(result.references) == 1
-    assert result.references[0].target_case_number == "2022-0100"
+    assert result.references[0].case_number == "2022-0100"
 
 
 @pytest.mark.asyncio

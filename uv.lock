@@ -314,6 +314,7 @@ dev = [
     { name = "shared" },
     { name = "worker-crawl" },
     { name = "worker-download" },
+    { name = "worker-extract" },
     { name = "worker-metadata" },
     { name = "worker-parse" },
 ]
@@ -331,6 +332,7 @@ dev = [
     { name = "shared", editable = "packages/shared" },
     { name = "worker-crawl", editable = "packages/worker-crawl" },
     { name = "worker-download", editable = "packages/worker-download" },
+    { name = "worker-extract", editable = "packages/worker-extract" },
     { name = "worker-metadata", editable = "packages/worker-metadata" },
     { name = "worker-parse", editable = "packages/worker-parse" },
 ]

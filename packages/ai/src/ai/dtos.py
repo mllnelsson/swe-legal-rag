@@ -82,8 +82,8 @@ class ExtractedEntity(BaseModel):
 class ExtractedReference(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    target_case_number: str
-    reference_type: str
+    case_number: str
+    reference_context: str
 
 
 class EntityRequest(BaseModel):

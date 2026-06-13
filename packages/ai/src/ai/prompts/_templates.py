@@ -95,7 +95,7 @@ Schema:
     {"name": "entitetens namn", "type": "legal_concept|role|parish|regulation", "relevance": "primary|mentioned"}
   ],
   "references": [
-    {"target_case_number": "ärendenummer", "reference_type": "referenstyp"}
+    {"case_number": "ärendenummer", "reference_context": "meningen där referensen förekommer"}
   ]
 }
 
@@ -106,8 +106,30 @@ Entitetstyper:
 - regulation: lagar, förordningar och kyrkoordningens kapitel
 
 Relevans:
-- primary: central för detta beslut
-- mentioned: nämns i sammanhanget
+- primary: central för detta beslut (part i ärendet, beslutsämne, nämns i avgörandet)
+- mentioned: nämns i sammanhanget men är inte central
+
+Normalisering:
+- Skriv entitetsnamn i gemener i kanonisk form
+- Ta bort bestämda artiklar (t.ex. "kyrkoherde" inte "kyrkoherden")
+- Var konservativ: extrahera bara entiteter du är säker på
+
+Exempel:
+Text: "Kyrkoherden i Skattkärrens församling överklagade Göteborgs stifts beslut. \
+Nämnden avslår överklagandet med hänvisning till kyrkoordningen kapitel 32 § 5 \
+och hänvisar till ärende ÖN 2021-0345."
+Svar:
+{
+  "entities": [
+    {"name": "kyrkoherde", "type": "role", "relevance": "primary"},
+    {"name": "skattkärrens församling", "type": "parish", "relevance": "primary"},
+    {"name": "göteborgs stift", "type": "parish", "relevance": "mentioned"},
+    {"name": "kyrkoordningen kapitel 32 § 5", "type": "regulation", "relevance": "primary"}
+  ],
+  "references": [
+    {"case_number": "ÖN 2021-0345", "reference_context": "Nämnden avslår överklagandet och hänvisar till ärende ÖN 2021-0345."}
+  ]
+}
 
 Svara enbart med JSON, inga förklaringar."""
 
