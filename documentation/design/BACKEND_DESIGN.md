@@ -546,6 +546,59 @@ Cross-references where the target document is not yet in the corpus are stored i
 | `EXTRACT_TOPIC` | `extract` | `ExtractSettings` — subscribe topic |
 | `EXTRACT_NEXT_TOPIC` | `chunk` | `ExtractSettings` — topic published to on success |
 
+## Chunk Worker (`packages/worker-chunk/`)
+
+Long-running subscriber. Consumes chunk tasks from the chunk topic, generates a document-level summary via LLM, splits `documents.raw_text` into overlapping token-bounded chunks with the summary prepended (contextual retrieval), stores them in `chunks`, and enqueues embed tasks.
+
+### Module layout
+
+| Module | Role |
+|---|---|
+| `config.py` | `ChunkSettings(BaseSettings)` — reads `CHUNK_TOPIC` (default `"chunk"`), `CHUNK_NEXT_TOPIC` (default `"embed"`). `get_chunk_settings()` is `@lru_cache`. |
+| `chunker.py` | Pure functions: `split_into_chunks()` (sentence-aware, tiktoken-based) and `build_contextual_text()` |
+| `service.py` | `process_chunking()` async function — orchestration using functional DI (all deps as parameters) |
+| `__main__.py` | Entry point. Loads `.env`, wires dependencies, registers handler, installs signal handlers, calls `subscriber.start()` |
+
+### Chunking algorithm (`chunker.py`)
+
+`split_into_chunks(text, max_tokens=500, overlap_tokens=50, encoding_name="cl100k_base") -> list[str]`:
+
+1. Returns `[]` for empty/whitespace-only text
+2. Splits text into sentences by sentence-ending punctuation (`[.!?]` followed by whitespace) or blank lines (`\n{2,}`)
+3. Greedily accumulates sentences until adding the next would exceed `max_tokens`
+4. When full: emits chunk as `" ".join(current_sentences)`, then rewinds — retains trailing sentences totalling ≤ `overlap_tokens` as the start of the next chunk
+5. Single sentences exceeding `max_tokens` are emitted as their own chunk with no overlap
+
+**Key decisions:**
+- **tiktoken cl100k_base** — exact token counts, model-agnostic, fast
+- **Sentence-aware** — never splits mid-sentence; Swedish legal text has clear `.` boundaries
+- **50-token overlap** — last N sentences of the previous chunk repeat at the start of the next, preserving cross-boundary context for embedding
+
+`build_contextual_text(summary, chunk_text) -> str` produces `"{summary}\n\n---\n\n{chunk_text}"`. The summary is prepended to every chunk's `contextual_text` field — only `contextual_text` is embedded, never shown to users directly. `chunk_text` remains the raw extracted text.
+
+### `process_chunking()` (functional DI)
+
+`process_chunking(document_id, task_id, document_repo, chunk_repo, task_repo, queue_publisher, session, next_topic)`:
+
+1. Gets task; skips if already `completed`; marks `processing` and commits
+2. Validates document exists and has `raw_text`; marks `failed` if not
+3. Calls `ai.summarize_document(raw_text)` — Swedish legal summary in 2–3 sentences
+4. Stores summary: `document_repo.update(document_id, DocumentUpdate(summary=summary))`
+5. Splits raw text into chunks via `split_into_chunks()`
+6. Deletes existing chunks (`chunk_repo.delete_by_document_id`) for idempotency
+7. Bulk inserts `ChunkCreate` DTOs with both `chunk_text` and `contextual_text = build_contextual_text(summary, chunk_text)`
+8. Creates embed task, commits, publishes to embed topic
+9. Marks chunk task `completed`; on any exception: rolls back, marks `failed` with error message, re-raises
+
+Empty `raw_text` (not `None`) produces zero chunks — the task still completes and publishes to embed.
+
+### Config variables
+
+| Var | Default | Used by |
+|---|---|---|
+| `CHUNK_TOPIC` | `chunk` | `ChunkSettings` — subscribe topic |
+| `CHUNK_NEXT_TOPIC` | `embed` | `ChunkSettings` — topic published to on success |
+
 ## Worker Architecture
 
 ### Two worker patterns
