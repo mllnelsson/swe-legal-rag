@@ -356,7 +356,7 @@ Two-stage extraction with rule-based first, LLM fallback only for missing fields
    - `extract_decision_date`: Tries ISO (`2023-01-15`), Swedish textual (`den 15 januari 2023`), Swedish abbreviated (`15 jan 2023`). Maps Swedish month names to month numbers.
    - `extract_decision_outcome`: Searches near document end for `bifaller/avslår/avvisar överklagandet` and returns the surrounding sentence.
    - `extract_category`: Matches `Ärende:`, `Ämne:`, or `Kategori:` header lines.
-2. **LLM fallback (via `ai` package):** Only invoked when rule-based extraction leaves fields `None`. `extract_metadata_llm(raw_text, missing_fields)` in `packages/ai/src/ai/_metadata.py` calls `llm_core.generate_structured()` with a `_LLMFields` Pydantic schema and returns `MetadataLLMResult`.
+2. **LLM fallback (via `ai` package):** Only invoked when rule-based extraction leaves fields `None`. The `_llm_extractor` closure in `__main__.py` calls `ai.services.extract_metadata(raw_text)`, which renders the `METADATA_EXTRACTION` template and calls `llm_core.generate_structured()` returning `ai.dtos.MetadataResult`. The closure converts `decision_date` from ISO string to `datetime.date` before returning `worker_metadata.patterns.MetadataResult`.
 3. **Merge:** Rule-based values always win. LLM values only fill fields that remain `None` after rule-based extraction.
 
 All metadata fields are freeform `VARCHAR` — no enum constraints. Missing metadata (all fields `None`) is a valid outcome; the task still completes.
@@ -364,11 +364,11 @@ All metadata fields are freeform `VARCHAR` — no enum constraints. Missing meta
 ### AI Package (`packages/ai/`) — current contents
 
 - **`dtos.py`:** All domain DTOs (see AI Package section above). Imported directly by service functions and consumers.
+- **`services.py`:** Four async service functions — `decompose_query`, `extract_metadata`, `extract_entities`, `summarize_document`. Each renders a prompt template and calls `llm_core.generate_structured()` or `llm_core.generate()`.
 - **`embedding.py`:** `EmbeddingProvider` protocol, `EmbeddingConfig`, `create_embedding_provider` factory.
 - **`_local_embedding.py`:** `LocalEmbeddingProvider` using `sentence-transformers`. Lazy-imported by the factory; not part of the public API.
-- **`_metadata.py`:** `extract_metadata_llm(raw_text, missing_fields) -> MetadataLLMResult`. Uses `llm_core.generate_structured()` with a structured Pydantic response. Handles ISO date string → `datetime.date` conversion. Returns `MetadataLLMResult` (Pydantic model with `case_number`, `decision_date`, `decision_outcome`, `category`). _(Will be migrated into the prompts/services structure in a later task.)_
 - **`prompts/`:** `PromptTemplate` class and five template constants (see Prompt Templates section above).
-- **`__init__.py`:** Exports `extract_metadata_llm` and `MetadataLLMResult`.
+- **`__init__.py`:** Exports `decompose_query`, `extract_metadata`, `extract_entities`, `summarize_document`.
 
 ### Service layer (functional DI)
 
