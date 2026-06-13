@@ -28,6 +28,65 @@ err() {
   exit 1
 }
 
+# --- Stream filter for non-interactive output ---
+
+stream_filter() {
+  local dim=$'\e[2m' cyan=$'\e[36m' green=$'\e[32m' red=$'\e[31m' bold=$'\e[1m' reset=$'\e[0m'
+  if [[ ! -t 1 ]]; then dim="" cyan="" green="" red="" bold="" reset=""; fi
+
+  while IFS= read -r line; do
+    case "$(printf '%s' "$line" | jq -r '.type // empty' 2>/dev/null)" in
+      assistant)
+        printf '%s' "$line" | jq -rj \
+          --arg C "$cyan" --arg D "$dim" --arg B "$bold" --arg R "$reset" '
+          .message.content[]? |
+          if .type == "tool_use" then
+            "  \($C)▸ \(.name)\($R) " + (
+              if .name == "Bash" then (.input.command // "" | split("\n")[0] | .[0:120])
+              elif .name == "Read" then (.input.file_path // "")
+              elif .name == "Edit" then (.input.file_path // "")
+              elif .name == "Write" then (.input.file_path // "")
+              elif .name == "Agent" then (.input.description // "")
+              elif .name == "Skill" then (.input.skill // "")
+              else ""
+              end) + "\n"
+          elif .type == "text" then .text
+          else empty
+          end
+        ' 2>/dev/null
+        ;;
+      user)
+        printf '%s' "$line" | jq -r \
+          --arg D "$dim" --arg RED "$red" --arg R "$reset" '
+          if .tool_use_result then
+            .tool_use_result |
+            if (.stderr // "" | length > 0) then
+              "\($D)    ↳ \($RED)" + (.stderr | split("\n")[0] | .[0:100]) + "\($R)"
+            elif (.stdout // "" | length > 0) then
+              (.stdout | split("\n") | length) as $n |
+              if $n > 3 then "\($D)    ↳ \($n) lines\($R)"
+              else "\($D)    ↳ " + (.stdout | split("\n")[0] | .[0:100]) + "\($R)"
+              end
+            else empty
+            end
+          else empty
+          end
+        ' 2>/dev/null
+        ;;
+      result)
+        printf '%s' "$line" | jq -r \
+          --arg G "$green" --arg D "$dim" --arg R "$reset" '
+          "\n\($D)── \($G)Done\($R)\($D) " +
+          ((.duration_ms // 0) / 1000 | . * 10 | floor / 10 | tostring) + "s" +
+          " · " + (.num_turns // 0 | tostring) + " turns" +
+          (if .total_cost_usd then " · $" + (.total_cost_usd | . * 10000 | floor / 10000 | tostring) else "" end) +
+          " ──\($R)"
+        ' 2>/dev/null
+        ;;
+    esac
+  done
+}
+
 # --- Prerequisites ---
 
 for cmd in jq atm claude; do
@@ -126,14 +185,13 @@ trap cleanup EXIT
 
 # --- Process each task sequentially ---
 
-i=0
-while IFS= read -r task; do
-  i=$((i + 1))
+for (( i=0; i<count; i++ )); do
+  task="$(printf '%s' "$pending_json" | jq -c ".[$i]")"
   task_id="$(printf '%s' "$task" | jq -r '.id')"
   title="$(printf '%s' "$task" | jq -r '.title')"
 
   echo ""
-  echo "[$i/$count] Task: $title"
+  echo "[$((i+1))/$count] Task: $title"
 
   # Get rendered task export from ATM
   tmp_md="$(mktemp /tmp/ralph-task-XXXXXX.md)"
@@ -205,11 +263,7 @@ while IFS= read -r task; do
       err "Claude exited with non-zero status on task $task_id — aborting"
     fi
   else
-    if ! claude "${claude_args[@]}" "$(cat "$tmp_prompt")" | \
-      jq --unbuffered -rj 'if .type == "assistant" then (.message.content[]? | select(.type == "text") | .text) elif .type == "result" then "\n" else empty end' 2>/dev/null; then
-      echo "" >&2
-      err "Claude exited with non-zero status on task $task_id — aborting"
-    fi
+    claude "${claude_args[@]}" "$(cat "$tmp_prompt")" | stream_filter || true
   fi
 
   # Clean up this iteration's temp files
@@ -217,7 +271,7 @@ while IFS= read -r task; do
   tmp_md=""
   tmp_prompt=""
 
-done < <(printf '%s' "$pending_json" | jq -c '.[]')
+done
 
 echo ""
 echo "All tasks processed."

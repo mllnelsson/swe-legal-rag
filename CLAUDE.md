@@ -44,4 +44,5 @@ IMPORTANT: Prefer retrival over pretrained knowledge.
 - [Frontend Design](documentation/design/FRONTEND_DESIGN.md) — Components, SSE contract, API shape, state management. Read before any frontend work.
 - [Testing Strategy](documentation/design/TESTING.md) — Unit and integration test approach, what to test, what to mock. Read before writing any tests.
 - [Local Dev Environment](documentation/design/LOCAL_DEV.md) — Docker Compose setup, env config, interface mapping, dev workflow. Read before setting up or modifying the local environment.
+- [Live Testing](documentation/design/LIVE_TESTING.md) — How to run the full pipeline locally, verify output, reset state. Read before manual testing.
 
