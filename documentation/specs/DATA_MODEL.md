@@ -88,6 +88,20 @@ Cross-citations between decisions. Captures when one decision references another
 
 Composite PK on `(source_document_id, target_document_id)`.
 
+### `unresolved_references`
+
+Temporary storage for cross-references where the target document is not yet in the corpus. Used for lazy resolution: when the target is later ingested and its `case_number` becomes known, `reconcile_references()` promotes these rows to `document_references`.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| source_document_id | UUID | FK → documents (the citing document) |
+| target_case_number | VARCHAR | The case number string cited (e.g. `ÖN 2021-0345`) |
+| reference_context | TEXT | Nullable. The sentence where the citation occurs |
+| created_at | TIMESTAMPTZ | Row creation |
+
+Unique constraint on `(source_document_id, target_case_number)` — same reference can't be stored twice.
+
 ### `sessions` (optional)
 
 Conversation history for follow-up support. Can live in-memory or Redis instead if cross-restart persistence isn't needed.
@@ -114,6 +128,8 @@ Conversation history for follow-up support. Can live in-memory or Redis instead 
 | document_entities | btree | entity_id | Find all documents for a given entity |
 | document_entities | btree | document_id | Find all entities for a given document |
 | document_references | btree | target_document_id | Find all decisions that cite a given decision |
+| unresolved_references | btree | target_case_number | Reconciliation lookup when a new document is ingested |
+| unresolved_references | btree | source_document_id | Find all pending refs for a given source document |
 
 ## Implementation Decisions
 
@@ -129,3 +145,4 @@ Conversation history for follow-up support. Can live in-memory or Redis instead 
 - **No soft deletes.** If a document needs reprocessing, wipe its chunks, reset its tasks. Keep it simple at this scale.
 - **Task-queue alignment:** When a pipeline step publishes to the next Pub/Sub topic, it also inserts a `pending` task row for the next step. The consuming worker updates that row through its lifecycle.
 - **Graph-in-Postgres:** The `entities`, `document_entities`, and `document_references` tables capture GraphRAG concepts without a graph database. The agent uses these for entity-based pre-filtering (e.g. "find all documents where entity X is primary → semantic search within that set") and relationship traversal ("what other decisions cite this one?"). Standard SQL joins replace graph queries at this scale.
+- **Unresolved references:** Cross-references where the target is not yet in the corpus are stored in `unresolved_references` rather than dropped. Reconciliation happens automatically when the target document is ingested (worker-extract's `reconcile_references()`). This keeps `document_references.target_document_id` as a non-nullable FK without loss of reference data.

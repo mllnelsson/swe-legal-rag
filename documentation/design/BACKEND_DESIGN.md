@@ -164,8 +164,12 @@ Async repository classes. Each takes an `AsyncSession` constructor argument and 
 
 Notable patterns:
 - `DocumentRepository.update`: calls `model_dump(exclude_none=True)` to only update fields provided in the update DTO
+- `DocumentRepository.get_by_case_number`: looks up a document by `case_number` field
 - `TaskRepository.update_status`: automatically sets `started_at` when transitioning to `processing`, `completed_at` when transitioning to `completed`/`failed`
 - `EntityRepository.upsert`: check-then-insert pattern using the `(name, type)` unique constraint
+- `DocumentEntityRepository.upsert`: check-then-insert; upgrades `relevance` from `mentioned` to `primary` if re-seen as primary
+- `DocumentReferenceRepository.upsert`: check-then-insert; idempotent insert using `(source_document_id, target_document_id)` composite PK
+- `UnresolvedReferenceRepository.upsert/get_by_target_case_number/delete`: manages unresolved cross-references pending reconciliation
 - `ChunkRepository.bulk_create`: uses `session.add_all()` for efficient batch insert
 
 ### `db.py`
@@ -450,7 +454,7 @@ Each message transitions the task through: `pending → processing → completed
 
 ## Extract Worker (`packages/worker-extract/`)
 
-Long-running subscriber (to be wired fully in a later task). Consumes extract tasks from the extract topic, extracts entities and cross-references from `documents.raw_text`, stores them in `entities`, `document_entities`, and `document_references`, and enqueues chunk tasks.
+Long-running subscriber. Consumes extract tasks from the extract topic, extracts entities and cross-references from `documents.raw_text`, stores them in `entities`, `document_entities`, `document_references`, and `unresolved_references`, and enqueues chunk tasks.
 
 ### Module layout
 
@@ -462,6 +466,11 @@ Long-running subscriber (to be wired fully in a later task). Consumes extract ta
 | `extractors/rule_based.py` | Pure functions + `RuleBasedStrategy` — regex-based extraction; handles Swedish inflections |
 | `extractors/llm.py` | `LLMStrategy` — delegates to `ai.extract_entities()`, maps `ai.dtos.EntityResult` to `ExtractionResult` |
 | `extractors/factory.py` | `ExtractStrategyMode` StrEnum; `get_extraction_strategy()` factory; `_FallbackStrategy` and merge logic |
+| `services/entity_service.py` | `normalize_entity_name()`, `persist_entities()` — normalizes, deduplicates, and upserts entities to `entities`+`document_entities` |
+| `services/reference_service.py` | `process_references()`, `reconcile_references()` — routes references to `document_references` or `unresolved_references`; reconciles lazy-unresolved refs |
+| `services/extraction_service.py` | `process_extraction()` — checkpointing wrapper: validates doc, runs strategy, persists, publishes to chunk topic |
+| `config.py` | `ExtractSettings(BaseSettings)` — reads `EXTRACT_TOPIC`, `EXTRACT_NEXT_TOPIC` |
+| `__main__.py` | Entry point. Loads `.env`, wires repos, registers handler via `subscriber.subscribe()`, installs signal handlers, calls `subscriber.start()` |
 
 ### Extraction strategies
 
@@ -485,6 +494,40 @@ Pure functions, no I/O:
 
 Entity names are normalized to lowercase. Each type of entity is deduplicated by (name) within the extraction run.
 
+### Entity persistence (`services/entity_service.py`)
+
+`normalize_entity_name(name)` lowercases and collapses whitespace. `persist_entities(entity_repo, doc_entity_repo, document_id, entities)`:
+1. Deduplicates within the batch (primary relevance wins over mentioned for same name+type key)
+2. Upserts each entity into `entities` via `EntityRepository.upsert` (check-then-insert; unique on `name, type`)
+3. Upserts the `document_entities` row via `DocumentEntityRepository.upsert` — upgrades relevance from `mentioned` to `primary` if the entity is re-seen as primary
+
+### Reference processing (`services/reference_service.py`)
+
+`process_references(doc_repo, ref_repo, unresolved_repo, source_document_id, source_case_number, references)`:
+- Skips self-references (where `ref.case_number == source_case_number`)
+- For each remaining reference: looks up `case_number` in `documents.case_number`
+  - If found → upserts into `document_references` (idempotent)
+  - If not found → upserts into `unresolved_references` (idempotent via `unique(source_document_id, target_case_number)`)
+
+`reconcile_references(unresolved_repo, ref_repo, document_id, case_number) -> int`:
+- Called after extraction for the current document's own `case_number`
+- Queries `unresolved_references` where `target_case_number` matches
+- For each match: creates a `document_references` row, deletes the `unresolved_references` row
+- Returns the count of resolved references
+
+### Unresolved references (lazy cross-reference resolution)
+
+Cross-references where the target document is not yet in the corpus are stored in `unresolved_references` rather than dropped. The table has a unique constraint on `(source_document_id, target_case_number)` so the same reference can't be stored twice. When the target document is later ingested and its `case_number` is known, `reconcile_references()` converts the unresolved rows to proper `document_references` rows.
+
+### `process_extraction()` (functional DI, same pattern as `process_metadata`)
+
+`process_extraction(document_id, task_id, document_repo, task_repo, entity_repo, doc_entity_repo, ref_repo, unresolved_repo, queue_publisher, session, next_topic)`:
+1. Gets task; skips if already `completed`; marks `processing` and commits
+2. Validates document exists and has `raw_text`; marks `failed` if not
+3. Runs extraction strategy, persists entities, processes references, reconciles
+4. Creates chunk task, commits, publishes to next topic, marks `completed`
+5. On any exception: rolls back, marks `failed` with error message; does not re-raise
+
 ### Worker-extract DTOs (`models.py`)
 
 | Type | Fields |
@@ -500,6 +543,8 @@ Entity names are normalized to lowercase. Each type of entity is deduplicated by
 | Var | Default | Used by |
 |---|---|---|
 | `EXTRACT_STRATEGY` | `rule_based_with_llm_fallback` | `get_extraction_strategy()` — selects extraction approach |
+| `EXTRACT_TOPIC` | `extract` | `ExtractSettings` — subscribe topic |
+| `EXTRACT_NEXT_TOPIC` | `chunk` | `ExtractSettings` — topic published to on success |
 
 ## Worker Architecture
 
