@@ -653,6 +653,16 @@ Long-running subscriber. Terminal pipeline step — consumes embed tasks from th
 
 Workers use dependency injection with no global state. Earlier workers (crawl, download) use a service class with constructor injection. The parse worker (and subsequent workers) use a functional approach: a module-level `process_*` async function that takes all dependencies as parameters. Both patterns are equivalent — the `__main__.py` handler closure captures the shared infrastructure objects and passes them on each call.
 
+**Worker lifecycle (subscriber workers):**
+
+1. Receive queue message (`task_id`, `document_id`, `payload`)
+2. Mark task `processing` and commit (checkpoint — durable before I/O begins)
+3. Call `service.process_*()` — business logic
+4. Mark task `completed`, commit, publish to next topic (commit-before-publish invariant)
+5. On any exception: rollback session, mark task `failed` with `error_message`, commit; re-raise if caller needs to see it
+
+The `process_*` function never swallows exceptions silently — either it completes cleanly or the task row reflects the failure.
+
 ### Session-per-message pattern
 
 Subscriber workers create a new `AsyncSession` for each message (via `get_async_session()` in `__main__.py`). The session is passed into the service constructor, giving the service explicit commit control. One failed message does not roll back others.

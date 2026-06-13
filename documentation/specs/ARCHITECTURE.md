@@ -26,9 +26,13 @@ Queue-driven (Pub/Sub), each step is a Cloud Run worker consuming from a topic a
 
 **Step 5 — Entity & Reference Extraction:** Extract entities (legal concepts, roles, parishes, regulations) and cross-references to other decisions. LLM-assisted (cheap model) — one-time ingestion cost. Populates the graph-in-Postgres layer: `entities`, `document_entities`, `document_references`. Gives the retrieval agent entity-based pre-filtering and relationship traversal without a graph database. Checkpoint: entities and references persisted.
 
-**Step 6 — Contextual Chunking:** Generate a document-level summary first, then chunk the document. Each chunk gets the summary prepended before embedding — the contextual retrieval trick. Gives every chunk awareness of the whole document's context. Checkpoint: chunks stored with parent doc reference.
+**Step 6 — Contextual Chunking:** Generate a document-level summary first (Gemini Flash via `ai.summarize_document()`), then chunk the document. Each chunk gets the summary prepended before embedding — the contextual retrieval trick. Gives every chunk awareness of the whole document's context. Checkpoint: chunks stored with parent doc reference.
 
-**Step 7 — Embed & Index:** Embed chunks using a multilingual model with strong Swedish support (candidates: Cohere embed-multilingual, or open-source e5-multilingual for zero cost). Store embeddings + chunk text + metadata. Checkpoint: vectors indexed.
+*Implementation:* Subscriber worker (`worker-chunk`). Token-based chunking: ~500 tokens per chunk, ~50 token overlap, tiktoken `cl100k_base` encoding. Sentence-aware boundaries: splits on sentence-ending punctuation (`[.!?]` followed by whitespace) or blank lines, never mid-sentence. Overlap is implemented by rewinding — trailing sentences totalling ≤ 50 tokens are retained as the start of the next chunk. Contextual retrieval pattern: `summary\n\n---\n\nchunk_text` stored in `contextual_text`. The `chunk_text` column retains the raw text for user-facing citations. Idempotency: existing chunks are deleted before re-inserting. Publishes to the embed topic.
+
+**Step 7 — Embed & Index:** Embed chunks using `intfloat/multilingual-e5-base` (e5-multilingual, 768 dimensions). Store as pgvector `VECTOR(768)`. Swedish full-text index via `tsvector` column. Terminal pipeline step — no downstream queue. Checkpoint: embeddings stored.
+
+*Implementation:* Subscriber worker (`worker-embed`). Embeds `contextual_text` (falls back to `chunk_text` if None) in a single batch call via the `ai.EmbeddingProvider` abstraction. Local provider (`sentence-transformers`) used by default — no API key required. Updates the `embedding` column via bulk UPDATE. The `tsv` (tsvector) column is `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` — PostgreSQL populates it automatically at chunk INSERT time; the embed worker does not touch it. HNSW index for ANN vector search, GIN index for full-text search, both functional after embed completes.
 
 ## 2. Storage Layer
 

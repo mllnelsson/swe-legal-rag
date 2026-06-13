@@ -82,6 +82,9 @@ REDIS_URL=redis://localhost:6379
 | `DOWNLOAD_MAX_RETRIES` | `3` | Max retry attempts for transient errors |
 | `DOWNLOAD_RATE_LIMIT_DELAY` | `0.5` | Seconds to sleep after each successful download |
 | `EXTRACT_STRATEGY` | `rule_based_with_llm_fallback` | Extraction strategy for worker-extract: `rule_based` (regex only, no LLM cost), `llm` (LLM only — requires a configured LLM provider), `rule_based_with_llm_fallback` (regex first, LLM when result is sparse) |
+| `CHUNK_TOPIC` | `chunk` | Queue topic worker-chunk subscribes to |
+| `CHUNK_NEXT_TOPIC` | `embed` | Queue topic worker-chunk publishes to |
+| `EMBED_TOPIC` | `embed` | Queue topic worker-embed subscribes to |
 
 ## Running the Pipeline Locally
 
@@ -94,7 +97,19 @@ uv run --package worker-crawl python -m worker_crawl
 # Or run each worker independently (useful with pubsub or for debugging):
 uv run --package worker-crawl python -m worker_crawl
 uv run --package worker-download python -m worker_download
+uv run --package worker-parse python -m worker_parse
+uv run --package worker-metadata python -m worker_metadata
+uv run --package worker-extract python -m worker_extract
+uv run --package worker-chunk python -m worker_chunk
+uv run --package worker-embed python -m worker_embed
 ```
+
+**worker-chunk notes:**
+- Requires `GEMINI_API_KEY` in `.env` — summary generation calls Gemini Flash via the `ai` package.
+
+**worker-embed notes:**
+- Default `EMBEDDING_PROVIDER=local` with `EMBEDDING_MODEL=e5-multilingual` runs embedding via `sentence-transformers` locally — no API key required.
+- First run downloads `intfloat/multilingual-e5-base` (~1.1 GB one-time to the HuggingFace cache). Subsequent runs use the cached model.
 
 ## Interface Mapping
 

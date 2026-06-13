@@ -133,15 +133,17 @@ Conversation history for follow-up support. Can live in-memory or Redis instead 
 
 ## Implementation Decisions
 
-- **Embedding dimension**: Configurable via `EMBEDDING_DIMENSION` environment variable, default `768` (e5-multilingual). Change to `1024` for Cohere. Value is read at application startup from `shared/config.py` and applied to both the SQLAlchemy model and the Alembic migration.
-- **tsvector column**: Implemented as a PostgreSQL `GENERATED ALWAYS AS ... STORED` column: `to_tsvector('swedish', chunk_text)`. Computed at the DB layer — no application-side maintenance needed.
+- **Embedding dimension**: Locked at `VECTOR(768)` for `intfloat/multilingual-e5-base` (e5-multilingual). Configurable via `EMBEDDING_DIMENSION` environment variable, default `768`. Change to `1024` for Cohere — requires both env var update and a new migration recreating the `chunks.embedding` column. Value is read at application startup from `shared/config.py` and applied to both the SQLAlchemy model and the Alembic migration.
+- **tsvector column**: `chunks.tsv` is a `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` column. PostgreSQL computes and stores it automatically at INSERT time when `chunk_text` is written (during the chunk step). The embed worker does not touch it — attempting to UPDATE a `GENERATED ALWAYS STORED` column fails with a PostgreSQL error.
 - **Async repositories**: All repository classes use SQLAlchemy `AsyncSession`. Application code accesses the database exclusively through the async path.
 
 ## Design Notes
 
 - **Nullable metadata fields:** Each pipeline step fills in its columns progressively. A document with `gcs_uri` set but `raw_text` null means download succeeded but parsing hasn't run yet. Combined with `tasks` this gives full observability.
-- **`contextual_text` vs `chunk_text`:** Stored separately. `chunk_text` is what the user sees in citations. `contextual_text` (document summary prepended) is what gets embedded and searched against.
-- **tsvector Swedish config:** Postgres supports Swedish stemming and stop words via `to_tsvector('swedish', chunk_text)`. Set on insert or via generated column.
+- **`contextual_text` vs `chunk_text`:** Stored separately. `chunk_text` is what the user sees in citations. `contextual_text` (document summary prepended via `summary\n\n---\n\nchunk_text`) is what gets embedded and searched against. Never shown to end users.
+- **tsvector Swedish config:** Postgres supports Swedish stemming and stop words via `to_tsvector('swedish', chunk_text)`. Populated automatically via `GENERATED ALWAYS AS ... STORED` at chunk INSERT time — no application-side maintenance.
+- **Idempotency pattern:** Re-processing a document deletes existing chunks before re-inserting (DELETE+INSERT). Embeddings are updated in-place via UPDATE on the `embedding` column — no chunk rows are recreated.
+- **Chunk sizing rationale:** ~500 tokens per chunk balances retrieval granularity with context preservation. Sentence-aware boundaries prevent mid-sentence splits. 50-token overlap preserves cross-boundary context for embedding.
 - **No soft deletes.** If a document needs reprocessing, wipe its chunks, reset its tasks. Keep it simple at this scale.
 - **Task-queue alignment:** When a pipeline step publishes to the next Pub/Sub topic, it also inserts a `pending` task row for the next step. The consuming worker updates that row through its lifecycle.
 - **Graph-in-Postgres:** The `entities`, `document_entities`, and `document_references` tables capture GraphRAG concepts without a graph database. The agent uses these for entity-based pre-filtering (e.g. "find all documents where entity X is primary → semantic search within that set") and relationship traversal ("what other decisions cite this one?"). Standard SQL joins replace graph queries at this scale.
