@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 
-from llm_core import LLMProvider, LLMResponse, generate, generate_structured
+from llm_core import LLMProvider, LLMResponse, generate, generate_stream, generate_structured
 
-from ai.dtos import DecomposeResult, EntityResult, MetadataResult, SummarizeResult
+from ai.dtos import DecomposeResult, EntityResult, MetadataResult, SummarizeResult, SynthesizeRequest
 from ai.prompts import (
+    ANSWER_SYNTHESIS,
     DOCUMENT_SUMMARIZATION,
     ENTITY_EXTRACTION,
     METADATA_EXTRACTION,
@@ -60,3 +62,21 @@ async def summarize_document(
     messages = DOCUMENT_SUMMARIZATION.render(context)
     response: LLMResponse = await generate(messages, provider=provider)
     return SummarizeResult(summary=response.message.content)
+
+
+async def synthesize_answer(
+    request: SynthesizeRequest,
+    *,
+    provider: LLMProvider | None = None,
+) -> AsyncIterator[str]:
+    formatted_chunks = "".join(
+        f"[Mål {chunk.case_number}] {chunk.chunk_text}\n" for chunk in request.chunks
+    )
+    context = {
+        "question": request.question,
+        "chunks": formatted_chunks,
+        "conversation_history": json.dumps(request.conversation_history or [], ensure_ascii=False),
+    }
+    messages = ANSWER_SYNTHESIS.render(context)
+    async for token in generate_stream(messages, provider=provider):
+        yield token

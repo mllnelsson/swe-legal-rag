@@ -5,18 +5,21 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from ai.dtos import (
+    ChunkContext,
     DecomposeResult,
     EntityResult,
     ExtractedEntity,
     ExtractedReference,
     MetadataResult,
     SummarizeResult,
+    SynthesizeRequest,
 )
 from ai.services import (
     decompose_query,
     extract_entities,
     extract_metadata,
     summarize_document,
+    synthesize_answer,
 )
 from llm_core import LLMResponse, Message, Role
 
@@ -98,3 +101,53 @@ async def test_summarize_document() -> None:
         result = await summarize_document("Dokumenttext...")
     assert isinstance(result, SummarizeResult)
     assert result.summary == "En kortfattad sammanfattning av ärendet."
+
+
+@pytest.mark.asyncio
+async def test_synthesize_answer_streams_tokens() -> None:
+    expected_tokens = ["Enligt ", "beslut ", "12/2023..."]
+
+    async def mock_generate_stream(*args: object, **kwargs: object):  # type: ignore[return]
+        for token in expected_tokens:
+            yield token
+
+    request = SynthesizeRequest(
+        question="Vad gäller för överklaganden?",
+        chunks=[
+            ChunkContext(
+                case_number="12/2023",
+                chunk_text="Nämnden beslutar att bifalla överklagandet.",
+                score=0.95,
+            )
+        ],
+    )
+
+    with patch("ai.services.generate_stream", mock_generate_stream):
+        tokens: list[str] = []
+        async for token in synthesize_answer(request):
+            tokens.append(token)
+
+    assert tokens == expected_tokens
+
+
+@pytest.mark.asyncio
+async def test_synthesize_answer_uses_answer_synthesis_template() -> None:
+    captured_messages: list[Message] = []
+
+    async def mock_generate_stream(messages: list[Message], **kwargs: object):  # type: ignore[return]
+        captured_messages.extend(messages)
+        yield "token"
+
+    request = SynthesizeRequest(
+        question="Vad händer om man missar en deadline?",
+        chunks=[
+            ChunkContext(case_number="7/2022", chunk_text="Överklagandet avvisas.", score=0.8)
+        ],
+    )
+
+    with patch("ai.services.generate_stream", mock_generate_stream):
+        async for _ in synthesize_answer(request):
+            pass
+
+    assert any("7/2022" in m.content for m in captured_messages)
+    assert any("Vad händer" in m.content for m in captured_messages)
