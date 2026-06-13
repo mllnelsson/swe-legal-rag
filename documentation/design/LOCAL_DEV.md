@@ -81,6 +81,7 @@ REDIS_URL=redis://localhost:6379
 | `DOWNLOAD_REQUEST_TIMEOUT` | `60` | HTTP timeout (seconds) for PDF downloads |
 | `DOWNLOAD_MAX_RETRIES` | `3` | Max retry attempts for transient errors |
 | `DOWNLOAD_RATE_LIMIT_DELAY` | `0.5` | Seconds to sleep after each successful download |
+| `EXTRACT_STRATEGY` | `rule_based_with_llm_fallback` | Extraction strategy for worker-extract: `rule_based` (regex only, no LLM cost), `llm` (LLM only — requires a configured LLM provider), `rule_based_with_llm_fallback` (regex first, LLM when result is sparse) |
 
 ## Running the Pipeline Locally
 
