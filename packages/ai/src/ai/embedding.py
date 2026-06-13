@@ -27,7 +27,9 @@ class EmbeddingConfig(BaseSettings):
     model: str = Field(default="intfloat/multilingual-e5-base", alias="EMBEDDING_MODEL")
 
 
-def create_embedding_provider(config: EmbeddingConfig | None = None) -> EmbeddingProvider:
+def create_embedding_provider(
+    config: EmbeddingConfig | None = None,
+) -> EmbeddingProvider:
     if config is None:
         config = EmbeddingConfig()
 

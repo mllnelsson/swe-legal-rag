@@ -3,9 +3,21 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
-from llm_core import LLMProvider, LLMResponse, generate, generate_stream, generate_structured
+from llm_core import (
+    LLMProvider,
+    LLMResponse,
+    generate,
+    generate_stream,
+    generate_structured,
+)
 
-from ai.dtos import DecomposeResult, EntityResult, MetadataResult, SummarizeResult, SynthesizeRequest
+from ai.dtos import (
+    DecomposeResult,
+    EntityResult,
+    MetadataResult,
+    SummarizeResult,
+    SynthesizeRequest,
+)
 from ai.prompts import (
     ANSWER_SYNTHESIS,
     DOCUMENT_SUMMARIZATION,
@@ -23,7 +35,9 @@ async def decompose_query(
 ) -> DecomposeResult:
     context = {
         "question": question,
-        "conversation_history": json.dumps(conversation_history or [], ensure_ascii=False),
+        "conversation_history": json.dumps(
+            conversation_history or [], ensure_ascii=False
+        ),
     }
     messages = QUERY_DECOMPOSITION.render(context)
     return await generate_structured(messages, DecomposeResult, provider=provider)  # type: ignore[return-value]
@@ -75,7 +89,9 @@ async def synthesize_answer(
     context = {
         "question": request.question,
         "chunks": formatted_chunks,
-        "conversation_history": json.dumps(request.conversation_history or [], ensure_ascii=False),
+        "conversation_history": json.dumps(
+            request.conversation_history or [], ensure_ascii=False
+        ),
     }
     messages = ANSWER_SYNTHESIS.render(context)
     async for token in generate_stream(messages, provider=provider):

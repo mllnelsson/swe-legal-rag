@@ -38,20 +38,28 @@ def _has_placeholder(text: str) -> bool:
 
 class TestQueryDecomposition:
     def test_render_returns_two_messages(self):
-        messages = QUERY_DECOMPOSITION.render({"question": _QUESTION, "conversation_history": _CONVERSATION})
+        messages = QUERY_DECOMPOSITION.render(
+            {"question": _QUESTION, "conversation_history": _CONVERSATION}
+        )
         assert len(messages) == 2
 
     def test_render_roles(self):
-        messages = QUERY_DECOMPOSITION.render({"question": _QUESTION, "conversation_history": _CONVERSATION})
+        messages = QUERY_DECOMPOSITION.render(
+            {"question": _QUESTION, "conversation_history": _CONVERSATION}
+        )
         assert messages[0].role == Role.system
         assert messages[1].role == Role.user
 
     def test_no_unrendered_placeholders_in_user_message(self):
-        messages = QUERY_DECOMPOSITION.render({"question": _QUESTION, "conversation_history": _CONVERSATION})
+        messages = QUERY_DECOMPOSITION.render(
+            {"question": _QUESTION, "conversation_history": _CONVERSATION}
+        )
         assert not _has_placeholder(messages[1].content)
 
     def test_question_in_user_message(self):
-        messages = QUERY_DECOMPOSITION.render({"question": _QUESTION, "conversation_history": _CONVERSATION})
+        messages = QUERY_DECOMPOSITION.render(
+            {"question": _QUESTION, "conversation_history": _CONVERSATION}
+        )
         assert _QUESTION in messages[1].content
 
     def test_system_prompt_key_phrases(self):
@@ -61,23 +69,43 @@ class TestQueryDecomposition:
         assert "semantic_query" in system
 
     def test_empty_conversation_history(self):
-        messages = QUERY_DECOMPOSITION.render({"question": _QUESTION, "conversation_history": ""})
+        messages = QUERY_DECOMPOSITION.render(
+            {"question": _QUESTION, "conversation_history": ""}
+        )
         assert len(messages) == 2
         assert not _has_placeholder(messages[1].content)
 
 
 class TestAnswerSynthesis:
     def test_render_returns_two_messages(self):
-        messages = ANSWER_SYNTHESIS.render({"question": _QUESTION, "chunks": _CHUNKS, "conversation_history": _CONVERSATION})
+        messages = ANSWER_SYNTHESIS.render(
+            {
+                "question": _QUESTION,
+                "chunks": _CHUNKS,
+                "conversation_history": _CONVERSATION,
+            }
+        )
         assert len(messages) == 2
 
     def test_render_roles(self):
-        messages = ANSWER_SYNTHESIS.render({"question": _QUESTION, "chunks": _CHUNKS, "conversation_history": _CONVERSATION})
+        messages = ANSWER_SYNTHESIS.render(
+            {
+                "question": _QUESTION,
+                "chunks": _CHUNKS,
+                "conversation_history": _CONVERSATION,
+            }
+        )
         assert messages[0].role == Role.system
         assert messages[1].role == Role.user
 
     def test_no_unrendered_placeholders_in_user_message(self):
-        messages = ANSWER_SYNTHESIS.render({"question": _QUESTION, "chunks": _CHUNKS, "conversation_history": _CONVERSATION})
+        messages = ANSWER_SYNTHESIS.render(
+            {
+                "question": _QUESTION,
+                "chunks": _CHUNKS,
+                "conversation_history": _CONVERSATION,
+            }
+        )
         assert not _has_placeholder(messages[1].content)
 
     def test_system_prompt_key_phrases(self):
@@ -86,7 +114,9 @@ class TestAnswerSynthesis:
         assert "ärendenummer" in system.lower()
 
     def test_empty_conversation_history(self):
-        messages = ANSWER_SYNTHESIS.render({"question": _QUESTION, "chunks": _CHUNKS, "conversation_history": ""})
+        messages = ANSWER_SYNTHESIS.render(
+            {"question": _QUESTION, "chunks": _CHUNKS, "conversation_history": ""}
+        )
         assert not _has_placeholder(messages[1].content)
 
 
@@ -123,16 +153,22 @@ class TestMetadataExtraction:
 
 class TestEntityExtraction:
     def test_render_returns_two_messages(self):
-        messages = ENTITY_EXTRACTION.render({"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER})
+        messages = ENTITY_EXTRACTION.render(
+            {"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER}
+        )
         assert len(messages) == 2
 
     def test_render_roles(self):
-        messages = ENTITY_EXTRACTION.render({"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER})
+        messages = ENTITY_EXTRACTION.render(
+            {"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER}
+        )
         assert messages[0].role == Role.system
         assert messages[1].role == Role.user
 
     def test_no_unrendered_placeholders_in_user_message(self):
-        messages = ENTITY_EXTRACTION.render({"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER})
+        messages = ENTITY_EXTRACTION.render(
+            {"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER}
+        )
         assert not _has_placeholder(messages[1].content)
 
     def test_system_prompt_key_phrases(self):
@@ -142,7 +178,9 @@ class TestEntityExtraction:
         assert "legal_concept" in system
 
     def test_none_case_number_renders(self):
-        messages = ENTITY_EXTRACTION.render({"raw_text": _LEGAL_TEXT, "case_number": None})
+        messages = ENTITY_EXTRACTION.render(
+            {"raw_text": _LEGAL_TEXT, "case_number": None}
+        )
         assert len(messages) == 2
         assert not _has_placeholder(messages[1].content)
 

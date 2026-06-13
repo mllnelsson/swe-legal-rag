@@ -46,7 +46,9 @@ async def test_decompose_query_with_history() -> None:
         semantic_query="överklagande",
     )
     history = [{"role": "user", "content": "Tidigare fråga"}]
-    with patch("ai.services.generate_structured", new=AsyncMock(return_value=expected)) as mock:
+    with patch(
+        "ai.services.generate_structured", new=AsyncMock(return_value=expected)
+    ) as mock:
         await decompose_query("Fråga", conversation_history=history)
     messages = mock.call_args[0][0]
     assert "Tidigare fråga" in messages[1].content
@@ -71,8 +73,14 @@ async def test_extract_metadata() -> None:
 @pytest.mark.asyncio
 async def test_extract_entities() -> None:
     expected = EntityResult(
-        entities=[ExtractedEntity(name="överklaganderätt", type="legal_concept", relevance="primary")],
-        references=[ExtractedReference(target_case_number="2022-0100", reference_type="följer")],
+        entities=[
+            ExtractedEntity(
+                name="överklaganderätt", type="legal_concept", relevance="primary"
+            )
+        ],
+        references=[
+            ExtractedReference(target_case_number="2022-0100", reference_type="följer")
+        ],
     )
     with patch("ai.services.generate_structured", new=AsyncMock(return_value=expected)):
         result = await extract_entities("Dokumenttext...")
@@ -85,7 +93,9 @@ async def test_extract_entities() -> None:
 @pytest.mark.asyncio
 async def test_extract_entities_with_case_number() -> None:
     expected = EntityResult(entities=[], references=[])
-    with patch("ai.services.generate_structured", new=AsyncMock(return_value=expected)) as mock:
+    with patch(
+        "ai.services.generate_structured", new=AsyncMock(return_value=expected)
+    ) as mock:
         await extract_entities("Dokumenttext...", case_number="2023-0042")
     messages = mock.call_args[0][0]
     assert "2023-0042" in messages[1].content
@@ -94,7 +104,9 @@ async def test_extract_entities_with_case_number() -> None:
 @pytest.mark.asyncio
 async def test_summarize_document() -> None:
     mock_response = LLMResponse(
-        message=Message(role=Role.assistant, content="En kortfattad sammanfattning av ärendet."),
+        message=Message(
+            role=Role.assistant, content="En kortfattad sammanfattning av ärendet."
+        ),
         raw=None,
     )
     with patch("ai.services.generate", new=AsyncMock(return_value=mock_response)):
@@ -141,7 +153,9 @@ async def test_synthesize_answer_uses_answer_synthesis_template() -> None:
     request = SynthesizeRequest(
         question="Vad händer om man missar en deadline?",
         chunks=[
-            ChunkContext(case_number="7/2022", chunk_text="Överklagandet avvisas.", score=0.8)
+            ChunkContext(
+                case_number="7/2022", chunk_text="Överklagandet avvisas.", score=0.8
+            )
         ],
     )
 

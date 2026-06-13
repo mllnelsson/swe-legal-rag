@@ -361,14 +361,78 @@ Two-stage extraction with rule-based first, LLM fallback only for missing fields
 
 All metadata fields are freeform `VARCHAR` — no enum constraints. Missing metadata (all fields `None`) is a valid outcome; the task still completes.
 
-### AI Package (`packages/ai/`) — current contents
+### AI Package (`packages/ai/`) — module layout
 
-- **`dtos.py`:** All domain DTOs (see AI Package section above). Imported directly by service functions and consumers.
-- **`services.py`:** Four async service functions — `decompose_query`, `extract_metadata`, `extract_entities`, `summarize_document`. Each renders a prompt template and calls `llm_core.generate_structured()` or `llm_core.generate()`.
-- **`embedding.py`:** `EmbeddingProvider` protocol, `EmbeddingConfig`, `create_embedding_provider` factory.
-- **`_local_embedding.py`:** `LocalEmbeddingProvider` using `sentence-transformers`. Lazy-imported by the factory; not part of the public API.
-- **`prompts/`:** `PromptTemplate` class and five template constants (see Prompt Templates section above).
-- **`__init__.py`:** Exports `decompose_query`, `extract_metadata`, `extract_entities`, `summarize_document`.
+| Module | Role |
+|---|---|
+| `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
+| `services.py` | Five async service functions (see table below) |
+| `embedding.py` | `EmbeddingProvider` Protocol, `EmbeddingConfig`, `create_embedding_provider` factory |
+| `providers/local_embeddings.py` | `LocalEmbeddingProvider` using `sentence-transformers` |
+| `prompts/_renderer.py` | `PromptTemplate` frozen dataclass |
+| `prompts/_templates.py` | Five template constants (see Prompt Templates section above) |
+| `__init__.py` | Public API — exports all service functions, embedding types, and DTOs |
+
+### Service Functions (`ai/services.py`)
+
+| Function | Signature | LLM call |
+|---|---|---|
+| `decompose_query` | `async (question: str, conversation_history: list[dict] \| None = None, *, provider=None) -> DecomposeResult` | `generate_structured` |
+| `extract_metadata` | `async (raw_text: str, *, provider=None) -> MetadataResult` | `generate_structured` |
+| `extract_entities` | `async (raw_text: str, case_number: str \| None = None, *, provider=None) -> EntityResult` | `generate_structured` |
+| `summarize_document` | `async (raw_text: str, *, provider=None) -> SummarizeResult` | `generate` |
+| `synthesize_answer` | `async (request: SynthesizeRequest, *, provider=None) -> AsyncIterator[str]` | `generate_stream` |
+
+`synthesize_answer` is an async generator (SSE critical path): formats chunks with `[Mål {case_number}]` prefixes, renders `ANSWER_SYNTHESIS`, and yields tokens directly without buffering.
+
+### DTO Contracts (`ai/dtos.py`)
+
+All DTOs are `frozen=True` Pydantic v2 models. Consumers depend on these — do not remove or rename fields.
+
+| Domain | Request type | Result type |
+|---|---|---|
+| Query decomposition | `DecomposeRequest` | `DecomposeResult` (with `DateFilter`) |
+| Answer synthesis | `SynthesizeRequest` (with `ChunkContext`) | streaming `str` tokens; `SourceCitation` for UI |
+| Metadata extraction | `MetadataRequest` | `MetadataResult` |
+| Entity & reference extraction | `EntityRequest` | `EntityResult` (with `ExtractedEntity`, `ExtractedReference`) |
+| Summarization | `SummarizeRequest` | `SummarizeResult` |
+| Embedding | `EmbedRequest` | `EmbedResult` |
+
+`ChunkContext.score: float` is a required field (no default).
+
+### Config Variables
+
+| Var | Default | Used by |
+|---|---|---|
+| `EMBEDDING_PROVIDER` | `"local"` | `EmbeddingConfig` — selects the provider class |
+| `EMBEDDING_MODEL` | `"intfloat/multilingual-e5-base"` | `EmbeddingConfig` — passed to `LocalEmbeddingProvider` |
+| `LLM_PROVIDER` | (see llm-core) | `LLMConfig` in `llm-core` |
+| `LLM_MODEL` | (see llm-core) | `LLMConfig` in `llm-core` |
+| `LLM_TEMPERATURE` | (see llm-core) | `LLMConfig` in `llm-core` |
+| `LLM_MAX_TOKENS` | (see llm-core) | `LLMConfig` in `llm-core` |
+| `GEMINI_API_KEY` | (required for Gemini) | `LLMConfig` in `llm-core` |
+
+### llm-core / ai Package Boundary
+
+These two packages have distinct responsibilities and must not be confused:
+
+- **`llm-core`** — generic, project-agnostic LLM abstraction. Knows nothing about this domain. Provides: `Message`, `LLMProvider` Protocol, `LLMConfig`, `generate()`, `generate_structured()`, `generate_stream()`, `tool_loop()`. Zero dependency on `shared`.
+- **`ai`** — project-specific LLM logic. Knows about Swedish legal documents. Provides: domain DTOs, prompt templates, service functions, embedding abstraction. Depends on both `shared` and `llm-core`.
+
+**Rule:** `ai` calls `llm-core` — never the SDK (google-genai) directly. New use cases go in `ai`, not in `llm-core`.
+
+### Adding a New LLM Use Case
+
+1. **Add DTOs** to `ai/dtos.py`: `YourRequest(BaseModel, frozen=True)` and `YourResult(BaseModel, frozen=True)`.
+2. **Add a template** to `ai/prompts/_templates.py`: a `PromptTemplate` constant with `system_prompt` (never substituted) and `user_template` (substituted via `str.format_map`).
+3. **Add a service function** to `ai/services.py`:
+   ```python
+   async def your_function(raw_text: str, *, provider: LLMProvider | None = None) -> YourResult:
+       messages = YOUR_TEMPLATE.render({"raw_text": raw_text})
+       return await generate_structured(messages, YourResult, provider=provider)  # type: ignore[return-value]
+   ```
+4. **Export from `__init__.py`**: add to imports and `__all__`.
+5. **Write a unit test** in `packages/ai/tests/unit/` — mock `ai.services.generate_structured`.
 
 ### Service layer (functional DI)
 

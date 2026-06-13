@@ -11,7 +11,9 @@ from ai.embedding import EmbeddingConfig, EmbeddingProvider
 from ai.providers.local_embeddings import LocalEmbeddingProvider
 
 
-def _make_provider(model: str = "intfloat/multilingual-e5-base") -> LocalEmbeddingProvider:
+def _make_provider(
+    model: str = "intfloat/multilingual-e5-base",
+) -> LocalEmbeddingProvider:
     config = EmbeddingConfig(EMBEDDING_MODEL=model, EMBEDDING_PROVIDER="local")
     return LocalEmbeddingProvider(config)
 
@@ -51,7 +53,9 @@ async def test_lazy_loading() -> None:
     mock_model = MagicMock()
     mock_model.encode.return_value = np.zeros((1, 768), dtype=np.float32)
 
-    with patch("sentence_transformers.SentenceTransformer", return_value=mock_model) as mock_cls:
+    with patch(
+        "sentence_transformers.SentenceTransformer", return_value=mock_model
+    ) as mock_cls:
         await provider.embed(["text"])
         assert mock_cls.call_count == 1
 
@@ -71,6 +75,8 @@ async def test_empty_input() -> None:
 
 
 def test_protocol_compliance() -> None:
-    config = EmbeddingConfig(EMBEDDING_MODEL="intfloat/multilingual-e5-base", EMBEDDING_PROVIDER="local")
+    config = EmbeddingConfig(
+        EMBEDDING_MODEL="intfloat/multilingual-e5-base", EMBEDDING_PROVIDER="local"
+    )
     provider = LocalEmbeddingProvider(config)
     assert isinstance(provider, EmbeddingProvider)
