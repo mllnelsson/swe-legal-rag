@@ -33,8 +33,8 @@ def create_embedding_provider(config: EmbeddingConfig | None = None) -> Embeddin
 
     match config.provider:
         case "local":
-            from ai._local_embedding import LocalEmbeddingProvider
+            from ai.providers.local_embeddings import LocalEmbeddingProvider
 
-            return LocalEmbeddingProvider(model=config.model)
+            return LocalEmbeddingProvider(config)
         case _:
             raise ValueError(f"Unknown embedding provider: {config.provider!r}")
