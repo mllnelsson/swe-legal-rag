@@ -394,7 +394,7 @@ All DTOs are `frozen=True` Pydantic v2 models. Consumers depend on these — do 
 | Query decomposition | `DecomposeRequest` | `DecomposeResult` (with `DateFilter`) |
 | Answer synthesis | `SynthesizeRequest` (with `ChunkContext`) | streaming `str` tokens; `SourceCitation` for UI |
 | Metadata extraction | `MetadataRequest` | `MetadataResult` |
-| Entity & reference extraction | `EntityRequest` | `EntityResult` (with `ExtractedEntity`, `ExtractedReference`) |
+| Entity & reference extraction | `EntityRequest` | `EntityResult` (with `ExtractedEntity(name, type, relevance)`, `ExtractedReference(case_number, reference_context)`) |
 | Summarization | `SummarizeRequest` | `SummarizeResult` |
 | Embedding | `EmbedRequest` | `EmbedResult` |
 
@@ -447,6 +447,59 @@ These two packages have distinct responsibilities and must not be confused:
 ### Task checkpointing
 
 Each message transitions the task through: `pending → processing → completed | failed`. Processing status committed immediately before I/O begins. Follows the commit-before-publish invariant (session committed before publishing to extract topic).
+
+## Extract Worker (`packages/worker-extract/`)
+
+Long-running subscriber (to be wired fully in a later task). Consumes extract tasks from the extract topic, extracts entities and cross-references from `documents.raw_text`, stores them in `entities`, `document_entities`, and `document_references`, and enqueues chunk tasks.
+
+### Module layout
+
+| Module | Role |
+|---|---|
+| `models.py` | `EntityType` and `Relevance` StrEnums; `ExtractedEntity`, `ExtractedReference`, `ExtractionResult` Pydantic DTOs |
+| `parsing.py` | `parse_llm_response(raw_json) -> ExtractionResult` — parses raw LLM JSON, validates types/relevance, normalizes names (lowercase, strip whitespace), deduplicates by (name, type) keeping highest relevance |
+| `extractors/base.py` | `ExtractionStrategy` Protocol: `async extract(document_text, case_number=None) -> ExtractionResult` |
+| `extractors/rule_based.py` | Pure functions + `RuleBasedStrategy` — regex-based extraction; handles Swedish inflections |
+| `extractors/llm.py` | `LLMStrategy` — delegates to `ai.extract_entities()`, maps `ai.dtos.EntityResult` to `ExtractionResult` |
+| `extractors/factory.py` | `ExtractStrategyMode` StrEnum; `get_extraction_strategy()` factory; `_FallbackStrategy` and merge logic |
+
+### Extraction strategies
+
+Three strategies, selected by the `EXTRACT_STRATEGY` env var (default: `rule_based_with_llm_fallback`):
+
+| Value | Behaviour |
+|---|---|
+| `rule_based` | Only regex-based extraction — fast, no LLM cost |
+| `llm` | Only LLM extraction via `ai.extract_entities()` |
+| `rule_based_with_llm_fallback` | Rule-based first; LLM runs only when result is incomplete (zero entities or entity count below threshold for document length); results are merged with rule-based winning deduplication |
+
+### Rule-based extraction (`extractors/rule_based.py`)
+
+Pure functions, no I/O:
+- **Regulations:** Matches `kyrkoordningen X kap. Y §`, `kyrkoordningen kapitel X`, `KO X:Y`
+- **Parishes:** Matches `X församling`, `X stift`, `församlingen i X`
+- **Roles:** Exact-word lookup from known set (`kyrkoherde`, `kyrkoråd`, `kyrkofullmäktige`, `biskop`, `domkapitel`, `kontraktsprost`, `domprost`, `stiftsstyrelse`) — handles Swedish definite/genitive suffixes (`-en`, `-et`, `-s`, `-ns`, `-ts`, `-n`, `-t`, `-r`)
+- **Legal concepts:** Exact-word lookup from known set (`överklagande`, `behörighet`, `jäv`, `verkställighet`, `tjänstetillsättning`, `överklaganderätt`, `tjänsteförseelse`, `disciplinärende`) — same inflection handling
+- **Cross-references:** `_CASE_REF_RE` matches `ÖN YYYY-NNNN` with optional `dnr` prefix; extracts surrounding sentence as `reference_context`
+- **Relevance heuristic:** Entities in the latter 60% of the document are `primary`; earlier occurrences are `mentioned`
+
+Entity names are normalized to lowercase. Each type of entity is deduplicated by (name) within the extraction run.
+
+### Worker-extract DTOs (`models.py`)
+
+| Type | Fields |
+|---|---|
+| `EntityType` (StrEnum) | `legal_concept`, `role`, `parish`, `regulation` |
+| `Relevance` (StrEnum) | `primary`, `mentioned` |
+| `ExtractedEntity` | `name: str`, `type: EntityType`, `relevance: Relevance` |
+| `ExtractedReference` | `case_number: str`, `reference_context: str` |
+| `ExtractionResult` | `entities: list[ExtractedEntity]`, `references: list[ExtractedReference]` |
+
+### Config variables
+
+| Var | Default | Used by |
+|---|---|---|
+| `EXTRACT_STRATEGY` | `rule_based_with_llm_fallback` | `get_extraction_strategy()` — selects extraction approach |
 
 ## Worker Architecture
 
