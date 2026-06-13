@@ -5,6 +5,8 @@ requires-python = ">=3.12"
 dependencies = [
     "shared",
     "llm-core",
+    "pydantic-settings>=2.0",
+    "sentence-transformers>=3.0",
 ]
 
 [tool.uv.sources]

@@ -78,6 +78,29 @@ Project-specific LLM logic that consumes `llm-core`. Handles domain concerns.
 - **Embedding interface:** Chunk embedding generation. Model-swappable via config.
 - **Prompt templates:** Centralized, versioned. Keeps prompt engineering out of business logic.
 
+### Domain DTOs (`ai/dtos.py`)
+
+Pydantic v2 DTOs for every LLM use case. All models are `frozen=True`.
+
+| Domain | Request | Result |
+|---|---|---|
+| Query decomposition | `DecomposeRequest` | `DecomposeResult` (with `DateFilter`) |
+| Answer synthesis | `SynthesizeRequest` (with `ChunkContext`) | `SourceCitation` |
+| Metadata extraction | `MetadataRequest` | `MetadataResult` |
+| Entity & reference extraction | `EntityRequest` | `EntityResult` (with `ExtractedEntity`, `ExtractedReference`) |
+| Summarization | `SummarizeRequest` | `SummarizeResult` |
+| Embedding | `EmbedRequest` | `EmbedResult` |
+
+### Embedding Abstraction (`ai/embedding.py`)
+
+`EmbeddingProvider` is a `@runtime_checkable` Protocol with one method: `async embed(texts) -> list[list[float]]`.
+
+`EmbeddingConfig(BaseSettings)` reads `EMBEDDING_PROVIDER` (default `"local"`) and `EMBEDDING_MODEL` (default `"intfloat/multilingual-e5-base"`).
+
+`create_embedding_provider(config=None) -> EmbeddingProvider` is the factory. It lazy-imports the concrete provider class so the heavy ML library (sentence-transformers) is only loaded when the local provider is actually requested.
+
+**Dimension constraint (locked 2026-06-11):** The default model `intfloat/multilingual-e5-base` produces 768-dim vectors, which matches `shared.config.EMBEDDING_DIMENSION` (default `768`) and the `chunks.embedding` column size baked into migrations. `EMBEDDING_MODEL` and `EMBEDDING_DIMENSION` must always change together: update both env vars and provide a new migration that recreates the `chunks.embedding` column at the new dimension.
+
 ## Shared Package Module Layout
 
 The `packages/shared/src/shared/` package is the single source of truth for data and database access.
@@ -324,7 +347,10 @@ All metadata fields are freeform `VARCHAR` — no enum constraints. Missing meta
 
 ### AI Package (`packages/ai/`) — current contents
 
-- **`_metadata.py`:** `extract_metadata_llm(raw_text, missing_fields) -> MetadataLLMResult`. Uses `llm_core.generate_structured()` with a structured Pydantic response. Handles ISO date string → `datetime.date` conversion. Returns `MetadataLLMResult` (Pydantic model with `case_number`, `decision_date`, `decision_outcome`, `category`).
+- **`dtos.py`:** All domain DTOs (see AI Package section above). Imported directly by service functions and consumers.
+- **`embedding.py`:** `EmbeddingProvider` protocol, `EmbeddingConfig`, `create_embedding_provider` factory.
+- **`_local_embedding.py`:** `LocalEmbeddingProvider` using `sentence-transformers`. Lazy-imported by the factory; not part of the public API.
+- **`_metadata.py`:** `extract_metadata_llm(raw_text, missing_fields) -> MetadataLLMResult`. Uses `llm_core.generate_structured()` with a structured Pydantic response. Handles ISO date string → `datetime.date` conversion. Returns `MetadataLLMResult` (Pydantic model with `case_number`, `decision_date`, `decision_outcome`, `category`). _(Will be migrated into the prompts/services structure in a later task.)_
 - **`__init__.py`:** Exports `extract_metadata_llm` and `MetadataLLMResult`.
 
 ### Service layer (functional DI)
