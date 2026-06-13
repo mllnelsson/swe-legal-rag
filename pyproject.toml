@@ -19,6 +19,7 @@ dev = [
     "worker-metadata",
     "worker-extract",
     "worker-chunk",
+    "worker-embed",
     "ai",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
@@ -33,6 +34,7 @@ worker-parse = { workspace = true }
 worker-metadata = { workspace = true }
 worker-extract = { workspace = true }
 worker-chunk = { workspace = true }
+worker-embed = { workspace = true }
 ai = { workspace = true }
 
 [tool.ruff]
@@ -42,7 +44,7 @@ src = ["packages/*/src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = ["--import-mode=importlib"]
-testpaths = ["packages/shared/tests", "packages/worker-crawl/tests", "packages/worker-download/tests", "packages/worker-parse/tests", "packages/worker-metadata/tests", "packages/ai/tests", "packages/worker-extract/tests", "packages/worker-chunk/tests"]
+testpaths = ["packages/shared/tests", "packages/worker-crawl/tests", "packages/worker-download/tests", "packages/worker-parse/tests", "packages/worker-metadata/tests", "packages/ai/tests", "packages/worker-extract/tests", "packages/worker-chunk/tests", "packages/worker-embed/tests"]
 markers = [
     "integration: marks tests as integration tests requiring a running database",
 ]

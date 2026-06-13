@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.chunk import ChunkCreate, ChunkRead
@@ -33,6 +33,11 @@ class ChunkRepository:
             select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.chunk_index)
         )
         return [ChunkRead.model_validate(row) for row in result.scalars()]
+
+    async def update_embeddings(self, updates: list[tuple[uuid.UUID, list[float]]]) -> None:
+        for chunk_id, embedding in updates:
+            stmt = update(Chunk).where(Chunk.id == chunk_id).values(embedding=embedding)
+            await self._session.execute(stmt)
 
     async def delete_by_document_id(self, document_id: uuid.UUID) -> int:
         from typing import cast

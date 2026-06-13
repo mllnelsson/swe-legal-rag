@@ -171,6 +171,7 @@ Notable patterns:
 - `DocumentReferenceRepository.upsert`: check-then-insert; idempotent insert using `(source_document_id, target_document_id)` composite PK
 - `UnresolvedReferenceRepository.upsert/get_by_target_case_number/delete`: manages unresolved cross-references pending reconciliation
 - `ChunkRepository.bulk_create`: uses `session.add_all()` for efficient batch insert
+- `ChunkRepository.update_embeddings(updates: list[tuple[UUID, list[float]]])`: bulk UPDATE setting `embedding` column per chunk; does not touch `tsv` (GENERATED ALWAYS computed column)
 
 ### `db.py`
 
@@ -598,6 +599,48 @@ Empty `raw_text` (not `None`) produces zero chunks — the task still completes 
 |---|---|---|
 | `CHUNK_TOPIC` | `chunk` | `ChunkSettings` — subscribe topic |
 | `CHUNK_NEXT_TOPIC` | `embed` | `ChunkSettings` — topic published to on success |
+
+## Embed Worker (`packages/worker-embed/`)
+
+Long-running subscriber. Terminal pipeline step — consumes embed tasks from the embed topic, generates vector embeddings for all chunks of a document, and performs bulk UPDATE on the chunks table (no downstream publish).
+
+### Module layout
+
+| Module | Role |
+|---|---|
+| `config.py` | `EmbedSettings(BaseSettings)` — reads `EMBED_TOPIC` (default `"embed"`). `get_embed_settings()` is `@lru_cache`. |
+| `service.py` | `process_embedding()` async function — orchestration using functional DI (all deps as parameters) |
+| `__main__.py` | Entry point. Loads `.env`, wires dependencies, registers handler, installs signal handlers, calls `subscriber.start()` |
+
+### `process_embedding()` (functional DI)
+
+`process_embedding(document_id, task_id, chunk_repo, task_repo, embedding_provider, session)`:
+
+1. Gets task; skips if already `completed`; marks `processing` and commits
+2. Fetches all chunks for document via `chunk_repo.get_by_document_id(document_id)` — fails with `ValueError` if empty (chunk worker must run first)
+3. Extracts embed texts: `chunk.contextual_text or chunk.chunk_text` for each chunk (embeds contextual text, falls back to raw text if None)
+4. Calls `embedding_provider.embed(texts)` — single batch call for all chunks
+5. Validates: vector count matches chunk count; each vector is exactly 768 dimensions
+6. Calls `chunk_repo.update_embeddings([(chunk_id, vector), ...])` — bulk UPDATE on embedding column
+7. Marks task `completed`; on any exception: rolls back, marks `failed` with error message, re-raises
+
+### `update_embeddings()` (shared repo)
+
+`ChunkRepository.update_embeddings(updates: list[tuple[UUID, list[float]]]) -> None` executes individual async UPDATE statements setting only the `embedding` column. The `tsv` column is `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` — PostgreSQL computes it automatically at INSERT time and it cannot be explicitly set in UPDATE statements.
+
+### Key design decisions
+
+- **Terminal step:** No downstream queue publish. This is the last pipeline worker.
+- **Batch embedding:** All chunks for a document in one `embed()` call — efficient for 10–50 chunks per legal document.
+- **tsv is GENERATED ALWAYS:** The `chunks.tsv` column is populated by PostgreSQL at chunk INSERT time from `chunk_text`. The embed worker does not touch `tsv` — attempting to UPDATE a GENERATED ALWAYS STORED column in PostgreSQL would fail with an error.
+- **Idempotency:** UPDATE semantics (overwrite embedding), no duplicate chunks created.
+- **Functional DI:** Same pattern as `process_chunking()` — all dependencies as parameters, no class instance.
+
+### Config variables
+
+| Var | Default | Used by |
+|---|---|---|
+| `EMBED_TOPIC` | `embed` | `EmbedSettings` — subscribe topic |
 
 ## Worker Architecture
 
