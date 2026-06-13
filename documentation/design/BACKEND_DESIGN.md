@@ -76,7 +76,23 @@ Project-specific LLM logic that consumes `llm-core`. Handles domain concerns.
 - **Query decomposition & synthesis:** Uses `llm-core` service layer for Gemini calls.
 - **Metadata & entity extraction:** Domain-specific orchestration on top of `llm-core`.
 - **Embedding interface:** Chunk embedding generation. Model-swappable via config.
-- **Prompt templates:** Centralized, versioned. Keeps prompt engineering out of business logic.
+- **Prompt templates:** Centralized, versioned in `ai/prompts/`. Keeps prompt engineering out of business logic.
+
+### Prompt Templates (`ai/prompts/`)
+
+`PromptTemplate` is a frozen dataclass with `system_prompt: str`, `user_template: str`, and `render(context: dict) -> list[Message]`. `render()` substitutes variables via `str.format_map(context)` and returns `[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`.
+
+Five template constants cover all LLM use cases:
+
+| Constant | Output format | User template variables |
+|---|---|---|
+| `QUERY_DECOMPOSITION` | JSON (`DecomposeResult` schema) | `{question}`, `{conversation_history}` |
+| `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{conversation_history}` |
+| `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
+| `ENTITY_EXTRACTION` | JSON (`EntityResult` schema) | `{raw_text}`, `{case_number}` |
+| `DOCUMENT_SUMMARIZATION` | Plain Swedish text | `{raw_text}` |
+
+All JSON-outputting templates embed the exact field schema in their system prompt. All prompts instruct the model to work in Swedish.
 
 ### Domain DTOs (`ai/dtos.py`)
 
@@ -351,6 +367,7 @@ All metadata fields are freeform `VARCHAR` — no enum constraints. Missing meta
 - **`embedding.py`:** `EmbeddingProvider` protocol, `EmbeddingConfig`, `create_embedding_provider` factory.
 - **`_local_embedding.py`:** `LocalEmbeddingProvider` using `sentence-transformers`. Lazy-imported by the factory; not part of the public API.
 - **`_metadata.py`:** `extract_metadata_llm(raw_text, missing_fields) -> MetadataLLMResult`. Uses `llm_core.generate_structured()` with a structured Pydantic response. Handles ISO date string → `datetime.date` conversion. Returns `MetadataLLMResult` (Pydantic model with `case_number`, `decision_date`, `decision_outcome`, `category`). _(Will be migrated into the prompts/services structure in a later task.)_
+- **`prompts/`:** `PromptTemplate` class and five template constants (see Prompt Templates section above).
 - **`__init__.py`:** Exports `extract_metadata_llm` and `MetadataLLMResult`.
 
 ### Service layer (functional DI)

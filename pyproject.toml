@@ -38,7 +38,7 @@ src = ["packages/*/src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = ["--import-mode=importlib"]
-testpaths = ["packages/shared/tests", "packages/worker-crawl/tests", "packages/worker-download/tests", "packages/worker-parse/tests", "packages/worker-metadata/tests"]
+testpaths = ["packages/shared/tests", "packages/worker-crawl/tests", "packages/worker-download/tests", "packages/worker-parse/tests", "packages/worker-metadata/tests", "packages/ai/tests"]
 markers = [
     "integration: marks tests as integration tests requiring a running database",
 ]
