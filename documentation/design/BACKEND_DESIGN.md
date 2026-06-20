@@ -111,11 +111,11 @@ Pydantic v2 DTOs for every LLM use case. All models are `frozen=True`.
 
 `EmbeddingProvider` is a `@runtime_checkable` Protocol with one method: `async embed(texts) -> list[list[float]]`.
 
-`EmbeddingConfig(BaseSettings)` reads `EMBEDDING_PROVIDER` (default `"local"`) and `EMBEDDING_MODEL` (default `"intfloat/multilingual-e5-base"`).
+`EmbeddingConfig(BaseSettings)` reads `EMBEDDING_PROVIDER` (default `"local"`) and `EMBEDDING_MODEL` (default `"intfloat/multilingual-e5-large"`).
 
 `create_embedding_provider(config=None) -> EmbeddingProvider` is the factory. It lazy-imports the concrete provider class so the heavy ML library (sentence-transformers) is only loaded when the local provider is actually requested.
 
-**Dimension constraint (locked 2026-06-11):** The default model `intfloat/multilingual-e5-base` produces 768-dim vectors, which matches `shared.config.EMBEDDING_DIMENSION` (default `768`) and the `chunks.embedding` column size baked into migrations. `EMBEDDING_MODEL` and `EMBEDDING_DIMENSION` must always change together: update both env vars and provide a new migration that recreates the `chunks.embedding` column at the new dimension.
+**Dimension constraint:** The default model `intfloat/multilingual-e5-large` produces 1024-dim vectors, which matches `shared.config.EMBEDDING_DIMENSION` (default `1024`) and the `chunks.embedding` column size baked into migrations. `EMBEDDING_MODEL` and `EMBEDDING_DIMENSION` must always change together: update both env vars and provide a new migration that recreates the `chunks.embedding` column at the new dimension. See ARCHITECTURE.md §7 for model choice rationale and hosting strategy.
 
 ## Shared Package Module Layout
 
@@ -138,7 +138,7 @@ Cross-field validators enforce: GCS backend requires `GCS_BUCKET`; Pub/Sub backe
 
 `get_settings()` returns a cached singleton (`@lru_cache(maxsize=1)`). In tests, call `get_settings.cache_clear()` between cases.
 
-`EMBEDDING_DIMENSION` (int, default `768`) is also defined here. Imported by the `Chunk` model to configure vector dimension at startup.
+`EMBEDDING_DIMENSION` (int, default `1024`) is also defined here. Imported by the `Chunk` model to configure vector dimension at startup.
 
 ### `models/`
 
@@ -158,6 +158,8 @@ Pydantic v2 models for every entity. Pattern per entity:
 
 The repo layer enforces the DTO boundary: ORM objects never escape past the repository.
 
+`shared/dtos/search.py` holds two search-specific DTOs that live outside the per-entity pattern: `DocumentFilter` (all-optional filter criteria consumed by `SearchRepository`) and `ChunkSearchResult` (chunk id + document_id + text + index + raw score, returned by both `vector_search` and `text_search`). The `ai` package maps `ai.dtos.DecomposeResult` onto `DocumentFilter` in the `api` service layer — `shared` must not import from `ai`.
+
 ### `repositories/`
 
 Async repository classes. Each takes an `AsyncSession` constructor argument and exposes entity-specific CRUD methods. All methods accept and return DTOs — never ORM objects.
@@ -172,6 +174,13 @@ Notable patterns:
 - `UnresolvedReferenceRepository.upsert/get_by_target_case_number/delete`: manages unresolved cross-references pending reconciliation
 - `ChunkRepository.bulk_create`: uses `session.add_all()` for efficient batch insert
 - `ChunkRepository.update_embeddings(updates: list[tuple[UUID, list[float]]])`: bulk UPDATE setting `embedding` column per chunk; does not touch `tsv` (GENERATED ALWAYS computed column)
+- `ChunkRepository.vector_search(embedding, document_ids, limit)`: pgvector cosine distance ordering; filters to candidate `document_ids` when provided; excludes NULL embeddings
+- `ChunkRepository.text_search(query, document_ids, limit)`: `websearch_to_tsquery('swedish', query)` against `tsv` column ranked by `ts_rank`; filters to candidate `document_ids` when provided
+- `SearchRepository.find_candidate_documents(filter: DocumentFilter) -> list[UUID]`: narrows corpus before semantic search via metadata WHERE-conditions, EXISTS subqueries through `document_entities`→`entities`, and `document_references` traversal in both directions (cites + cited-by); empty filter returns all document IDs with `raw_text`
+
+### `search/`
+
+`packages/shared/src/shared/search/rrf.py` provides `rrf_fuse(rankings: list[list[UUID]], k: int = 60) -> list[UUID]` — a pure, stateless reciprocal rank fusion function. Score for each document is `Σ 1/(k + rank_i)` over all rankings in which it appears. Returns IDs sorted by descending score. No DB or I/O. Consumed by the `api` service layer to combine vector and text search results.
 
 ### `db.py`
 
@@ -410,7 +419,7 @@ All DTOs are `frozen=True` Pydantic v2 models. Consumers depend on these — do 
 | Var | Default | Used by |
 |---|---|---|
 | `EMBEDDING_PROVIDER` | `"local"` | `EmbeddingConfig` — selects the provider class |
-| `EMBEDDING_MODEL` | `"intfloat/multilingual-e5-base"` | `EmbeddingConfig` — passed to `LocalEmbeddingProvider` |
+| `EMBEDDING_MODEL` | `"intfloat/multilingual-e5-large"` | `EmbeddingConfig` — passed to `LocalEmbeddingProvider` |
 | `LLM_PROVIDER` | (see llm-core) | `LLMConfig` in `llm-core` |
 | `LLM_MODEL` | (see llm-core) | `LLMConfig` in `llm-core` |
 | `LLM_TEMPERATURE` | (see llm-core) | `LLMConfig` in `llm-core` |
@@ -571,7 +580,7 @@ Long-running subscriber. Consumes chunk tasks from the chunk topic, generates a 
 5. Single sentences exceeding `max_tokens` are emitted as their own chunk with no overlap
 
 **Key decisions:**
-- **tiktoken cl100k_base** — exact token counts, model-agnostic, fast
+- **tiktoken cl100k_base** — used purely as a token-counting ruler, not related to the embedding model. `cl100k_base` (GPT-4's tokenizer) undercounts relative to the e5 WordPiece tokenizer for Swedish text; the ~500 token budget provides headroom so chunks stay within the embedding model's 512-token max sequence length. See ARCHITECTURE.md §7 for details.
 - **Sentence-aware** — never splits mid-sentence; Swedish legal text has clear `.` boundaries
 - **50-token overlap** — last N sentences of the previous chunk repeat at the start of the next, preserving cross-boundary context for embedding
 
@@ -620,7 +629,7 @@ Long-running subscriber. Terminal pipeline step — consumes embed tasks from th
 2. Fetches all chunks for document via `chunk_repo.get_by_document_id(document_id)` — fails with `ValueError` if empty (chunk worker must run first)
 3. Extracts embed texts: `chunk.contextual_text or chunk.chunk_text` for each chunk (embeds contextual text, falls back to raw text if None)
 4. Calls `embedding_provider.embed(texts)` — single batch call for all chunks
-5. Validates: vector count matches chunk count; each vector is exactly 768 dimensions
+5. Validates: vector count matches chunk count; each vector is exactly 1024 dimensions
 6. Calls `chunk_repo.update_embeddings([(chunk_id, vector), ...])` — bulk UPDATE on embedding column
 7. Marks task `completed`; on any exception: rolls back, marks `failed` with error message, re-raises
 
