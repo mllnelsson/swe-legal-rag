@@ -1,9 +1,10 @@
 import uuid
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.chunk import ChunkCreate, ChunkRead
+from shared.dtos.search import ChunkSearchResult
 from shared.models.chunk import Chunk
 
 
@@ -49,3 +50,58 @@ class ChunkRepository:
             await self._session.execute(delete(Chunk).where(Chunk.document_id == document_id)),
         )
         return result.rowcount
+
+    async def vector_search(
+        self,
+        embedding: list[float],
+        document_ids: list[uuid.UUID] | None,
+        limit: int = 20,
+    ) -> list[ChunkSearchResult]:
+        distance = Chunk.embedding.cosine_distance(embedding).label("score")
+        stmt = (
+            select(Chunk, distance)
+            .where(Chunk.embedding.isnot(None))
+            .order_by(distance)
+            .limit(limit)
+        )
+        if document_ids is not None:
+            stmt = stmt.where(Chunk.document_id.in_(document_ids))
+        result = await self._session.execute(stmt)
+        return [
+            ChunkSearchResult(
+                id=row.Chunk.id,
+                document_id=row.Chunk.document_id,
+                chunk_text=row.Chunk.chunk_text,
+                chunk_index=row.Chunk.chunk_index,
+                score=float(row.score),
+            )
+            for row in result.all()
+        ]
+
+    async def text_search(
+        self,
+        query: str,
+        document_ids: list[uuid.UUID] | None,
+        limit: int = 20,
+    ) -> list[ChunkSearchResult]:
+        tsquery = func.websearch_to_tsquery("swedish", query)
+        rank = func.ts_rank(Chunk.tsv, tsquery).label("score")
+        stmt = (
+            select(Chunk, rank)
+            .where(Chunk.tsv.op("@@")(tsquery))
+            .order_by(rank.desc())
+            .limit(limit)
+        )
+        if document_ids is not None:
+            stmt = stmt.where(Chunk.document_id.in_(document_ids))
+        result = await self._session.execute(stmt)
+        return [
+            ChunkSearchResult(
+                id=row.Chunk.id,
+                document_id=row.Chunk.document_id,
+                chunk_text=row.Chunk.chunk_text,
+                chunk_index=row.Chunk.chunk_index,
+                score=float(row.score),
+            )
+            for row in result.all()
+        ]
