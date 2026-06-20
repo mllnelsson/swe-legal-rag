@@ -85,6 +85,9 @@ REDIS_URL=redis://localhost:6379
 | `CHUNK_TOPIC` | `chunk` | Queue topic worker-chunk subscribes to |
 | `CHUNK_NEXT_TOPIC` | `embed` | Queue topic worker-chunk publishes to |
 | `EMBED_TOPIC` | `embed` | Queue topic worker-embed subscribes to |
+| `RETRIEVAL_TOP_K` | `8` | How many chunks to return after RRF fusion (`api`) |
+| `RETRIEVAL_SEARCH_LIMIT` | `20` | Results per arm (vector + text) before fusion (`api`) |
+| `RETRIEVAL_RERANK_ENABLED` | `false` | Enable optional LLM rerank step — default OFF for NFR1 <5s (`api`) |
 
 ## Running the Pipeline Locally
 
