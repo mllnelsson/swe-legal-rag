@@ -693,6 +693,78 @@ Integration tests use:
 - **`SyncQueueBroker` with recording handler** — captures published messages without triggering downstream workers; avoids `ValueError` from unregistered topics
 - **Table truncation before each test** (`TRUNCATE documents CASCADE`) — ensures test isolation even when services commit data
 
+## API Package — Service Layer (`packages/api/`)
+
+The `api` package hosts the FastAPI application and the retrieval pipeline service layer. It depends on `shared` (repositories, DTOs, storage) and `ai` (decompose, synthesize, embedding).
+
+### Config (`api/config.py`)
+
+`RetrievalSettings(BaseSettings)` reads retrieval tuning parameters:
+
+| Field | Env var | Default | Purpose |
+|---|---|---|---|
+| `retrieval_top_k` | `RETRIEVAL_TOP_K` | `8` | How many chunks to return from RRF fusion |
+| `retrieval_search_limit` | `RETRIEVAL_SEARCH_LIMIT` | `20` | Results per arm (vector + text) before fusion |
+| `retrieval_rerank_enabled` | `RETRIEVAL_RERANK_ENABLED` | `False` | Enable optional LLM rerank step (default OFF — see NFR1 <5s) |
+
+`get_retrieval_settings()` returns a cached singleton (`@lru_cache(maxsize=1)`).
+
+### Service Layer (`api/services/`)
+
+Three focused modules implement the retrieval pipeline, consumed by endpoint handlers (Story 10):
+
+#### `query_planner.py`
+
+`QueryPlan` DTO: `semantic_query: str`, `filter: DocumentFilter`.
+
+`plan_query(question, history, *, llm_provider=None) -> QueryPlan`:
+- Calls `ai.decompose_query()` to produce a `DecomposeResult`
+- Maps the result onto `DocumentFilter`:
+  - `DateFilter.start/end` → `date_from/date_to`
+  - `categories[0]` (first category, if any) → `category`
+  - `entity_refs` → `entity_names`
+- Returns `QueryPlan(semantic_query=result.semantic_query, filter=doc_filter)`
+
+The `shared` package is not aware of `ai.dtos.DecomposeResult` — this mapping lives exclusively in the `api` service layer.
+
+#### `retriever.py`
+
+`RetrievedChunk` DTO: `chunk_id`, `document_id`, `chunk_text`, `chunk_index` (from chunk), plus `case_number`, `decision_date`, `decision_outcome`, `category`, `gcs_uri`, `source_url` (from document).
+
+`retrieve(plan, session, *, embedding_provider, settings) -> list[RetrievedChunk]`:
+
+1. **Pre-filter:** If filter is non-empty, calls `SearchRepository.find_candidate_documents(plan.filter)`. If that returns `[]`, logs a warning and falls back to `candidate_ids = None` (unfiltered). If filter is empty, skips the DB call entirely and uses `None` directly.
+2. **Embed:** `embedding_provider.embed(["query: " + plan.semantic_query])` — the `"query: "` prefix is required by e5 models; chunks at index time use `"passage: "` (see worker-embed).
+3. **Hybrid search:** `asyncio.gather(vector_search(...), text_search(...))` both limited to `RETRIEVAL_SEARCH_LIMIT` per arm, filtered to candidate set when non-None.
+4. **RRF fusion:** `shared.search.rrf.rrf_fuse([vector_ids, text_ids])[:RETRIEVAL_TOP_K]`
+5. **Optional rerank:** If `RETRIEVAL_RERANK_ENABLED`, calls `_rerank()` — a single `llm_core.generate_structured()` call that returns ranked indices; any failure falls back to RRF order (rerank never breaks retrieval).
+6. **Document metadata:** `asyncio.gather(*[doc_repo.get_by_id(did) for did in unique_doc_ids])` to hydrate `RetrievedChunk` DTOs.
+
+**e5 prefix convention:** Queries must be embedded with `"query: "` prefix; passages (at index time) use `"passage: "`. These are symmetric and must stay consistent — changing one requires changing the other and re-indexing.
+
+#### `answerer.py`
+
+Typed events for the SSE endpoint:
+
+| Type | Fields | Purpose |
+|---|---|---|
+| `TokenEvent` | `type="token"`, `text: str` | One streaming LLM token |
+| `SourcesEvent` | `type="sources"`, `sources: list[SourceReference]` | All source cards, sent after synthesis |
+| `DoneEvent` | `type="done"` | Pipeline complete |
+
+`AnswerEvent = TokenEvent | SourcesEvent | DoneEvent`
+
+`SourceReference` DTO: `case_number`, `decision_date` (ISO string), `decision_outcome`, `category`, `excerpt` (first 200 chars of chunk), `pdf_url` (from `storage.get_url("documents/{doc_id}/original.pdf")`).
+
+`answer_query(question, history, session, *, embedding_provider, settings, storage=None, llm_provider=None) -> AsyncIterator[AnswerEvent]`:
+- Calls `plan_query()` → `retrieve()` → `ai.synthesize_answer()` (streaming)
+- Yields `TokenEvent` for each LLM token
+- Yields `SourcesEvent` with deduplicated sources (one card per document, first-seen chunk wins)
+- Yields `DoneEvent`
+- `pdf_url` is generated via `storage.get_url()` if storage is provided; `None` on error or missing storage
+
+**Source deduplication:** Multiple chunks from the same document (`document_id`) produce exactly one `SourceReference`, ordered by fused rank (first-seen chunk in the RRF-ordered list wins the excerpt).
+
 ## Design Principles
 
 - **Interface abstraction everywhere:** LLM provider, embedding model, storage backend (GCS/local), queue (Pub/Sub/local) — all swappable via config for local dev and future flexibility.
