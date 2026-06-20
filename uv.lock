@@ -307,6 +307,7 @@ source = { virtual = "." }
 dev = [
     { name = "ai" },
     { name = "alembic" },
+    { name = "api" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "respx" },
@@ -327,6 +328,7 @@ dev = [
 dev = [
     { name = "ai", editable = "packages/ai" },
     { name = "alembic", specifier = ">=1.13" },
+    { name = "api", editable = "packages/api" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "respx", specifier = ">=0.21" },
