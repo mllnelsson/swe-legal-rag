@@ -196,3 +196,83 @@ class TestAnswerQuery:
 
         source_events = [e for e in events if isinstance(e, SourcesEvent)]
         assert source_events[0].sources == []
+
+    @pytest.mark.asyncio
+    async def test_history_passed_to_plan_query(self):
+        history = [{"role": "user", "content": "Vad gäller?"}]
+
+        async def _fake_synthesize(*_args, **_kwargs):
+            yield "svar"
+
+        plan_mock = self._make_plan_mock()
+        with (
+            patch("api.services.answerer.plan_query", new=plan_mock),
+            patch("api.services.answerer.retrieve", new=self._make_retrieve_mock([])),
+            patch("api.services.answerer.ai.synthesize_answer", _fake_synthesize),
+        ):
+            async for _ in answer_query(
+                "Följdfråga",
+                history,
+                MagicMock(),
+                embedding_provider=MagicMock(),
+                settings=_settings(),
+            ):
+                pass
+
+        plan_mock.assert_called_once_with("Följdfråga", history, llm_provider=None)
+
+    @pytest.mark.asyncio
+    async def test_append_turn_called_after_stream_with_session_repo(self):
+        session_id = uuid.uuid4()
+
+        async def _fake_synthesize(*_args, **_kwargs):
+            yield "Enligt "
+            yield "beslut..."
+
+        session_repo = AsyncMock()
+
+        with (
+            patch("api.services.answerer.plan_query", new=self._make_plan_mock()),
+            patch("api.services.answerer.retrieve", new=self._make_retrieve_mock([])),
+            patch("api.services.answerer.ai.synthesize_answer", _fake_synthesize),
+            patch("api.services.answerer.append_turn", new=AsyncMock()) as mock_append,
+        ):
+            async for _ in answer_query(
+                "Vad gäller?",
+                [],
+                MagicMock(),
+                embedding_provider=MagicMock(),
+                settings=_settings(),
+                chat_session_id=session_id,
+                session_repo=session_repo,
+            ):
+                pass
+
+        mock_append.assert_called_once_with(
+            session_id,
+            "Vad gäller?",
+            "Enligt beslut...",
+            session_repo,
+        )
+
+    @pytest.mark.asyncio
+    async def test_append_turn_not_called_without_session_repo(self):
+        async def _fake_synthesize(*_args, **_kwargs):
+            yield "token"
+
+        with (
+            patch("api.services.answerer.plan_query", new=self._make_plan_mock()),
+            patch("api.services.answerer.retrieve", new=self._make_retrieve_mock([])),
+            patch("api.services.answerer.ai.synthesize_answer", _fake_synthesize),
+            patch("api.services.answerer.append_turn", new=AsyncMock()) as mock_append,
+        ):
+            async for _ in answer_query(
+                "Vad gäller?",
+                [],
+                MagicMock(),
+                embedding_provider=MagicMock(),
+                settings=_settings(),
+            ):
+                pass
+
+        mock_append.assert_not_called()

@@ -709,9 +709,17 @@ The `api` package hosts the FastAPI application and the retrieval pipeline servi
 
 `get_retrieval_settings()` returns a cached singleton (`@lru_cache(maxsize=1)`).
 
+`SessionSettings(BaseSettings)` reads session management parameters:
+
+| Field | Env var | Default | Purpose |
+|---|---|---|---|
+| `session_max_history_turns` | `SESSION_MAX_HISTORY_TURNS` | `10` | Max conversation turns passed to LLM (full history stays in DB) |
+
+`get_session_settings()` returns a cached singleton (`@lru_cache(maxsize=1)`).
+
 ### Service Layer (`api/services/`)
 
-Three focused modules implement the retrieval pipeline, consumed by endpoint handlers (Story 10):
+Four focused modules implement the retrieval pipeline and session management, consumed by endpoint handlers (Story 10):
 
 #### `query_planner.py`
 
@@ -756,14 +764,34 @@ Typed events for the SSE endpoint:
 
 `SourceReference` DTO: `case_number`, `decision_date` (ISO string), `decision_outcome`, `category`, `excerpt` (first 200 chars of chunk), `pdf_url` (from `storage.get_url("documents/{doc_id}/original.pdf")`).
 
-`answer_query(question, history, session, *, embedding_provider, settings, storage=None, llm_provider=None) -> AsyncIterator[AnswerEvent]`:
+`answer_query(question, history, session, *, embedding_provider, settings, storage=None, llm_provider=None, chat_session_id=None, session_repo=None) -> AsyncIterator[AnswerEvent]`:
 - Calls `plan_query()` → `retrieve()` → `ai.synthesize_answer()` (streaming)
-- Yields `TokenEvent` for each LLM token
+- Yields `TokenEvent` for each LLM token (tokens are also accumulated in-memory for persistence only — stream is never buffered)
 - Yields `SourcesEvent` with deduplicated sources (one card per document, first-seen chunk wins)
 - Yields `DoneEvent`
+- After `DoneEvent`: if `chat_session_id` and `session_repo` are provided, calls `session_service.append_turn()` to persist the turn
 - `pdf_url` is generated via `storage.get_url()` if storage is provided; `None` on error or missing storage
 
 **Source deduplication:** Multiple chunks from the same document (`document_id`) produce exactly one `SourceReference`, ordered by fused rank (first-seen chunk in the RRF-ordered list wins the excerpt).
+
+#### `session_service.py`
+
+Module-level functions (no class) for session management and conversation history.
+
+`get_or_create_session(session_id: UUID | None, repo: SessionRepository) -> SessionRead`:
+- `None` id → creates a new session immediately
+- Known valid id → loads and returns the existing session
+- Stale/unknown id → creates a new session (no error — tolerates old frontends)
+
+`append_turn(session_id: UUID, question: str, answer: str, repo: SessionRepository) -> None`:
+- Appends `{"role": "user", "content": question}` and `{"role": "assistant", "content": answer}` to session history
+- Updates `last_active_at` to current UTC time
+- No-op if session_id is not found (tolerates race conditions)
+
+`history_for_llm(session: SessionRead, max_turns: int) -> list[dict]`:
+- Returns the last `max_turns * 2` entries from the session history (each turn = 2 entries)
+- Full history remains in the DB — only the truncated window is passed to the LLM
+- Preserves turn boundaries (always returns complete user+assistant pairs)
 
 ## Design Principles
 

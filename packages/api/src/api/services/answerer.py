@@ -11,6 +11,8 @@ from ai.dtos import ChunkContext, SynthesizeRequest
 from api.config import RetrievalSettings
 from api.services.query_planner import plan_query
 from api.services.retriever import RetrievedChunk, retrieve
+from api.services.session_service import append_turn
+from shared.repositories.session import SessionRepository
 from shared.storage.base import StorageBackend
 
 EXCERPT_MAX_LEN = 200
@@ -85,6 +87,8 @@ async def answer_query(
     settings: RetrievalSettings,
     storage: StorageBackend | None = None,
     llm_provider=None,
+    chat_session_id: uuid.UUID | None = None,
+    session_repo: SessionRepository | None = None,
 ) -> AsyncIterator[AnswerEvent]:
     the_plan = await plan_query(question, history, llm_provider=llm_provider)
     chunks = await retrieve(
@@ -111,8 +115,13 @@ async def answer_query(
         conversation_history=history,
     )
 
+    accumulated: list[str] = []
     async for token in ai.synthesize_answer(request, provider=llm_provider):
+        accumulated.append(token)
         yield TokenEvent(text=token)
 
     yield SourcesEvent(sources=_build_sources(chunks, storage))
     yield DoneEvent()
+
+    if chat_session_id is not None and session_repo is not None:
+        await append_turn(chat_session_id, question, "".join(accumulated), session_repo)
