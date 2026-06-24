@@ -61,6 +61,13 @@ class TestFormatSse:
         result = format_sse("token", {"text": "x"})
         assert result.endswith("\n\n")
 
+    def test_unicode_content_round_trips(self):
+        swedish = "kyrkorätten säger: åäö"
+        result = format_sse("token", {"text": swedish})
+        data_line = [ln for ln in result.split("\n") if ln.startswith("data:")][0]
+        parsed = json.loads(data_line[len("data: "):])
+        assert parsed["text"] == swedish
+
 
 class TestChatEndpointValidation:
     def setup_method(self):

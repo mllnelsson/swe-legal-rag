@@ -51,6 +51,13 @@ async def session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
+def truncate_sessions(db_engine):
+    with db_engine.connect() as conn:
+        conn.execute(text("TRUNCATE sessions"))
+        conn.commit()
+
+
+@pytest.fixture
 def document_repo(session: AsyncSession) -> DocumentRepository:
     return DocumentRepository(session)
 

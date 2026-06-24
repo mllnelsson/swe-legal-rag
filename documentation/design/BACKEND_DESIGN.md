@@ -793,6 +793,66 @@ Module-level functions (no class) for session management and conversation histor
 - Full history remains in the DB — only the truncated window is passed to the LLM
 - Preserves turn boundaries (always returns complete user+assistant pairs)
 
+### FastAPI App (`api/main.py`)
+
+`create_app() -> FastAPI` builds the application. Lifespan handler sets `app.state.embedding_provider` and `app.state.storage` at startup. CORS middleware is configured from `AppSettings.api_cors_origins`.
+
+`AppSettings(BaseSettings)` is defined in `config.py`:
+
+| Field | Env var | Default | Purpose |
+|---|---|---|---|
+| `api_cors_origins` | `API_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins (Vite dev default) |
+
+Routes registered: `POST /api/chat` (from `routes/chat`) and `GET /healthz` (inline).
+
+### Chat Endpoint (`api/routes/chat.py`)
+
+Full module layout for the HTTP layer:
+
+| Symbol | Kind | Purpose |
+|---|---|---|
+| `ChatRequest` | Pydantic model | `session_id: UUID \| None`, `message: str` (1–4000 chars) |
+| `format_sse(event, data)` | Pure function | Produces `event: …\ndata: …\n\n` frame from event name + JSON dict |
+| `get_db()` | FastAPI dependency | Yields `AsyncSession` from `get_async_session()`; injectable for tests |
+| `chat_endpoint` | Route handler | Orchestrates session + `answer_query()` + SSE streaming |
+
+**Request flow:**
+
+```
+POST /api/chat
+  → validate ChatRequest (422 on empty/long/bad session_id)
+  → get_or_create_session(session_id, repo)
+  → history_for_llm(session, max_turns)
+  → answer_query(message, history, db, ...)  [async generator]
+      → plan_query() → retrieve() → ai.synthesize_answer()
+      → yield TokenEvent / SourcesEvent / DoneEvent
+  → format_sse() each event → StreamingResponse (text/event-stream)
+  → done frame carries session_id
+```
+
+Response headers: `Cache-Control: no-cache`, `X-Accel-Buffering: no`.
+
+**SSE event sequence** (guaranteed ordering):
+
+| Event | Payload | When emitted |
+|---|---|---|
+| `token` | `{"text": str}` | One per LLM token, as they arrive |
+| `sources` | `{"sources": [...]}` | After last token, one frame |
+| `done` | `{"session_id": uuid}` | After sources |
+| `error` | `{"message": str}` | Only on mid-stream failure; replaces `done` |
+
+### API Server Design Decisions
+
+**Error event instead of mid-stream HTTP error:** Once a `StreamingResponse` starts, headers are already sent — HTTP status cannot change. Any failure during synthesis emits `event: error` with a generic safe message instead, then stops. `done` is absent. The failed turn is not persisted to session history.
+
+**Token accumulation without SSE buffering:** Tokens are yielded to SSE as they arrive. They are also accumulated in a local list (`accumulated: list[str]`) in `answerer.py` so the full answer can be written to session history via `append_turn()` after `DoneEvent`. This accumulation never delays the SSE stream — `append_turn()` is called after `DoneEvent` is already emitted.
+
+**Stale session IDs create fresh sessions:** `get_or_create_session` treats an unrecognized session_id the same as `None` — silently creates a new session. Old frontends or clients referencing deleted sessions degrade gracefully without errors.
+
+**Full history in DB, truncated window to LLM:** All turns are appended to the `sessions.history` JSONB column. `history_for_llm(session, max_turns)` returns only the last `max_turns * 2` entries (preserving complete user+assistant pairs) for the LLM context. This prevents unbounded context growth without losing audit history.
+
+**DB dependency is injectable:** `get_db` is exported so tests can replace it via `app.dependency_overrides[get_db] = override`. The real implementation wraps `get_async_session()` with auto commit/rollback.
+
 ## Design Principles
 
 - **Interface abstraction everywhere:** LLM provider, embedding model, storage backend (GCS/local), queue (Pub/Sub/local) — all swappable via config for local dev and future flexibility.

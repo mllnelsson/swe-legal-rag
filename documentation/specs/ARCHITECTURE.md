@@ -73,6 +73,8 @@ Why single Postgres? At 1000 docs this is not a scale problem. pgvector handles 
 
 **Session context:** Keep conversation history in memory (or lightweight session store) so the agent can handle follow-ups like "what about after 2021?" without the user re-explaining.
 
+*Implementation:* `sessions` table in Postgres. Each `POST /api/chat` creates or loads a session by `session_id` (UUID). The `done` SSE event returns the `session_id`; subsequent requests send it back. Full turn history is stored in a JSONB column; `history_for_llm()` truncates to the last `SESSION_MAX_HISTORY_TURNS` turn-pairs before sending to the LLM. Stale or missing session IDs silently create a new session — no client error. The API layer (`api/services/session_service.py`) owns all session logic; `shared/repositories/session.py` owns the DB access.
+
 ## 4. Infrastructure / GCP Layout
 
 - **Cloud Run** — API server, pipeline workers, frontend serving. All scale to zero.
