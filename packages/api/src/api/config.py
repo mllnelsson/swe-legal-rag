@@ -3,6 +3,12 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class AppSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="")
+
+    api_cors_origins: list[str] = ["http://localhost:5173"]
+
+
 class RetrievalSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 

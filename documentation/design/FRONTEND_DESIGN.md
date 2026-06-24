@@ -28,7 +28,7 @@ Request:
   "message": "string"
 }
 
-SSE events:
+SSE events (happy path):
 event: token
 data: {"text": "partial token"}
 
@@ -47,6 +47,17 @@ data: {"sources": [
 event: done
 data: {"session_id": "uuid"}
 ```
+
+**Error event (mid-stream failure):** If the LLM provider or retrieval fails after the response stream has started (headers already sent), the server emits an in-band error instead of an HTTP error code:
+
+```
+event: error
+data: {"message": "human-readable error summary"}
+```
+
+`event: done` is **absent** on error — the frontend should treat `event: error` as terminal and never expect a `done` after it. The failed turn is not saved to session history.
+
+Validation errors detected before streaming begins (e.g. empty message, invalid session_id) return a normal HTTP 422 and no SSE stream is opened.
 
 All LLM interaction is streamed end-to-end: API streams from the LLM provider, SSE streams to the client. No buffering the full response server-side.
 
