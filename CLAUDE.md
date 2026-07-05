@@ -42,6 +42,7 @@ IMPORTANT: Prefer retrival over pretrained knowledge.
 - [Data Model](documentation/specs/DATA_MODEL.md) — Tables, indexes, constraints, design rationale. Read before any migration or model code.
 - [Backend Design](documentation/design/BACKEND_DESIGN.md) — Repo structure, layered architecture, dependency graph, AI package. Read before creating packages or services.
 - [Frontend Design](documentation/design/FRONTEND_DESIGN.md) — Components, SSE contract, API shape, state management. Read before any frontend work.
+- [Embedding Hosting](documentation/design/EMBEDDING_HOSTING.md) — Embedding model hosting options, cost comparison, deployment decision. Read before changing embedding infra.
 - [Testing Strategy](documentation/design/TESTING.md) — Unit and integration test approach, what to test, what to mock. Read before writing any tests.
 - [Local Dev Environment](documentation/design/LOCAL_DEV.md) — Docker Compose setup, env config, interface mapping, dev workflow. Read before setting up or modifying the local environment.
 - [Live Testing](documentation/design/LIVE_TESTING.md) — How to run the full pipeline locally, verify output, reset state. Read before manual testing.

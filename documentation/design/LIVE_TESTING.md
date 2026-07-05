@@ -84,6 +84,85 @@ The following workers exist as stubs only:
 - `worker-chunk` — contextual chunking (Story #8)
 - `worker-embed` — embedding generation (Story #8)
 
+### Option C: Per-step runner (`scripts/run_step.py`)
+
+For hand-testing one stage at a time — iterate on a step over a single document,
+inspect what it produced, tweak the code, re-run — use the per-step runner. It
+calls each worker's service function directly with a no-op queue publisher, so a
+step runs and then **stops** instead of cascading to the next (which is what the
+`sync` queue does in a single process). Re-running a step is safe: the current
+step's task is reset to `pending` and the immediate downstream task row is
+cleared first (avoids the `uq_tasks_document_id_step` unique violation).
+
+```bash
+# Discover documents, then list them with their per-step task status
+uv run python scripts/run_step.py crawl
+uv run python scripts/run_step.py docs
+
+# Run a single step for one document (UUID from `docs`)
+uv run python scripts/run_step.py download <doc_id>
+uv run python scripts/run_step.py parse    <doc_id>   # re-run freely while editing the parser
+uv run python scripts/run_step.py metadata <doc_id>
+
+# Run the whole chain over one document once each step is right
+uv run python scripts/run_step.py chain <doc_id>               # download..embed
+uv run python scripts/run_step.py chain <doc_id> --until chunk # stop after a given step
+```
+
+#### How steps hand off (and starting mid-pipeline)
+
+Steps do **not** pass a single JSON to each other. They communicate through the
+**shared store**, which accumulates: `parse` writes `documents.json[].raw_text`,
+`metadata` fills the structured fields on the same row, `extract` writes
+`entities.json` / `references.json`, `chunk` writes `chunks.json`, and so on. So
+"the JSON from the previous step" is just the store on disk after that step ran.
+
+That means you can start at any step as long as the store already holds its
+inputs (e.g. `extract` needs a document with `raw_text`; `case_number` is
+optional). Two ways to get there:
+
+- Run the earlier steps once, then iterate the step you care about, or
+- **`seed`** a document straight from a JSON file and start there:
+
+```bash
+cat > case.json <<'JSON'
+{ "source_url": "manual://test", "case_number": "2024-0099",
+  "raw_text": "Beslut av Domkapitlet ... se även mål 2023-0042." }
+JSON
+
+DOC=$(uv run python scripts/run_step.py --store fs seed case.json)   # prints the new UUID
+EXTRACT_STRATEGY=rule_based \
+  uv run python scripts/run_step.py --store fs extract "$DOC"        # starts at extract, offline
+```
+
+`seed` accepts `source_url` plus any updatable document field (`raw_text`,
+`case_number`, `decision_date`, `summary`, `decision_outcome`, `category`,
+`gcs_uri`); unknown keys are ignored with a warning. Keep a library of input
+fixtures by pointing `--store-dir` at different folders.
+
+#### DB-free playground (`--store fs`)
+
+Add `--store fs` to **any** of the commands above to run against JSON files under
+`./data/store/` (override with `--store-dir`) instead of Postgres — no database,
+no migrations, nothing dumped into the DB. The real worker services run unchanged;
+only the repositories are swapped for file-backed fakes
+(`scripts/_fsstore.py`). Each table is a JSON file of the pydantic DTOs
+(`documents.json`, `tasks.json`, `chunks.json`, `entities.json`,
+`document_entities.json`, `references.json`, `unresolved.json`); PDFs still land
+under `LOCAL_STORAGE_PATH` via the local storage backend. `commit()` writes the
+JSON, `rollback()` reloads it, so transaction/rollback behaviour matches the DB.
+
+```bash
+uv run python scripts/run_step.py --store fs crawl
+uv run python scripts/run_step.py --store fs parse <doc_id>
+cat ./data/store/documents.json    # inspect the raw_text the parser produced
+```
+
+Per-step external dependencies (same in both stores): `crawl`/`download` need
+network; `metadata` and `chunk` call Gemini (`GEMINI_API_KEY`); `embed` loads the
+local e5 model (no API, no DB). `--store fs` synthesizes a throwaway
+`DATABASE_URL` when none is set, so it works with no `.env` database config.
+
 ## Running the API Server
 
 ```bash
