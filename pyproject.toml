@@ -8,6 +8,17 @@ requires-python = ">=3.12"
 [tool.uv.workspace]
 members = ["packages/*"]
 
+[tool.uv]
+# PyTorch dropped Intel Mac wheels after 2.2.2. Declare Intel Mac as a supported
+# environment and constrain torch there so uv forks the resolution: Intel Mac
+# gets torch<=2.2.2, other platforms stay on the latest torch.
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+constraint-dependencies = [
+    "torch<=2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
 [dependency-groups]
 dev = [
     "ruff>=0.11",
