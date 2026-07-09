@@ -14,24 +14,32 @@ logger = logging.getLogger(__name__)
 
 _USER_AGENT = "church-legal-db/1.0 (PDF downloader)"
 
+# Retry only on 5xx: below this the server rejected the request itself (4xx) and
+# a retry would not help.
+HTTP_SERVER_ERROR = 500
+# Exponential backoff base: sleep BACKOFF_BASE_SECONDS ** attempt between retries.
+BACKOFF_BASE_SECONDS = 2
+# Always make at least one attempt, even if max_retries is misconfigured to <1.
+MIN_ATTEMPTS = 1
+
 
 def _download_pdf(url: str, timeout: int, max_retries: int) -> bytes:
     last_error: Exception = RuntimeError(f"No attempts made for {url}")
     headers = {"User-Agent": _USER_AGENT}
     with httpx.Client(timeout=timeout, headers=headers) as client:
-        for attempt in range(max(1, max_retries)):
+        for attempt in range(max(MIN_ATTEMPTS, max_retries)):
             try:
                 response = client.get(url)
                 response.raise_for_status()
                 return response.content
             except httpx.HTTPStatusError as e:
-                if e.response.status_code < 500:
+                if e.response.status_code < HTTP_SERVER_ERROR:
                     raise
                 last_error = e
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_error = e
             if attempt < max_retries - 1:
-                time.sleep(2**attempt)
+                time.sleep(BACKOFF_BASE_SECONDS**attempt)
     raise last_error
 
 

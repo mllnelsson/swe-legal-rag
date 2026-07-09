@@ -3,17 +3,17 @@ from __future__ import annotations
 import os
 from enum import StrEnum, auto
 
+from worker_extract.entities import deduplicate_entities
 from worker_extract.extractors.base import ExtractionStrategy
 from worker_extract.extractors.llm import LLMStrategy
 from worker_extract.extractors.rule_based import RuleBasedStrategy
 from worker_extract.models import (
     ExtractionResult,
-    ExtractedEntity,
     ExtractedReference,
-    Relevance,
 )
 
-_ENTITY_COUNT_PER_1000_CHARS = 1
+_CHARS_PER_ENTITY_ESTIMATE = 1000
+_ENTITY_COUNT_PER_ESTIMATE_BLOCK = 1
 _DEFAULT_STRATEGY_VALUE = "rule_based_with_llm_fallback"
 
 
@@ -26,26 +26,25 @@ class ExtractStrategyMode(StrEnum):
 def _is_result_complete(result: ExtractionResult, document_text: str) -> bool:
     if not result.entities:
         return False
-    min_expected = max(1, len(document_text) // 1000 * _ENTITY_COUNT_PER_1000_CHARS)
+    min_expected = max(
+        1,
+        len(document_text)
+        // _CHARS_PER_ENTITY_ESTIMATE
+        * _ENTITY_COUNT_PER_ESTIMATE_BLOCK,
+    )
     return len(result.entities) >= min_expected
 
 
 def _merge_results(
     primary: ExtractionResult, fallback: ExtractionResult
 ) -> ExtractionResult:
-    entity_map: dict[tuple[str, str], ExtractedEntity] = {}
-    for entity in primary.entities + fallback.entities:
-        key = (entity.name, str(entity.type))
-        if key not in entity_map or entity.relevance == Relevance.PRIMARY:
-            entity_map[key] = entity
-
     ref_map: dict[str, ExtractedReference] = {}
     for ref in primary.references + fallback.references:
         if ref.case_number not in ref_map:
             ref_map[ref.case_number] = ref
 
     return ExtractionResult(
-        entities=list(entity_map.values()),
+        entities=deduplicate_entities(primary.entities + fallback.entities),
         references=list(ref_map.values()),
     )
 

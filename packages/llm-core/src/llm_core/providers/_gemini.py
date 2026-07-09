@@ -42,33 +42,34 @@ class GeminiProvider:
     def _to_gemini_content(self, msg: Message) -> Any:
         from google.genai import types
 
-        if msg.role == Role.user:
-            return types.Content(
-                role="user", parts=[types.Part.from_text(text=msg.content)]
-            )
-
-        if msg.role == Role.assistant:
-            parts: list[Any] = []
-            if msg.content:
-                parts.append(types.Part.from_text(text=msg.content))
-            for tc in msg.tool_calls:
-                parts.append(
-                    types.Part.from_function_call(name=tc.name, args=tc.arguments)
+        match msg.role:
+            case Role.user:
+                return types.Content(
+                    role="user", parts=[types.Part.from_text(text=msg.content)]
                 )
-            return types.Content(role="model", parts=parts)
-
-        if msg.role == Role.tool_result:
-            return types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_function_response(
-                        name=msg.tool_name or "",
-                        response={"output": msg.content},
+            case Role.assistant:
+                parts: list[Any] = []
+                if msg.content:
+                    parts.append(types.Part.from_text(text=msg.content))
+                for tc in msg.tool_calls:
+                    parts.append(
+                        types.Part.from_function_call(name=tc.name, args=tc.arguments)
                     )
-                ],
-            )
-
-        raise ValueError(f"Cannot map role {msg.role!r} to Gemini content")
+                return types.Content(role="model", parts=parts)
+            case Role.tool_result:
+                return types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_function_response(
+                            name=msg.tool_name or "",
+                            response={"output": msg.content},
+                        )
+                    ],
+                )
+            case Role.system | Role.tool_call:
+                # system is stripped by _split_system; tool_call is never a
+                # standalone message role here.
+                raise ValueError(f"Cannot map role {msg.role!r} to Gemini content")
 
     def _to_gemini_tools(self, tools: list[ToolDefinition]) -> Any:
         from google.genai import types

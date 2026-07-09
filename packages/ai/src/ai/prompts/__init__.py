@@ -1,4 +1,4 @@
-from ai.prompts._renderer import PromptTemplate
+from ai.prompts._renderer import PromptTemplate, render
 from ai.prompts._templates import (
     ANSWER_SYNTHESIS,
     DOCUMENT_SUMMARIZATION,
@@ -9,6 +9,7 @@ from ai.prompts._templates import (
 
 __all__ = [
     "PromptTemplate",
+    "render",
     "QUERY_DECOMPOSITION",
     "ANSWER_SYNTHESIS",
     "METADATA_EXTRACTION",

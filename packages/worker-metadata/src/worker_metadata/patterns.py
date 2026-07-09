@@ -49,6 +49,10 @@ _CATEGORY_PATTERNS: list[str] = [
     r"Kategori:\s*(.+?)(?:\n|$)",
 ]
 
+# The decision outcome ("avslår", "bifaller", ...) sits near the end of a ruling,
+# so only the tail of the text is scanned.
+SUMMARY_TAIL_CHARS = 2000
+
 
 @dataclasses.dataclass
 class MetadataResult:
@@ -104,7 +108,7 @@ def extract_decision_date(text: str) -> datetime.date | None:
 
 
 def extract_decision_outcome(text: str) -> str | None:
-    search_text = text[-2000:] if len(text) > 2000 else text
+    search_text = text[-SUMMARY_TAIL_CHARS:] if len(text) > SUMMARY_TAIL_CHARS else text
     for keyword in _OUTCOME_KEYWORDS:
         m = re.search(
             r"[^.!?\n]*" + keyword + r"[^.!?\n]*[.!?]?", search_text, re.IGNORECASE

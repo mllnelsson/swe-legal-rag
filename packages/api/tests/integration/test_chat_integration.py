@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from ai.dtos import DecomposeResult
 from api.main import create_app
-from api.routes.chat import get_db
+from api.routes.chat import _get_db
 from shared.repositories import session as session_repo
 
 _DATABASE_URL = os.environ.get(
@@ -67,7 +67,7 @@ async def api_app(truncate_sessions) -> AsyncGenerator[Any, None]:
                 await s.rollback()
                 raise
 
-    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[_get_db] = _override_db
     yield app
     app.dependency_overrides.clear()
     await engine.dispose()

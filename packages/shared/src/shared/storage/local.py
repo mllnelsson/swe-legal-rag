@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from shared.storage.base import DEFAULT_SIGNED_URL_TTL
+
 
 class LocalStorageBackend:
     def __init__(self, base_path: Path) -> None:
@@ -23,5 +25,5 @@ class LocalStorageBackend:
     def delete(self, key: str) -> None:
         (self._base_path / key).unlink(missing_ok=True)
 
-    def get_url(self, key: str, expires_in: int = 3600) -> str:
+    def get_url(self, key: str, expires_in: int = DEFAULT_SIGNED_URL_TTL) -> str:
         return str((self._base_path / key).absolute())

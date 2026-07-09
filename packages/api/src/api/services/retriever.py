@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai.embedding import EmbeddingProvider
 from api.config import RetrievalSettings
 from api.services.query_planner import QueryPlan
+from llm_core import Message, Role, generate_structured
 from shared.dtos.document import DocumentRead
 from shared.dtos.search import ChunkSearchResult, DocumentFilter
 from shared.repositories import chunk as chunk_repo
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 # e5 models require the "query: " prefix for queries;
 # chunks are embedded with "passage: " by worker-embed.
 E5_QUERY_PREFIX = "query: "
+
+# Per-chunk snippet length shown to the reranker LLM; keeps the prompt bounded.
+SNIPPET_CHARS = 400
 
 
 class RetrievedChunk(BaseModel):
@@ -74,10 +78,8 @@ class _RerankResult(BaseModel):
 async def _rerank(
     question: str, chunks: list[ChunkSearchResult]
 ) -> list[ChunkSearchResult]:
-    from llm_core import Message, Role, generate_structured
-
     snippets = "\n".join(
-        f"[{i}] {chunk.chunk_text[:400]}" for i, chunk in enumerate(chunks)
+        f"[{i}] {chunk.chunk_text[:SNIPPET_CHARS]}" for i, chunk in enumerate(chunks)
     )
     messages = [
         Message(

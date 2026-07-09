@@ -16,6 +16,9 @@ from shared.storage.base import StorageBackend
 
 EXCERPT_MAX_LEN = 200
 _PDF_KEY = "documents/{document_id}/original.pdf"
+# Retrieval already ranks chunks; synthesis does not re-score them, so every
+# chunk is passed to the LLM with the same nominal relevance.
+_DEFAULT_CHUNK_SCORE = 1.0
 
 
 class TokenEvent(BaseModel):
@@ -102,7 +105,7 @@ async def answer_query(
             case_number=chunk.case_number or "",
             decision_date=str(chunk.decision_date) if chunk.decision_date else None,
             decision_outcome=chunk.decision_outcome,
-            score=1.0,
+            score=_DEFAULT_CHUNK_SCORE,
         )
         for chunk in chunks
     ]

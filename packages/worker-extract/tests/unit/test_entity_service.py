@@ -5,12 +5,9 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from shared.dtos.entity import EntityRead
+from worker_extract.entities import deduplicate_entities, normalize_entity_name
 from worker_extract.models import EntityType, ExtractedEntity, Relevance
-from worker_extract.services.entity_service import (
-    _deduplicate_entities,
-    normalize_entity_name,
-    persist_entities,
-)
+from worker_extract.services.entity_service import persist_entities
 
 # Sentinel standing in for the AsyncSession handle threaded to the repo functions.
 session = MagicMock()
@@ -50,7 +47,7 @@ class TestDeduplicateEntities:
             _entity("kyrkoherde", relevance=Relevance.MENTIONED),
             _entity("kyrkoherde", relevance=Relevance.PRIMARY),
         ]
-        result = _deduplicate_entities(entities)
+        result = deduplicate_entities(entities)
         assert len(result) == 1
         assert result[0].relevance == Relevance.PRIMARY
 
@@ -59,7 +56,7 @@ class TestDeduplicateEntities:
             _entity("kyrkoherde", EntityType.ROLE),
             _entity("kyrkoherde", EntityType.LEGAL_CONCEPT),
         ]
-        result = _deduplicate_entities(entities)
+        result = deduplicate_entities(entities)
         assert len(result) == 2
 
     def test_entity_persist_dedup_case_insensitive(self) -> None:
@@ -67,7 +64,7 @@ class TestDeduplicateEntities:
             _entity("Kyrkoherde", relevance=Relevance.MENTIONED),
             _entity("kyrkoherde", relevance=Relevance.PRIMARY),
         ]
-        result = _deduplicate_entities(entities)
+        result = deduplicate_entities(entities)
         assert len(result) == 1
 
 

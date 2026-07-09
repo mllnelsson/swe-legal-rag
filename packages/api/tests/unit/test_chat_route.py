@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.main import create_app
-from api.routes.chat import format_sse, get_db
+from api.routes.chat import _format_sse, _get_db
 from api.services.answerer import DoneEvent, SourcesEvent, TokenEvent
 from shared.dtos.session import SessionRead
 
@@ -37,33 +37,33 @@ def _make_client():
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield mock_db
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[_get_db] = override_get_db
     return app, TestClient(app)
 
 
 class TestFormatSse:
     def test_basic_format(self):
-        result = format_sse("token", {"text": "hello"})
+        result = _format_sse("token", {"text": "hello"})
         assert result == 'event: token\ndata: {"text": "hello"}\n\n'
 
     def test_data_is_json_encoded(self):
-        result = format_sse("sources", {"sources": []})
+        result = _format_sse("sources", {"sources": []})
         assert "data: " in result
         data_line = [ln for ln in result.split("\n") if ln.startswith("data:")][0]
         parsed = json.loads(data_line[len("data: ") :])
         assert parsed == {"sources": []}
 
     def test_event_name_in_output(self):
-        result = format_sse("done", {"session_id": "abc"})
+        result = _format_sse("done", {"session_id": "abc"})
         assert result.startswith("event: done\n")
 
     def test_ends_with_double_newline(self):
-        result = format_sse("token", {"text": "x"})
+        result = _format_sse("token", {"text": "x"})
         assert result.endswith("\n\n")
 
     def test_unicode_content_round_trips(self):
         swedish = "kyrkorätten säger: åäö"
-        result = format_sse("token", {"text": swedish})
+        result = _format_sse("token", {"text": swedish})
         data_line = [ln for ln in result.split("\n") if ln.startswith("data:")][0]
         parsed = json.loads(data_line[len("data: ") :])
         assert parsed["text"] == swedish

@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.dtos.session import SessionCreate, SessionRead, SessionUpdate
 from shared.repositories import session as session_repo
 
+# One conversation turn is a user question plus the assistant answer.
+ENTRIES_PER_TURN = 2
+
 
 async def get_or_create_session(
     session_id: uuid.UUID | None,
@@ -45,5 +48,5 @@ async def append_turn(
 
 def history_for_llm(session: SessionRead, max_turns: int) -> list[dict]:
     history = session.history
-    max_entries = max_turns * 2
+    max_entries = max_turns * ENTRIES_PER_TURN
     return list(history[-max_entries:]) if len(history) > max_entries else list(history)

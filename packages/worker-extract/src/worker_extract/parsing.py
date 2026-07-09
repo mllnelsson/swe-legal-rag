@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 
+from worker_extract.entities import deduplicate_entities, normalize_entity_name
 from worker_extract.models import (
     EntityType,
     ExtractionResult,
@@ -15,19 +16,6 @@ logger = logging.getLogger(__name__)
 
 _VALID_TYPES = {e.value for e in EntityType}
 _VALID_RELEVANCES = {r.value for r in Relevance}
-
-
-def _normalize_name(name: str) -> str:
-    return name.strip().lower()
-
-
-def _deduplicate_entities(entities: list[ExtractedEntity]) -> list[ExtractedEntity]:
-    seen: dict[tuple[str, str], ExtractedEntity] = {}
-    for entity in entities:
-        key = (entity.name, str(entity.type))
-        if key not in seen or entity.relevance == Relevance.PRIMARY:
-            seen[key] = entity
-    return list(seen.values())
 
 
 def _deduplicate_references(
@@ -60,7 +48,7 @@ def parse_llm_response(raw_json: str) -> ExtractionResult:
         if relevance not in _VALID_RELEVANCES:
             logger.warning("Skipping entity with invalid relevance: %r", relevance)
             continue
-        name = _normalize_name(item.get("name", ""))
+        name = normalize_entity_name(item.get("name", ""))
         if not name:
             continue
         entities.append(
@@ -84,6 +72,6 @@ def parse_llm_response(raw_json: str) -> ExtractionResult:
         )
 
     return ExtractionResult(
-        entities=_deduplicate_entities(entities),
+        entities=deduplicate_entities(entities),
         references=_deduplicate_references(references),
     )

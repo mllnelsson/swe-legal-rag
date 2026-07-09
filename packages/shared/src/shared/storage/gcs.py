@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+from shared.storage.base import DEFAULT_SIGNED_URL_TTL
+
 try:
     from google.cloud import storage as gcs_storage
 except ImportError:
@@ -35,6 +37,6 @@ class GCSStorageBackend:
         blob = self._bucket.blob(key)
         blob.delete()
 
-    def get_url(self, key: str, expires_in: int = 3600) -> str:
+    def get_url(self, key: str, expires_in: int = DEFAULT_SIGNED_URL_TTL) -> str:
         blob = self._bucket.blob(key)
         return blob.generate_signed_url(expiration=timedelta(seconds=expires_in))
