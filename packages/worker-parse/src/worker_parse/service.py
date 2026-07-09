@@ -4,9 +4,9 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document import DocumentUpdate
-from shared.dtos.task import TaskCreate, TaskStatusUpdate
-from shared.enums import PipelineStep, TaskStatus
-from shared.queue.base import QueueMessage, QueuePublisher
+from shared.enums import PipelineStep
+from shared.pipeline import StepInputError, run_pipeline_step
+from shared.queue.base import QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
 from shared.storage.base import StorageBackend
 from worker_parse.parser import Parser
@@ -27,71 +27,26 @@ async def process_parse(
     session: AsyncSession,
     next_topic: PipelineStep = PipelineStep.METADATA,
 ) -> None:
-    task = await task_repo.get_by_id(session, task_id)
-    if task is None or task.status == TaskStatus.COMPLETED:
-        logger.info("Task %s already completed or not found, skipping", task_id)
-        return
+    async def body() -> None:
+        document = await document_repo.get_by_id(session, document_id)
+        if document is None:
+            raise StepInputError(f"Document {document_id} not found")
+        if document.gcs_uri is None:
+            raise StepInputError(f"Document {document_id} has no stored PDF")
 
-    await task_repo.update_status(
-        session, task.id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
-    )
-    await session.commit()
-
-    document = await document_repo.get_by_id(session, document_id)
-    if document is None:
-        await task_repo.update_status(
-            session,
-            task.id,
-            TaskStatusUpdate(
-                status=TaskStatus.FAILED,
-                error_message=f"Document {document_id} not found",
-            ),
-        )
-        await session.commit()
-        return
-
-    if document.gcs_uri is None:
-        await task_repo.update_status(
-            session,
-            task.id,
-            TaskStatusUpdate(
-                status=TaskStatus.FAILED,
-                error_message=f"Document {document_id} has no stored PDF",
-            ),
-        )
-        await session.commit()
-        return
-
-    try:
         key = _STORAGE_KEY_TEMPLATE.format(document_id=document.id)
         pdf_bytes = storage.retrieve(key)
         raw_text = parser(pdf_bytes)
         await document_repo.update(
             session, document.id, DocumentUpdate(raw_text=raw_text)
         )
-        metadata_task = await task_repo.create(
-            session,
-            TaskCreate(
-                document_id=document.id,
-                step=PipelineStep.METADATA,
-                status=TaskStatus.PENDING,
-            ),
-        )
-        await session.commit()
-        queue_publisher.publish(
-            next_topic,
-            QueueMessage(task_id=metadata_task.id, document_id=document.id),
-        )
-        await task_repo.update_status(
-            session, task.id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
-        )
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
-        logger.error("Failed to parse document %s: %s", document.id, e)
-        await task_repo.update_status(
-            session,
-            task.id,
-            TaskStatusUpdate(status=TaskStatus.FAILED, error_message=str(e)),
-        )
-        await session.commit()
+
+    await run_pipeline_step(
+        task_repo=task_repo,
+        session=session,
+        task_id=task_id,
+        document_id=document_id,
+        next_step=next_topic,
+        queue_publisher=queue_publisher,
+        body=body,
+    )

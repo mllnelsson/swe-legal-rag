@@ -8,11 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai import summarize_document
 from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentUpdate
-from shared.dtos.task import TaskCreate, TaskStatusUpdate
-from shared.enums import PipelineStep, TaskStatus
-from shared.queue.base import QueueMessage, QueuePublisher
+from shared.enums import PipelineStep
+from shared.pipeline import StepInputError, run_pipeline_step
+from shared.queue.base import QueuePublisher
 from shared.repositories import ChunkRepo, DocumentRepo, TaskRepo
-
 from worker_chunk.chunker import build_contextual_text, split_into_chunks
 
 logger = logging.getLogger(__name__)
@@ -33,42 +32,13 @@ async def process_chunking(
     session: AsyncSession,
     next_topic: PipelineStep = PipelineStep.EMBED,
 ) -> None:
-    task = await task_repo.get_by_id(session, task_id)
-    if task is None or task.status == TaskStatus.COMPLETED:
-        logger.info("Task %s already completed or not found, skipping", task_id)
-        return
+    async def body() -> None:
+        document = await document_repo.get_by_id(session, document_id)
+        if document is None:
+            raise StepInputError(f"Document {document_id} not found")
+        if document.raw_text is None:
+            raise StepInputError(f"Document {document_id} has no raw text")
 
-    await task_repo.update_status(
-        session, task_id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
-    )
-    await session.commit()
-
-    document = await document_repo.get_by_id(session, document_id)
-    if document is None:
-        await task_repo.update_status(
-            session,
-            task_id,
-            TaskStatusUpdate(
-                status=TaskStatus.FAILED,
-                error_message=f"Document {document_id} not found",
-            ),
-        )
-        await session.commit()
-        return
-
-    if document.raw_text is None:
-        await task_repo.update_status(
-            session,
-            task_id,
-            TaskStatusUpdate(
-                status=TaskStatus.FAILED,
-                error_message=f"Document {document_id} has no raw text",
-            ),
-        )
-        await session.commit()
-        return
-
-    try:
         result = await summarize_document(document.raw_text)
         summary = result.summary
 
@@ -93,40 +63,15 @@ async def process_chunking(
         if chunk_dtos:
             await chunk_repo.bulk_create(session, chunk_dtos)
 
-        embed_task = await task_repo.create(
-            session,
-            TaskCreate(
-                document_id=document_id,
-                step=PipelineStep.EMBED,
-                status=TaskStatus.PENDING,
-            ),
-        )
-        await session.commit()
+        logger.info("Chunked document %s into %d chunks", document_id, len(chunk_dtos))
 
-        queue_publisher.publish(
-            next_topic,
-            QueueMessage(task_id=embed_task.id, document_id=document_id),
-        )
-
-        await task_repo.update_status(
-            session, task_id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
-        )
-        await session.commit()
-
-        logger.info(
-            "Chunked document %s into %d chunks, published to %s",
-            document_id,
-            len(chunk_dtos),
-            next_topic,
-        )
-
-    except Exception as exc:
-        await session.rollback()
-        logger.error("Failed to chunk document %s: %s", document_id, exc, exc_info=True)
-        await task_repo.update_status(
-            session,
-            task_id,
-            TaskStatusUpdate(status=TaskStatus.FAILED, error_message=str(exc)),
-        )
-        await session.commit()
-        raise
+    await run_pipeline_step(
+        task_repo=task_repo,
+        session=session,
+        task_id=task_id,
+        document_id=document_id,
+        next_step=next_topic,
+        queue_publisher=queue_publisher,
+        body=body,
+        reraise=True,
+    )

@@ -7,8 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import EmbeddingProvider
 from shared.config import EMBEDDING_DIMENSION
-from shared.dtos.task import TaskStatusUpdate
-from shared.enums import TaskStatus
+from shared.pipeline import run_pipeline_step
 from shared.repositories import ChunkRepo, TaskRepo
 from worker_embed.errors import (
     EmbeddingCountMismatchError,
@@ -27,17 +26,7 @@ async def process_embedding(
     embedding_provider: EmbeddingProvider,
     session: AsyncSession,
 ) -> None:
-    task = await task_repo.get_by_id(session, task_id)
-    if task is None or task.status == TaskStatus.COMPLETED:
-        logger.info("Task %s already completed or not found, skipping", task_id)
-        return
-
-    await task_repo.update_status(
-        session, task_id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
-    )
-    await session.commit()
-
-    try:
+    async def body() -> None:
         chunks = await chunk_repo.get_by_document_id(session, document_id)
         if not chunks:
             raise NoChunksError(
@@ -62,20 +51,16 @@ async def process_embedding(
         updates = [(chunk.id, vector) for chunk, vector in zip(chunks, vectors)]
         await chunk_repo.update_embeddings(session, updates)
 
-        await task_repo.update_status(
-            session, task_id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
-        )
-        await session.commit()
-
         logger.info("Embedded %d chunks for document %s", len(chunks), document_id)
 
-    except Exception as exc:
-        await session.rollback()
-        logger.error("Failed to embed document %s: %s", document_id, exc, exc_info=True)
-        await task_repo.update_status(
-            session,
-            task_id,
-            TaskStatusUpdate(status=TaskStatus.FAILED, error_message=str(exc)),
-        )
-        await session.commit()
-        raise
+    # Embedding is the terminal step: no next stage to publish. Failures re-raise
+    # so the message can be redelivered.
+    await run_pipeline_step(
+        task_repo=task_repo,
+        session=session,
+        task_id=task_id,
+        document_id=document_id,
+        next_step=None,
+        body=body,
+        reraise=True,
+    )

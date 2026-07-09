@@ -5,8 +5,8 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document import DocumentUpdate
-from shared.dtos.task import TaskCreate, TaskStatusUpdate
-from shared.enums import PipelineStep, TaskStatus
+from shared.enums import PipelineStep
+from shared.pipeline import StepInputError, run_pipeline_step
 from shared.queue.base import QueueMessage, QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
 from shared.storage.base import StorageBackend
@@ -58,83 +58,28 @@ async def process_download(
     rate_limit_delay: float,
     next_topic: PipelineStep,
 ) -> None:
-    task = await task_repo.get_by_id(session, message.task_id)
-    if task is None or task.status == TaskStatus.COMPLETED:
-        logger.info("Task %s already completed or not found, skipping", message.task_id)
-        return
+    async def body() -> None:
+        document = await document_repo.get_by_id(session, message.document_id)
+        if document is None:
+            raise StepInputError(f"Document {message.document_id} not found")
 
-    await task_repo.update_status(
-        session, task.id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
-    )
-    await session.commit()
+        # Already downloaded (idempotent re-run): skip the fetch and let the
+        # envelope publish the parse task + mark this one completed.
+        if document.gcs_uri is not None:
+            return
 
-    document = await document_repo.get_by_id(session, message.document_id)
-    if document is None:
-        await task_repo.update_status(
-            session,
-            task.id,
-            TaskStatusUpdate(
-                status=TaskStatus.FAILED,
-                error_message=f"Document {message.document_id} not found",
-            ),
-        )
-        await session.commit()
-        return
-
-    if document.gcs_uri is not None:
-        parse_task = await task_repo.create(
-            session,
-            TaskCreate(
-                document_id=document.id,
-                step=PipelineStep.PARSE,
-                status=TaskStatus.PENDING,
-            ),
-        )
-        await session.commit()
-        queue_publisher.publish(
-            next_topic,
-            QueueMessage(task_id=parse_task.id, document_id=document.id),
-        )
-        await task_repo.update_status(
-            session, task.id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
-        )
-        await session.commit()
-        return
-
-    try:
         pdf_bytes = _download_pdf(document.source_url, timeout, max_retries)
         key = f"documents/{document.id}/original.pdf"
         uri = storage.store(key, pdf_bytes)
         await document_repo.update(session, document.id, DocumentUpdate(gcs_uri=uri))
-        parse_task = await task_repo.create(
-            session,
-            TaskCreate(
-                document_id=document.id,
-                step=PipelineStep.PARSE,
-                status=TaskStatus.PENDING,
-            ),
-        )
-        await session.commit()
-        queue_publisher.publish(
-            next_topic,
-            QueueMessage(task_id=parse_task.id, document_id=document.id),
-        )
-        await task_repo.update_status(
-            session, task.id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
-        )
-        await session.commit()
         time.sleep(rate_limit_delay)
-    except Exception as e:
-        await session.rollback()
-        logger.error(
-            "Failed to download document %s from %s: %s",
-            document.id,
-            document.source_url,
-            e,
-        )
-        await task_repo.update_status(
-            session,
-            task.id,
-            TaskStatusUpdate(status=TaskStatus.FAILED, error_message=str(e)),
-        )
-        await session.commit()
+
+    await run_pipeline_step(
+        task_repo=task_repo,
+        session=session,
+        task_id=message.task_id,
+        document_id=message.document_id,
+        next_step=next_topic,
+        queue_publisher=queue_publisher,
+        body=body,
+    )
