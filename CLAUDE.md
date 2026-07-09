@@ -40,7 +40,7 @@ IMPORTANT: Prefer retrival over pretrained knowledge.
 - [PRD](documentation/specs/PRD.md) — System requirements, acceptance criteria, scope. Read before any feature work.
 - [Architecture](documentation/specs/ARCHITECTURE.md) — Pipeline, storage, retrieval agent, GCP layout, local dev. Read before infra or retrieval decisions.
 - [Data Model](documentation/specs/DATA_MODEL.md) — Tables, indexes, constraints, design rationale. Read before any migration or model code.
-- [Backend Design](documentation/design/BACKEND_DESIGN.md) — Repo structure, layered architecture, dependency graph, AI package. Read before creating packages or services.
+- [Backend Design](documentation/design/BACKEND_DESIGN.md) — Repo structure, layered architecture, dependency graph, AI package. The data layer is **function-based** (repos and worker services are modules of functions, not classes; repos injected as Protocol-typed namespaces) and workers share one task envelope (`shared.pipeline.run_pipeline_step`). Read before creating packages or services.
 - [Frontend Design](documentation/design/FRONTEND_DESIGN.md) — Components, SSE contract, API shape, state management. Read before any frontend work.
 - [Embedding Hosting](documentation/design/EMBEDDING_HOSTING.md) — Embedding model hosting options, cost comparison, deployment decision. Read before changing embedding infra.
 - [Testing Strategy](documentation/design/TESTING.md) — Unit and integration test approach, what to test, what to mock. Read before writing any tests.

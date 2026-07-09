@@ -52,8 +52,8 @@ Model (SQLAlchemy)  →  Repo (queries + ORM→DTO mapping)  →  Service (busin
 ```
 
 - **Model:** SQLAlchemy table definitions. Lives in `shared`. Single source of truth for schema, Alembic generates migrations from these.
-- **Repo:** Query logic only. Takes and returns Pydantic DTOs — never leaks ORM objects upward. Lives in `shared`.
-- **Service:** Business and domain logic. Orchestrates repos, calls `ai` package, handles pipeline logic. Lives in respective package (`api` or worker).
+- **Repo:** Query logic only, as **modules of async functions** (not classes — see [Function-based data layer](#function-based-data-layer)). Every function takes an `AsyncSession` as its first argument and takes/returns Pydantic DTOs — never leaks ORM objects upward. Lives in `shared`.
+- **Service:** Business and domain logic. Orchestrates repos, calls `ai` package, handles pipeline logic. Lives in respective package (`api` or worker). Workers wrap their unique work in the shared task envelope (`shared.pipeline.run_pipeline_step`).
 - **Endpoint:** Request parsing, response formatting, HTTP status codes. Thin layer. Lives in `api`.
 
 Workers skip the endpoint layer — they consume from Pub/Sub directly into the service layer.
@@ -80,7 +80,7 @@ Project-specific LLM logic that consumes `llm-core`. Handles domain concerns.
 
 ### Prompt Templates (`ai/prompts/`)
 
-`PromptTemplate` is a frozen dataclass with `system_prompt: str`, `user_template: str`, and `render(context: dict) -> list[Message]`. `render()` substitutes variables via `str.format_map(context)` and returns `[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`.
+`PromptTemplate` is a frozen dataclass holding just data: `system_prompt: str`, `user_template: str`. Rendering is a **free function** `render(template: PromptTemplate, context: dict) -> list[Message]` (in `ai/prompts/_renderer.py`, exported from `ai.prompts`) — it substitutes variables via `str.format_map(context)` and returns `[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Keeping the dataclass inert and the transformation a separate function follows the "data as values, functions do the work" guideline.
 
 Five template constants cover all LLM use cases:
 
@@ -158,25 +158,47 @@ Pydantic v2 models for every entity. Pattern per entity:
 
 The repo layer enforces the DTO boundary: ORM objects never escape past the repository.
 
-`shared/dtos/search.py` holds two search-specific DTOs that live outside the per-entity pattern: `DocumentFilter` (all-optional filter criteria consumed by `SearchRepository`) and `ChunkSearchResult` (chunk id + document_id + text + index + raw score, returned by both `vector_search` and `text_search`). The `ai` package maps `ai.dtos.DecomposeResult` onto `DocumentFilter` in the `api` service layer — `shared` must not import from `ai`.
+**Finite-set fields carry enum values but are typed `str`.** DTO fields such as `TaskCreate.step`/`status`, `EntityCreate.type`, and `DocumentEntityCreate.relevance` are annotated `str` (mirroring their `Mapped[str]` columns) but their *values* come from the `shared.enums` StrEnums (`PipelineStep`, `TaskStatus`, `EntityType`, `EntityRelevance`), supplied as defaults where applicable. Business logic constructs and compares with the enum members; because StrEnum is a `str` subclass they flow into these fields without friction. See [StrEnum vocabularies](#strenum-vocabularies) for the rationale.
+
+`shared/dtos/search.py` holds two search-specific DTOs that live outside the per-entity pattern: `DocumentFilter` (all-optional filter criteria consumed by the `search` repo module) and `ChunkSearchResult` (chunk id + document_id + text + index + raw score, returned by both `chunk.vector_search` and `chunk.text_search`). The `ai` package maps `ai.dtos.DecomposeResult` onto `DocumentFilter` in the `api` service layer — `shared` must not import from `ai`.
+
+### `enums.py` — StrEnum vocabularies
+
+`shared/enums.py` is the single source of truth for the system's finite vocabularies: `TaskStatus` (`pending`/`processing`/`completed`/`failed`), `PipelineStep` (`crawl`/`download`/`parse`/`metadata`/`extract`/`chunk`/`embed`), `EntityType`, and `EntityRelevance`. All are `StrEnum`, so each member *is* the exact string stored in the DB and passed on the queue. Business logic uses these for every comparison, construction, and `match`/`case` dispatch instead of string literals. `PipelineStep` also names the queue topic each stage consumes from.
+
+### `errors.py` — domain errors
+
+`shared/errors.py` defines `SharedError` (base), `BackendConfigError` (unknown storage/queue backend — raised by the factories), and `QueueHandlerError` (dispatch to a topic with no handler — raised by the sync broker). Each package that raises its own domain failures has its own `errors.py` (e.g. `worker-embed/errors.py` with `EmbeddingError` subtypes, `worker-download/errors.py` with `DownloadError`). Generic `ValueError`/`KeyError`/`RuntimeError` raises in business logic were replaced with these; catches stay at boundaries only.
+
+### `pipeline.py` — shared task envelope
+
+`shared/pipeline.py` provides `run_pipeline_step(...)`, the task envelope every subscriber worker runs inside. See [Worker Architecture → Shared task envelope](#shared-task-envelope).
 
 ### `repositories/`
 
-Async repository classes. Each takes an `AsyncSession` constructor argument and exposes entity-specific CRUD methods. All methods accept and return DTOs — never ORM objects.
+**Modules of async functions, one module per entity** (`document`, `task`, `chunk`, `entity`, `document_entity`, `document_reference`, `unresolved_reference`, `search`, `session`). Every function takes an `AsyncSession` as its **first argument** and takes/returns DTOs — never ORM objects. There are no repository classes. See [Function-based data layer](#function-based-data-layer) for the rationale and the Protocol-based injection seam.
 
-Notable patterns:
-- `DocumentRepository.update`: calls `model_dump(exclude_none=True)` to only update fields provided in the update DTO
-- `DocumentRepository.get_by_case_number`: looks up a document by `case_number` field
-- `TaskRepository.update_status`: automatically sets `started_at` when transitioning to `processing`, `completed_at` when transitioning to `completed`/`failed`
-- `EntityRepository.upsert`: check-then-insert pattern using the `(name, type)` unique constraint
-- `DocumentEntityRepository.upsert`: check-then-insert; upgrades `relevance` from `mentioned` to `primary` if re-seen as primary
-- `DocumentReferenceRepository.upsert`: check-then-insert; idempotent insert using `(source_document_id, target_document_id)` composite PK
-- `UnresolvedReferenceRepository.upsert/get_by_target_case_number/delete`: manages unresolved cross-references pending reconciliation
-- `ChunkRepository.bulk_create`: uses `session.add_all()` for efficient batch insert
-- `ChunkRepository.update_embeddings(updates: list[tuple[UUID, list[float]]])`: bulk UPDATE setting `embedding` column per chunk; does not touch `tsv` (GENERATED ALWAYS computed column)
-- `ChunkRepository.vector_search(embedding, document_ids, limit)`: pgvector cosine distance ordering; filters to candidate `document_ids` when provided; excludes NULL embeddings
-- `ChunkRepository.text_search(query, document_ids, limit)`: `websearch_to_tsquery('swedish', query)` against `tsv` column ranked by `ts_rank`; filters to candidate `document_ids` when provided
-- `SearchRepository.find_candidate_documents(filter: DocumentFilter) -> list[UUID]`: narrows corpus before semantic search via metadata WHERE-conditions, EXISTS subqueries through `document_entities`→`entities`, and `document_references` traversal in both directions (cites + cited-by); empty filter returns all document IDs with `raw_text`
+Import a repo as its module, e.g. `from shared.repositories import document as document_repo`, then call `await document_repo.get_by_id(session, doc_id)`.
+
+Notable patterns (referenced as `<module>.<function>`):
+- `document.update`: calls `model_dump(exclude_none=True)` to only update fields provided in the update DTO
+- `document.get_by_case_number`: looks up a document by `case_number` field
+- `task.update_status`: automatically sets `started_at` when transitioning to `processing`, `completed_at` when transitioning to `completed`/`failed` (compared against `TaskStatus` enum members, not string literals)
+- `entity.upsert`: check-then-insert pattern using the `(name, type)` unique constraint
+- `document_entity.upsert`: check-then-insert; upgrades `relevance` from `mentioned` to `primary` (`EntityRelevance.PRIMARY`) if re-seen as primary
+- `document_reference.upsert`: check-then-insert; idempotent insert using `(source_document_id, target_document_id)` composite PK
+- `unresolved_reference.upsert/get_by_target_case_number/delete`: manages unresolved cross-references pending reconciliation
+- `chunk.bulk_create`: uses `session.add_all()` for efficient batch insert
+- `chunk.update_embeddings(session, updates: list[tuple[UUID, list[float]]])`: bulk UPDATE setting `embedding` column per chunk; does not touch `tsv` (GENERATED ALWAYS computed column)
+- `chunk.vector_search(session, embedding, document_ids, limit)`: pgvector cosine distance ordering; filters to candidate `document_ids` when provided; excludes NULL embeddings
+- `chunk.text_search(session, query, document_ids, limit)`: `websearch_to_tsquery('swedish', query)` against `tsv` column ranked by `ts_rank`; filters to candidate `document_ids` when provided
+- `search.find_candidate_documents(session, filter: DocumentFilter) -> list[UUID]`: narrows corpus before semantic search via metadata WHERE-conditions, EXISTS subqueries through `document_entities`→`entities`, and `document_references` traversal in both directions (cites + cited-by); empty filter returns all document IDs with `raw_text`
+
+### `repositories/_protocols.py` — injection interfaces
+
+Worker services are handed a repo **namespace** (a module of functions) rather than a session-bound object, so they can run against either the real SQLAlchemy repositories or the JSON-file doubles used by `scripts/run_step.py --store fs`. `_protocols.py` declares the structural interfaces (`DocumentRepo`, `TaskRepo`, `ChunkRepo`, …) that both satisfy.
+
+The Protocol members are declared as read-only `@property` returning a `Callable`, **not** as methods. This is deliberate: a module of module-level functions must satisfy the Protocol, and both type checkers used here (pyright and ty) agree only on this form — a method-style member's unbound `self` is not stripped for a module under ty. Only the functions a worker actually calls are declared (interface segregation); the fs doubles mirror exactly this surface.
 
 ### `search/`
 
@@ -200,13 +222,13 @@ The async engine uses `postgresql+asyncpg://` (asyncpg driver). URL scheme is no
 
 ```python
 from shared.db import get_async_session
+from shared.repositories import document as document_repo
 
 async with get_async_session() as session:
-    repo = DocumentRepository(session)
-    doc = await repo.get_by_id(doc_id)
+    doc = await document_repo.get_by_id(session, doc_id)
 ```
 
-In FastAPI, wrap `get_async_session` in a dependency. In workers, use it directly in service methods.
+The repo is a module of functions; the session is passed explicitly as the first argument on every call. In FastAPI, wrap `get_async_session` in a dependency. In workers, the repo modules are injected as Protocol-typed namespaces (so the fs doubles can be swapped in) — see [Function-based data layer](#function-based-data-layer).
 
 ### Infrastructure Abstractions
 
@@ -254,7 +276,7 @@ One-shot pipeline entry point. Scrapes an HTML page for PDF links, deduplicates 
 |---|---|
 | `config.py` | `CrawlSettings(BaseSettings)` — reads `CRAWL_SOURCE_URL` (required), `CRAWL_REQUEST_TIMEOUT` (default 30s), `CRAWL_TOPIC` (default `"download"`). `get_crawl_settings()` is `@lru_cache`. |
 | `client.py` | `CrawlClient` — synchronous HTTP scraper. `fetch_pdf_urls(source_url) -> list[str]` GETs the page with `httpx.Client`, parses HTML with `BeautifulSoup`, extracts `<a href="*.pdf">` links, resolves to absolute URLs, and deduplicates order-preservingly with `dict.fromkeys()`. |
-| `service.py` | `CrawlService` + `CrawlResult` — orchestration. Constructor takes `session`, `document_repo`, `task_repo`, `queue_publisher`, `client`, `source_url`, `topic`. Async `run()` method processes each URL, creates `Document` + two `Task` rows (crawl:completed, download:pending), commits, then publishes. |
+| `service.py` | `process_crawl(*, session, document_repo, task_repo, queue_publisher, client, source_url, topic)` async function + `CrawlResult` DTO — orchestration. Processes each URL, creates `Document` + two `Task` rows (crawl:completed, download:pending), commits, then publishes. No class — dependencies are keyword parameters. |
 | `__main__.py` | Entry point. Loads `.env`, wires all dependencies, runs `asyncio.run(_run())`, logs `CrawlResult`. |
 
 ### Deduplication and idempotency
@@ -263,7 +285,7 @@ One-shot pipeline entry point. Scrapes an HTML page for PDF links, deduplicates 
 
 ### Transaction ordering (sync queue)
 
-`CrawlService.run()` calls `await session.commit()` per document BEFORE publishing to the queue. This is required because `QUEUE_BACKEND=sync` dispatches inline — the download handler opens its own session and must see the document as committed. For `pubsub`, the commit still happens before publish, ensuring rows are durable on the DB before any async consumer can act on the message.
+`process_crawl()` calls `await session.commit()` per document BEFORE publishing to the queue. This is required because `QUEUE_BACKEND=sync` dispatches inline — the download handler opens its own session and must see the document as committed. For `pubsub`, the commit still happens before publish, ensuring rows are durable on the DB before any async consumer can act on the message.
 
 ### Error handling
 
@@ -278,8 +300,8 @@ Long-running subscriber. Consumes document IDs from the download topic, fetches 
 | Module | Role |
 |---|---|
 | `config.py` | `DownloadSettings(BaseSettings)` — reads `DOWNLOAD_REQUEST_TIMEOUT` (default 60s), `DOWNLOAD_TOPIC` (default `"download"`), `DOWNLOAD_NEXT_TOPIC` (default `"parse"`), `DOWNLOAD_MAX_RETRIES` (default 3), `DOWNLOAD_RATE_LIMIT_DELAY` (default 0.5s). `get_download_settings()` is `@lru_cache`. |
-| `service.py` | `DownloadService` + module-level `_download_pdf()` function — orchestration. Constructor takes `session`, `document_repo`, `task_repo`, `storage`, `queue_publisher`, and config params. Async `handle_message()` method handles one `QueueMessage`. |
-| `__main__.py` | Entry point. Loads `.env`, wires dependencies, registers handler via `subscriber.subscribe()`, installs signal handlers, calls `subscriber.start()`. The handler wraps `asyncio.run()` around the async service method so it works with the sync `QueueSubscriber` protocol. |
+| `service.py` | `process_download(message, *, session, document_repo, task_repo, storage, queue_publisher, timeout, max_retries, rate_limit_delay, next_topic)` async function + module-level `_download_pdf()` helper. No class — dependencies (including config-derived values) are keyword parameters. The body runs inside `shared.pipeline.run_pipeline_step`. |
+| `__main__.py` | Entry point. Loads `.env`, wires dependencies, registers handler via `subscriber.subscribe()`, installs signal handlers, calls `subscriber.start()`. The handler wraps `asyncio.run()` around `process_download()` so it works with the sync `QueueSubscriber` protocol. |
 
 ### Task checkpointing
 
@@ -287,7 +309,7 @@ Each message transitions the task through: `pending → processing → completed
 
 ### Session management
 
-Each queued message gets its own `AsyncSession` via `get_async_session()` in the `__main__.py` handler closure. The session is also passed into `DownloadService` to give it explicit commit control (required to commit before publishing to the parse topic, same pattern as crawl worker).
+Each queued message gets its own `AsyncSession` via `get_async_session()` in the `__main__.py` handler closure. The session is passed to `process_download()` (and threaded into `run_pipeline_step`) to give it explicit commit control (required to commit before publishing to the parse topic, same pattern as crawl worker).
 
 ### Download with retry
 
@@ -295,7 +317,7 @@ Each queued message gets its own `AsyncSession` via `get_async_session()` in the
 
 ### Transaction ordering (sync queue)
 
-`handle_message()` calls `await session.commit()` BEFORE publishing to the parse topic. This ensures document and parse-task rows are visible to any subscriber that opens a new session (required for `QUEUE_BACKEND=sync` inline dispatch, same as crawl worker).
+`process_download()` (via `run_pipeline_step`) calls `await session.commit()` BEFORE publishing to the parse topic. This ensures document and parse-task rows are visible to any subscriber that opens a new session (required for `QUEUE_BACKEND=sync` inline dispatch, same as crawl worker).
 
 ### Idempotency
 
@@ -303,7 +325,7 @@ Multiple guard layers: (1) task status check — if already `completed`, skip; (
 
 ### Error handling
 
-Per-message errors are caught in `handle_message()`. On failure: session is rolled back, task is marked `failed` with the error message committed in a fresh transaction, and the error is logged. The exception is not re-raised — one failed message does not affect others. A 0.5s rate-limit sleep follows each successful download.
+Per-message errors are handled by `run_pipeline_step`: a missing document raises `StepInputError` (task `failed`, no rollback); a download/storage failure rolls back, marks the task `failed` with the error message, and is logged. Download leaves `reraise` at its default `False` — one failed message does not affect others. A `rate_limit_delay` sleep follows each successful download (inside the body).
 
 ## Parse Worker (`packages/worker-parse/`)
 
@@ -328,25 +350,15 @@ Long-running subscriber. Consumes parse tasks from the parse topic, retrieves th
 
 `pypdfium2` uses the Apache 2.0 license (permissive), unlike PyMuPDF/pymupdf4llm which is AGPL.
 
-### Service layer (functional DI)
+### Service layer (functional DI + shared envelope)
 
-`process_parse(document_id, task_id, storage, document_repo, task_repo, queue_publisher, parser, session, next_topic)` is a module-level async function. All dependencies are passed as arguments — no global state, no class instance. The `__main__.py` handler closure captures the shared infrastructure objects (storage, publisher) and creates per-message repos.
+`process_parse(document_id, task_id, storage, document_repo, task_repo, queue_publisher, parser, session, next_topic)` is a module-level async function. All dependencies are passed as arguments — no global state, no class instance. Its `body()` fetches + validates the document then extracts and stores text; the task lifecycle is owned by `shared.pipeline.run_pipeline_step`. The `__main__.py` handler closure captures the shared infrastructure objects (storage, publisher) and creates per-message repos.
 
 Storage retrieval uses the deterministic key `documents/{document_id}/original.pdf`, which matches the key the download worker used when storing the PDF.
 
-### Task checkpointing
+### Task checkpointing, ordering, idempotency, error handling
 
-Each message transitions the task through: `pending → processing → completed | failed`. The processing status is committed immediately after it is set so it is durable before PDF I/O begins.
-
-### Transaction ordering
-
-`process_parse()` calls `await session.commit()` BEFORE publishing to the metadata topic, following the commit-before-publish invariant shared by all workers.
-
-### Idempotency and error handling
-
-- If the task is already `completed` or not found, the message is skipped.
-- If `document.gcs_uri` is `None`, the task is marked `failed` (PDF not yet stored).
-- On any exception during parsing or storage retrieval: session is rolled back, task is marked `failed` with the error message, then logged.
+All handled by `run_pipeline_step` (see [Shared task envelope](#shared-task-envelope)): the task moves `pending → processing → completed | failed`; `processing` is committed before PDF I/O; the session is committed before publishing to the metadata topic (commit-before-publish); an already-`completed`/missing task is skipped. Parse's `body()` raises `StepInputError` when the document is missing or has no stored PDF (`document.gcs_uri is None`) — the envelope marks the task `failed` without a rollback and without re-raising; any other exception during parsing/retrieval rolls back and marks `failed`.
 
 ## Metadata Worker (`packages/worker-metadata/`)
 
@@ -441,26 +453,29 @@ These two packages have distinct responsibilities and must not be confused:
 2. **Add a template** to `ai/prompts/_templates.py`: a `PromptTemplate` constant with `system_prompt` (never substituted) and `user_template` (substituted via `str.format_map`).
 3. **Add a service function** to `ai/services.py`:
    ```python
+   from ai.prompts import render
+
    async def your_function(raw_text: str, *, provider: LLMProvider | None = None) -> YourResult:
-       messages = YOUR_TEMPLATE.render({"raw_text": raw_text})
+       messages = render(YOUR_TEMPLATE, {"raw_text": raw_text})
        return await generate_structured(messages, YourResult, provider=provider)  # type: ignore[return-value]
    ```
 4. **Export from `__init__.py`**: add to imports and `__all__`.
 5. **Write a unit test** in `packages/ai/tests/unit/` — mock `ai.services.generate_structured`.
 
-### Service layer (functional DI)
+### Service layer (functional DI + shared envelope)
 
-`process_metadata(document_id, task_id, document_repo, task_repo, queue_publisher, rule_extractor, llm_extractor, session, next_topic)` is a module-level async function. `rule_extractor: Callable[[str], MetadataResult]` and `llm_extractor: Callable[[str, list[str]], Awaitable[MetadataResult]]` are injected — the service has no knowledge of the concrete LLM provider.
+`process_metadata(document_id, task_id, document_repo, task_repo, queue_publisher, rule_extractor, llm_extractor, session, next_topic)` is a module-level async function. `rule_extractor: Callable[[str], MetadataResult]` and `llm_extractor: Callable[[str, list[str]], Awaitable[MetadataResult]]` are injected — the service has no knowledge of the concrete LLM provider. Its `body()` validates the document then runs the two-stage extraction; the task lifecycle is owned by `run_pipeline_step`.
 
 ### Error handling
 
 - LLM failure is non-fatal: logged as warning, extraction continues with partial metadata.
-- Only DB errors and unhandled crashes mark the task as `failed`.
-- Missing metadata is valid — task completes with `None` fields written to the document.
+- A missing document / no `raw_text` raises `StepInputError` → task `failed` (no rollback, no re-raise).
+- Other DB errors and unhandled crashes roll back and mark the task `failed`.
+- Missing metadata (all fields `None`) is valid — task completes with `None` fields written to the document.
 
 ### Task checkpointing
 
-Each message transitions the task through: `pending → processing → completed | failed`. Processing status committed immediately before I/O begins. Follows the commit-before-publish invariant (session committed before publishing to extract topic).
+Owned by `run_pipeline_step`: `pending → processing → completed | failed`, `processing` committed before I/O, commit-before-publish before the extract topic.
 
 ## Extract Worker (`packages/worker-extract/`)
 
@@ -470,15 +485,16 @@ Long-running subscriber. Consumes extract tasks from the extract topic, extracts
 
 | Module | Role |
 |---|---|
-| `models.py` | `EntityType` and `Relevance` StrEnums; `ExtractedEntity`, `ExtractedReference`, `ExtractionResult` Pydantic DTOs |
-| `parsing.py` | `parse_llm_response(raw_json) -> ExtractionResult` — parses raw LLM JSON, validates types/relevance, normalizes names (lowercase, strip whitespace), deduplicates by (name, type) keeping highest relevance |
+| `models.py` | `ExtractedEntity`, `ExtractedReference`, `ExtractionResult` Pydantic DTOs. Re-exports `EntityType` / `EntityRelevance` from `shared.enums` (single source of truth; these were promoted out of this package) so worker-extract code has one import point. |
+| `entities.py` | `normalize_entity_name()` (collapse whitespace + lowercase) and `deduplicate_entities()` (by `(normalized name, type)`, PRIMARY wins) — one shared helper used by `parsing.py`, `entity_service.py`, and `extractors/factory.py` (previously three copies) |
+| `parsing.py` | `parse_llm_response(raw_json) -> ExtractionResult` — parses raw LLM JSON, validates types/relevance, normalizes names, deduplicates via `entities.deduplicate_entities` keeping highest relevance |
 | `extractors/base.py` | `ExtractionStrategy` Protocol: `async extract(document_text, case_number=None) -> ExtractionResult` |
 | `extractors/rule_based.py` | Pure functions + `RuleBasedStrategy` — regex-based extraction; handles Swedish inflections |
-| `extractors/llm.py` | `LLMStrategy` — delegates to `ai.extract_entities()`, maps `ai.dtos.EntityResult` to `ExtractionResult` |
+| `extractors/llm.py` | `LLMStrategy` — delegates to `ai.extract_entities()`, maps `ai.dtos.EntityResult` to `ExtractionResult` (no re-validation needed: `ai.dtos` is enum-typed) |
 | `extractors/factory.py` | `ExtractStrategyMode` StrEnum; `get_extraction_strategy()` factory; `_FallbackStrategy` and merge logic |
-| `services/entity_service.py` | `normalize_entity_name()`, `persist_entities()` — normalizes, deduplicates, and upserts entities to `entities`+`document_entities` |
+| `services/entity_service.py` | `persist_entities()` — deduplicates (via `entities.py`) and upserts entities to `entities`+`document_entities` |
 | `services/reference_service.py` | `process_references()`, `reconcile_references()` — routes references to `document_references` or `unresolved_references`; reconciles lazy-unresolved refs |
-| `services/extraction_service.py` | `process_extraction()` — checkpointing wrapper: validates doc, runs strategy, persists, publishes to chunk topic |
+| `services/extraction_service.py` | `process_extraction()` — validates doc + runs strategy + persists inside a `body()` wrapped by `shared.pipeline.run_pipeline_step` (publishes to chunk topic on success) |
 | `config.py` | `ExtractSettings(BaseSettings)` — reads `EXTRACT_TOPIC`, `EXTRACT_NEXT_TOPIC` |
 | `__main__.py` | Entry point. Loads `.env`, wires repos, registers handler via `subscriber.subscribe()`, installs signal handlers, calls `subscriber.start()` |
 
@@ -506,20 +522,22 @@ Entity names are normalized to lowercase. Each type of entity is deduplicated by
 
 ### Entity persistence (`services/entity_service.py`)
 
-`normalize_entity_name(name)` lowercases and collapses whitespace. `persist_entities(entity_repo, doc_entity_repo, document_id, entities)`:
+`normalize_entity_name(name)` and `deduplicate_entities(entities)` live in `worker_extract/entities.py`. `persist_entities(session, entity_repo, doc_entity_repo, document_id, entities)`:
 1. Deduplicates within the batch (primary relevance wins over mentioned for same name+type key)
-2. Upserts each entity into `entities` via `EntityRepository.upsert` (check-then-insert; unique on `name, type`)
-3. Upserts the `document_entities` row via `DocumentEntityRepository.upsert` — upgrades relevance from `mentioned` to `primary` if the entity is re-seen as primary
+2. Upserts each entity into `entities` via `entity.upsert` (check-then-insert; unique on `name, type`)
+3. Upserts the `document_entities` row via `document_entity.upsert` — upgrades relevance from `mentioned` to `primary` if the entity is re-seen as primary
+
+Entity `type`/`relevance` values are `EntityType`/`EntityRelevance` enum members throughout (no `str(...)` coercions).
 
 ### Reference processing (`services/reference_service.py`)
 
-`process_references(doc_repo, ref_repo, unresolved_repo, source_document_id, source_case_number, references)`:
+`process_references(session, document_repo, ref_repo, unresolved_repo, source_document_id, source_case_number, references)`:
 - Skips self-references (where `ref.case_number == source_case_number`)
 - For each remaining reference: looks up `case_number` in `documents.case_number`
   - If found → upserts into `document_references` (idempotent)
   - If not found → upserts into `unresolved_references` (idempotent via `unique(source_document_id, target_case_number)`)
 
-`reconcile_references(unresolved_repo, ref_repo, document_id, case_number) -> int`:
+`reconcile_references(session, unresolved_repo, ref_repo, document_id, case_number) -> int`:
 - Called after extraction for the current document's own `case_number`
 - Queries `unresolved_references` where `target_case_number` matches
 - For each match: creates a `document_references` row, deletes the `unresolved_references` row
@@ -529,22 +547,23 @@ Entity names are normalized to lowercase. Each type of entity is deduplicated by
 
 Cross-references where the target document is not yet in the corpus are stored in `unresolved_references` rather than dropped. The table has a unique constraint on `(source_document_id, target_case_number)` so the same reference can't be stored twice. When the target document is later ingested and its `case_number` is known, `reconcile_references()` converts the unresolved rows to proper `document_references` rows.
 
-### `process_extraction()` (functional DI, same pattern as `process_metadata`)
+### `process_extraction()` (functional DI + shared envelope)
 
-`process_extraction(document_id, task_id, document_repo, task_repo, entity_repo, doc_entity_repo, ref_repo, unresolved_repo, queue_publisher, session, next_topic)`:
-1. Gets task; skips if already `completed`; marks `processing` and commits
-2. Validates document exists and has `raw_text`; marks `failed` if not
-3. Runs extraction strategy, persists entities, processes references, reconciles
-4. Creates chunk task, commits, publishes to next topic, marks `completed`
-5. On any exception: rolls back, marks `failed` with error message; does not re-raise
+`process_extraction(document_id, task_id, document_repo, task_repo, entity_repo, doc_entity_repo, ref_repo, unresolved_repo, queue_publisher, session, next_topic)` defines a `body()` that:
+1. Validates document exists and has `raw_text` — raises `StepInputError` if not
+2. Runs extraction strategy, persists entities, processes references, reconciles
+
+…then hands `body` to `shared.pipeline.run_pipeline_step(next_step=next_topic, ...)`, which owns the task lifecycle (claim/skip, mark `processing`, create+publish the chunk task, mark `completed`, or roll back + mark `failed`). Extract does not re-raise on failure (`reraise` left at its default `False`).
 
 ### Worker-extract DTOs (`models.py`)
 
+`EntityType` and `EntityRelevance` are defined in `shared.enums` and re-exported from `models.py`.
+
 | Type | Fields |
 |---|---|
-| `EntityType` (StrEnum) | `legal_concept`, `role`, `parish`, `regulation` |
-| `Relevance` (StrEnum) | `primary`, `mentioned` |
-| `ExtractedEntity` | `name: str`, `type: EntityType`, `relevance: Relevance` |
+| `EntityType` (StrEnum, from `shared.enums`) | `legal_concept`, `role`, `parish`, `regulation` |
+| `EntityRelevance` (StrEnum, from `shared.enums`) | `primary`, `mentioned` |
+| `ExtractedEntity` | `name: str`, `type: EntityType`, `relevance: EntityRelevance` |
 | `ExtractedReference` | `case_number: str`, `reference_context: str` |
 | `ExtractionResult` | `entities: list[ExtractedEntity]`, `references: list[ExtractedReference]` |
 
@@ -588,17 +607,16 @@ Long-running subscriber. Consumes chunk tasks from the chunk topic, generates a 
 
 ### `process_chunking()` (functional DI)
 
-`process_chunking(document_id, task_id, document_repo, chunk_repo, task_repo, queue_publisher, session, next_topic)`:
+`process_chunking(document_id, task_id, document_repo, chunk_repo, task_repo, queue_publisher, session, next_topic)` defines a `body()`:
 
-1. Gets task; skips if already `completed`; marks `processing` and commits
-2. Validates document exists and has `raw_text`; marks `failed` if not
-3. Calls `ai.summarize_document(raw_text)` — Swedish legal summary in 2–3 sentences
-4. Stores summary: `document_repo.update(document_id, DocumentUpdate(summary=summary))`
-5. Splits raw text into chunks via `split_into_chunks()`
-6. Deletes existing chunks (`chunk_repo.delete_by_document_id`) for idempotency
-7. Bulk inserts `ChunkCreate` DTOs with both `chunk_text` and `contextual_text = build_contextual_text(summary, chunk_text)`
-8. Creates embed task, commits, publishes to embed topic
-9. Marks chunk task `completed`; on any exception: rolls back, marks `failed` with error message, re-raises
+1. Validates document exists and has `raw_text` — raises `StepInputError` if not
+2. Calls `ai.summarize_document(raw_text)` — Swedish legal summary in 2–3 sentences
+3. Stores summary: `document_repo.update(session, document_id, DocumentUpdate(summary=summary))`
+4. Splits raw text into chunks via `split_into_chunks()`
+5. Deletes existing chunks (`chunk_repo.delete_by_document_id`) for idempotency
+6. Bulk inserts `ChunkCreate` DTOs with both `chunk_text` and `contextual_text = build_contextual_text(summary, chunk_text)`
+
+…then hands `body` to `run_pipeline_step(next_step=next_topic, reraise=True)`, which creates+publishes the embed task and marks `completed`, or rolls back + marks `failed`. Chunk sets **`reraise=True`** so unexpected work failures propagate (message redelivery); a `StepInputError` from step 1 is still swallowed.
 
 Empty `raw_text` (not `None`) produces zero chunks — the task still completes and publishes to embed.
 
@@ -623,19 +641,19 @@ Long-running subscriber. Terminal pipeline step — consumes embed tasks from th
 
 ### `process_embedding()` (functional DI)
 
-`process_embedding(document_id, task_id, chunk_repo, task_repo, embedding_provider, session)`:
+`process_embedding(document_id, task_id, chunk_repo, task_repo, embedding_provider, session)` defines a `body()`:
 
-1. Gets task; skips if already `completed`; marks `processing` and commits
-2. Fetches all chunks for document via `chunk_repo.get_by_document_id(document_id)` — fails with `ValueError` if empty (chunk worker must run first)
-3. Extracts embed texts: `chunk.contextual_text or chunk.chunk_text` for each chunk (embeds contextual text, falls back to raw text if None)
-4. Calls `embedding_provider.embed(texts)` — single batch call for all chunks
-5. Validates: vector count matches chunk count; each vector is exactly 1024 dimensions
-6. Calls `chunk_repo.update_embeddings([(chunk_id, vector), ...])` — bulk UPDATE on embedding column
-7. Marks task `completed`; on any exception: rolls back, marks `failed` with error message, re-raises
+1. Fetches all chunks for document via `chunk_repo.get_by_document_id(session, document_id)` — raises `NoChunksError` if empty (chunk worker must run first)
+2. Extracts embed texts: `chunk.contextual_text or chunk.chunk_text` for each chunk (embeds contextual text, falls back to raw text if None)
+3. Calls `embedding_provider.embed(texts)` — single batch call for all chunks
+4. Validates: vector count matches chunk count (`EmbeddingCountMismatchError`); each vector is exactly `EMBEDDING_DIMENSION` (`EmbeddingDimensionError`)
+5. Calls `chunk_repo.update_embeddings(session, [(chunk_id, vector), ...])` — bulk UPDATE on embedding column
+
+…then hands `body` to `run_pipeline_step(next_step=None, reraise=True)`. `next_step=None` marks this the terminal step (no publisher, no downstream task); the runner just marks `completed`, or rolls back + marks `failed` and re-raises (message redelivery). The `EmbeddingError` subtypes are regular exceptions (not `StepInputError`), so they are re-raised.
 
 ### `update_embeddings()` (shared repo)
 
-`ChunkRepository.update_embeddings(updates: list[tuple[UUID, list[float]]]) -> None` executes individual async UPDATE statements setting only the `embedding` column. The `tsv` column is `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` — PostgreSQL computes it automatically at INSERT time and it cannot be explicitly set in UPDATE statements.
+`chunk.update_embeddings(session, updates: list[tuple[UUID, list[float]]]) -> None` executes individual async UPDATE statements setting only the `embedding` column. The `tsv` column is `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` — PostgreSQL computes it automatically at INSERT time and it cannot be explicitly set in UPDATE statements.
 
 ### Key design decisions
 
@@ -643,7 +661,7 @@ Long-running subscriber. Terminal pipeline step — consumes embed tasks from th
 - **Batch embedding:** All chunks for a document in one `embed()` call — efficient for 10–50 chunks per legal document.
 - **tsv is GENERATED ALWAYS:** The `chunks.tsv` column is populated by PostgreSQL at chunk INSERT time from `chunk_text`. The embed worker does not touch `tsv` — attempting to UPDATE a GENERATED ALWAYS STORED column in PostgreSQL would fail with an error.
 - **Idempotency:** UPDATE semantics (overwrite embedding), no duplicate chunks created.
-- **Functional DI:** Same pattern as `process_chunking()` — all dependencies as parameters, no class instance.
+- **Functional DI + shared envelope:** Same pattern as `process_chunking()` — all dependencies as parameters, work inside a `body()` handed to `run_pipeline_step` (with `next_step=None`).
 
 ### Config variables
 
@@ -660,21 +678,39 @@ Long-running subscriber. Terminal pipeline step — consumes embed tasks from th
 
 ### Service layer pattern
 
-Workers use dependency injection with no global state. Earlier workers (crawl, download) use a service class with constructor injection. The parse worker (and subsequent workers) use a functional approach: a module-level `process_*` async function that takes all dependencies as parameters. Both patterns are equivalent — the `__main__.py` handler closure captures the shared infrastructure objects and passes them on each call.
+**All workers are functional** — no service classes. Each worker's orchestration is a module-level `process_*` async function that takes every dependency as a parameter (repos as Protocol-typed namespaces, plus session, publisher, config values). No global state. The `__main__.py` handler closure captures the shared infrastructure objects and passes them on each call.
 
-**Worker lifecycle (subscriber workers):**
+<a id="shared-task-envelope"></a>
+### Shared task envelope (`shared.pipeline.run_pipeline_step`)
 
-1. Receive queue message (`task_id`, `document_id`, `payload`)
-2. Mark task `processing` and commit (checkpoint — durable before I/O begins)
-3. Call `service.process_*()` — business logic
-4. Mark task `completed`, commit, publish to next topic (commit-before-publish invariant)
-5. On any exception: rollback session, mark task `failed` with `error_message`, commit; re-raise if caller needs to see it
+Every subscriber worker repeats the same task envelope. It is extracted into `shared/pipeline.py` so each `process_*` shrinks to "define `body()` (the unique work), call the runner":
 
-The `process_*` function never swallows exceptions silently — either it completes cleanly or the task row reflects the failure.
+```python
+async def run_pipeline_step(
+    *, task_repo, session, task_id, document_id,
+    next_step: PipelineStep | None,
+    queue_publisher: QueuePublisher | None = None,
+    body: Callable[[], Awaitable[None]],
+    reraise: bool = False,
+) -> None: ...
+```
+
+The runner:
+1. Claims the task; **skips** if missing or already `completed`.
+2. Marks `processing` and commits (checkpoint — durable before I/O begins).
+3. Runs `body()`.
+4. On success: if `next_step` is set, creates the next pending task and publishes it to that step's topic (commit-before-publish), then marks this task `completed`. `next_step=None` = terminal step (embed): no publisher needed.
+5. On failure, two paths:
+   - **`StepInputError`** (raised by `body` for invalid inputs *before* any write — missing document / no text): mark `failed`, **no rollback, never re-raise**. An expected terminal outcome for that document. Replaces the old inline "mark failed + return" validation branches.
+   - **any other exception:** roll back, mark `failed`, and re-raise only when **`reraise=True`**.
+
+`reraise` preserves each worker's original propagation behaviour: `chunk` and `embed` re-raise (so the message can be redelivered), the others swallow. `chunk`'s historical split (validation swallowed, work errors re-raised) falls out of the `StepInputError`-vs-generic distinction for free.
+
+**Crawl is not a pipeline step** — it loops over many URLs producing many documents/tasks, so it does not use `run_pipeline_step`; it keeps its own per-URL loop.
 
 ### Session-per-message pattern
 
-Subscriber workers create a new `AsyncSession` for each message (via `get_async_session()` in `__main__.py`). The session is passed into the service constructor, giving the service explicit commit control. One failed message does not roll back others.
+Subscriber workers create a new `AsyncSession` for each message (via `get_async_session()` in `__main__.py`). The session is passed to `process_*()` and threaded into `run_pipeline_step` and every repo call, giving explicit commit control. One failed message does not roll back others.
 
 ### Config pattern
 
@@ -688,10 +724,12 @@ All workers call `await session.commit()` before calling `queue_publisher.publis
 
 Integration tests use:
 - **Real async `Session`** backed by Docker Postgres
-- **Real repos and storage** — verifies the wiring between service, repo, and storage layers
+- **Real repo namespaces and storage** — conftest fixtures expose the repo **modules** (e.g. `document_repo` returns `shared.repositories.document`) so they can be injected into `process_*` exactly as production does; the `shared`/`api` conftests use `shared.testing.bind_repo(module, session)` to session-bind the module for direct-call tests
 - **Mocked HTTP** only — no actual network calls to source servers
-- **`SyncQueueBroker` with recording handler** — captures published messages without triggering downstream workers; avoids `ValueError` from unregistered topics
+- **`SyncQueueBroker` with recording handler** — captures published messages without triggering downstream workers; avoids `QueueHandlerError` from unregistered topics
 - **Table truncation before each test** (`TRUNCATE documents CASCADE`) — ensures test isolation even when services commit data
+
+> **Running the suite:** run unit tests **per package** (`uv run pytest packages/<pkg>/tests/unit`). The aggregate glob `packages/*/tests/unit` silently shadows duplicate `test_service.py` / `test_config.py` basenames under `--import-mode=importlib`, so some files are not collected. See [TESTING.md](TESTING.md).
 
 ## API Package — Service Layer (`packages/api/`)
 
@@ -741,7 +779,7 @@ The `shared` package is not aware of `ai.dtos.DecomposeResult` — this mapping 
 
 `retrieve(plan, session, *, embedding_provider, settings) -> list[RetrievedChunk]`:
 
-1. **Pre-filter:** If filter is non-empty, calls `SearchRepository.find_candidate_documents(plan.filter)`. If that returns `[]`, logs a warning and falls back to `candidate_ids = None` (unfiltered). If filter is empty, skips the DB call entirely and uses `None` directly.
+1. **Pre-filter:** If filter is non-empty, calls `search.find_candidate_documents(session, plan.filter)`. If that returns `[]`, logs a warning and falls back to `candidate_ids = None` (unfiltered). If filter is empty, skips the DB call entirely and uses `None` directly.
 2. **Embed:** `embedding_provider.embed(["query: " + plan.semantic_query])` — the `"query: "` prefix is required by e5 models; chunks at index time use `"passage: "` (see worker-embed).
 3. **Hybrid search:** `asyncio.gather(vector_search(...), text_search(...))` both limited to `RETRIEVAL_SEARCH_LIMIT` per arm, filtered to candidate set when non-None.
 4. **RRF fusion:** `shared.search.rrf.rrf_fuse([vector_ids, text_ids])[:RETRIEVAL_TOP_K]`
@@ -764,12 +802,12 @@ Typed events for the SSE endpoint:
 
 `SourceReference` DTO: `case_number`, `decision_date` (ISO string), `decision_outcome`, `category`, `excerpt` (first 200 chars of chunk), `pdf_url` (from `storage.get_url("documents/{doc_id}/original.pdf")`).
 
-`answer_query(question, history, session, *, embedding_provider, settings, storage=None, llm_provider=None, chat_session_id=None, session_repo=None) -> AsyncIterator[AnswerEvent]`:
+`answer_query(question, history, session, *, embedding_provider, settings, storage=None, llm_provider=None, chat_session_id=None) -> AsyncIterator[AnswerEvent]`:
 - Calls `plan_query()` → `retrieve()` → `ai.synthesize_answer()` (streaming)
 - Yields `TokenEvent` for each LLM token (tokens are also accumulated in-memory for persistence only — stream is never buffered)
 - Yields `SourcesEvent` with deduplicated sources (one card per document, first-seen chunk wins)
 - Yields `DoneEvent`
-- After `DoneEvent`: if `chat_session_id` and `session_repo` are provided, calls `session_service.append_turn()` to persist the turn
+- After `DoneEvent`: if `chat_session_id` is provided, calls `session_service.append_turn(..., session)` to persist the turn (the session-repo module is used internally)
 - `pdf_url` is generated via `storage.get_url()` if storage is provided; `None` on error or missing storage
 
 **Source deduplication:** Multiple chunks from the same document (`document_id`) produce exactly one `SourceReference`, ordered by fused rank (first-seen chunk in the RRF-ordered list wins the excerpt).
@@ -778,12 +816,12 @@ Typed events for the SSE endpoint:
 
 Module-level functions (no class) for session management and conversation history.
 
-`get_or_create_session(session_id: UUID | None, repo: SessionRepository) -> SessionRead`:
+`get_or_create_session(session_id: UUID | None, session: AsyncSession) -> SessionRead`:
 - `None` id → creates a new session immediately
 - Known valid id → loads and returns the existing session
 - Stale/unknown id → creates a new session (no error — tolerates old frontends)
 
-`append_turn(session_id: UUID, question: str, answer: str, repo: SessionRepository) -> None`:
+`append_turn(session_id: UUID, question: str, answer: str, session: AsyncSession) -> None`:
 - Appends `{"role": "user", "content": question}` and `{"role": "assistant", "content": answer}` to session history
 - Updates `last_active_at` to current UTC time
 - No-op if session_id is not found (tolerates race conditions)
@@ -811,10 +849,10 @@ Full module layout for the HTTP layer:
 
 | Symbol | Kind | Purpose |
 |---|---|---|
-| `ChatRequest` | Pydantic model | `session_id: UUID \| None`, `message: str` (1–4000 chars) |
-| `format_sse(event, data)` | Pure function | Produces `event: …\ndata: …\n\n` frame from event name + JSON dict |
-| `get_db()` | FastAPI dependency | Yields `AsyncSession` from `get_async_session()`; injectable for tests |
-| `chat_endpoint` | Route handler | Orchestrates session + `answer_query()` + SSE streaming |
+| `ChatRequest` | Pydantic model | `session_id: UUID \| None`, `message: str` (1–`MAX_MESSAGE_CHARS`=4000 chars) |
+| `_format_sse(event, data)` | Pure (module-private) function | Produces `event: …\ndata: …\n\n` frame from event name + JSON dict |
+| `_get_db()` | FastAPI dependency (module-private) | Yields `AsyncSession` from `get_async_session()`; injectable for tests via `app.dependency_overrides[_get_db]` |
+| `chat_endpoint` | Route handler | Orchestrates session + `answer_query()` + SSE streaming; dispatches events via `match`/`case` over `AnswerEvent` |
 
 **Request flow:**
 
@@ -826,7 +864,7 @@ POST /api/chat
   → answer_query(message, history, db, ...)  [async generator]
       → plan_query() → retrieve() → ai.synthesize_answer()
       → yield TokenEvent / SourcesEvent / DoneEvent
-  → format_sse() each event → StreamingResponse (text/event-stream)
+  → _format_sse() each event → StreamingResponse (text/event-stream)
   → done frame carries session_id
 ```
 
@@ -851,7 +889,29 @@ Response headers: `Cache-Control: no-cache`, `X-Accel-Buffering: no`.
 
 **Full history in DB, truncated window to LLM:** All turns are appended to the `sessions.history` JSONB column. `history_for_llm(session, max_turns)` returns only the last `max_turns * 2` entries (preserving complete user+assistant pairs) for the LLM context. This prevents unbounded context growth without losing audit history.
 
-**DB dependency is injectable:** `get_db` is exported so tests can replace it via `app.dependency_overrides[get_db] = override`. The real implementation wraps `get_async_session()` with auto commit/rollback.
+**DB dependency is injectable:** `_get_db` is a module-private dependency that tests replace via `app.dependency_overrides[_get_db] = override`. The real implementation wraps `get_async_session()` with auto commit/rollback.
+
+## Data-Layer Design Decisions
+
+These record the reasoning behind the function-based data layer and the enum vocabularies, for future agents.
+
+<a id="function-based-data-layer"></a>
+### Function-based data layer + Protocol-injected namespaces
+
+**Decision.** Repositories and worker services are **modules of functions**, not classes. Repo functions take `AsyncSession` as their first argument; worker `process_*` functions take all dependencies as parameters.
+
+**Why.** The project's coding guidelines reserve classes for genuine abstractions (Protocol/ABC), third-party wrappers, and pydantic/StrEnum/Exception types. The old repository/service classes held nothing but injected state — a stateful-class anti-pattern. Free functions with explicit parameters are the guideline-compliant form and make the session/dependency flow explicit.
+
+**How the `--store fs` seam is preserved.** Workers are handed repo **namespaces** (modules) typed by the injection Protocols in `shared/repositories/_protocols.py`. In production the real `shared.repositories.<name>` modules are injected; `scripts/run_step.py --store fs` injects the file-backed doubles in `scripts/_fsrepos/*` instead (same function surface, backed by JSON via `FsStore`/`FsSession`). Because the Protocols describe a structural surface both satisfy, no worker code changes between DB and fs modes. The Protocol members are declared as `@property`-returning-`Callable` so a module of functions satisfies them under both pyright and ty (a method-style member's `self` is not stripped for a module under ty). Integration/`api` tests that call repos directly use `shared.testing.bind_repo(module, session)` to get a session-bound namespace.
+
+<a id="strenum-vocabularies"></a>
+### StrEnum vocabularies need no migration; DTO fields stay `str`
+
+**Decision.** The finite vocabularies (`TaskStatus`, `PipelineStep`, `EntityType`, `EntityRelevance`) live in `shared/enums.py` as `StrEnum`. Business logic uses the enum members for every comparison, construction, and `match`/`case`. **DB-facing DTO fields** (`TaskCreate.step`/`status`, `EntityCreate.type`, `DocumentEntityCreate.relevance`) and the `Mapped[...]` columns stay typed **`str`**; the extraction domain models (`worker_extract.models` / `ai.dtos` `ExtractedEntity`) are enum-typed.
+
+**Why no migration.** A `StrEnum` member *is* the exact text already stored (`TaskStatus.COMPLETED == "completed"`). Columns remain `Mapped[str]` (VARCHAR); the enums are applied at the DTO/logic boundary only. Adopting them changed no stored bytes, so **no Alembic migration was required**.
+
+**Why `str`-typed DTO fields (not enum-typed).** pydantic + pyright reject a raw string literal assigned to an enum-typed field (`Literal["pending"]` is not a `TaskStatus`), which would have forced ~76 call-site rewrites across the test fixtures for no runtime benefit. Since a `StrEnum` member is a `str` subclass, enum members flow into `str` fields with zero friction while logic still constructs and compares with the enums. Enum-typing is kept only where it adds value without that cost: the extraction models, where it also constrains the LLM's structured-output JSON schema.
 
 ## Design Principles
 

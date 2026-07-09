@@ -135,7 +135,8 @@ Conversation history for follow-up support. Can live in-memory or Redis instead 
 
 - **Embedding dimension**: Locked at `VECTOR(768)` for `intfloat/multilingual-e5-base` (e5-multilingual). Configurable via `EMBEDDING_DIMENSION` environment variable, default `768`. Change to `1024` for Cohere — requires both env var update and a new migration recreating the `chunks.embedding` column. Value is read at application startup from `shared/config.py` and applied to both the SQLAlchemy model and the Alembic migration.
 - **tsvector column**: `chunks.tsv` is a `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` column. PostgreSQL computes and stores it automatically at INSERT time when `chunk_text` is written (during the chunk step). The embed worker does not touch it — attempting to UPDATE a `GENERATED ALWAYS STORED` column fails with a PostgreSQL error.
-- **Async repositories**: All repository classes use SQLAlchemy `AsyncSession`. Application code accesses the database exclusively through the async path.
+- **Async repositories**: The repositories are **modules of async functions** (one per entity), each taking a SQLAlchemy `AsyncSession` as its first argument — not classes. Application code accesses the database exclusively through the async path. See [BACKEND_DESIGN.md → Function-based data layer](../design/BACKEND_DESIGN.md#function-based-data-layer).
+- **Finite-set columns stay `str`, values come from `StrEnum`**: `tasks.step`/`status`, `entities.type`, and `document_entities.relevance` are `VARCHAR`/`Mapped[str]`; their values are the `shared.enums` StrEnum members (`PipelineStep`, `TaskStatus`, `EntityType`, `EntityRelevance`). Because a `StrEnum` member is the exact stored text, adopting the enums needed **no migration**.
 
 ## Design Notes
 
