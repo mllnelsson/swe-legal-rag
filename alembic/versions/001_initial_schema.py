@@ -35,8 +35,18 @@ def upgrade() -> None:
         sa.Column("decision_date", sa.Date(), nullable=True),
         sa.Column("decision_outcome", sa.String(), nullable=True),
         sa.Column("category", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.UniqueConstraint("source_url", name="uq_documents_source_url"),
     )
     op.create_index("ix_documents_source_url", "documents", ["source_url"])
@@ -46,7 +56,12 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("type", sa.String(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.UniqueConstraint("name", "type", name="uq_entities_name_type"),
     )
     op.create_index("ix_entities_name_type", "entities", ["name", "type"])
@@ -55,7 +70,12 @@ def upgrade() -> None:
     op.create_table(
         "tasks",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("document_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("documents.id"), nullable=False),
+        sa.Column(
+            "document_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("documents.id"),
+            nullable=False,
+        ),
         sa.Column("step", sa.String(), nullable=False),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("error_message", sa.Text(), nullable=True),
@@ -103,8 +123,12 @@ def upgrade() -> None:
         ),
         sa.Column("relevance", sa.String(), nullable=False),
     )
-    op.create_index("ix_document_entities_entity_id", "document_entities", ["entity_id"])
-    op.create_index("ix_document_entities_document_id", "document_entities", ["document_id"])
+    op.create_index(
+        "ix_document_entities_entity_id", "document_entities", ["entity_id"]
+    )
+    op.create_index(
+        "ix_document_entities_document_id", "document_entities", ["document_id"]
+    )
 
     op.create_table(
         "document_references",
@@ -124,13 +148,27 @@ def upgrade() -> None:
         ),
         sa.Column("reference_context", sa.Text(), nullable=True),
     )
-    op.create_index("ix_document_references_target_document_id", "document_references", ["target_document_id"])
+    op.create_index(
+        "ix_document_references_target_document_id",
+        "document_references",
+        ["target_document_id"],
+    )
 
     op.create_table(
         "sessions",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("last_active_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "last_active_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.Column("history", postgresql.JSONB(), nullable=False, server_default="[]"),
     )
 
