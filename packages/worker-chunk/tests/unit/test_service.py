@@ -100,7 +100,7 @@ class TestProcessChunkingSuccess:
 
         document_repo.update.assert_awaited_once()
         call_args = document_repo.update.call_args
-        assert call_args[0][1].summary == canned_summary
+        assert call_args[0][2].summary == canned_summary
 
     async def test_deletes_existing_chunks_before_insert(self) -> None:
         document = _make_document("Legal text.")
@@ -141,7 +141,7 @@ class TestProcessChunkingSuccess:
                 session=session,
             )
 
-        chunk_repo.delete_by_document_id.assert_awaited_once_with(document.id)
+        chunk_repo.delete_by_document_id.assert_awaited_once_with(session, document.id)
 
     async def test_contextual_text_starts_with_summary(self) -> None:
         document = _make_document(
@@ -152,7 +152,7 @@ class TestProcessChunkingSuccess:
 
         captured_dtos: list = []
 
-        async def capture_bulk_create(dtos: list) -> list:
+        async def capture_bulk_create(_session, dtos: list) -> list:
             captured_dtos.extend(dtos)
             return []
 
@@ -270,7 +270,7 @@ class TestProcessChunkingErrorCases:
         )
 
         update_calls = task_repo.update_status.call_args_list
-        statuses = [c[0][1].status for c in update_calls]
+        statuses = [c[0][2].status for c in update_calls]
         assert "failed" in statuses
 
     async def test_document_without_raw_text_marks_task_failed(self) -> None:
@@ -301,7 +301,7 @@ class TestProcessChunkingErrorCases:
         )
 
         update_calls = task_repo.update_status.call_args_list
-        statuses = [c[0][1].status for c in update_calls]
+        statuses = [c[0][2].status for c in update_calls]
         assert "failed" in statuses
 
     async def test_already_completed_task_is_skipped(self) -> None:
@@ -365,5 +365,5 @@ class TestProcessChunkingErrorCases:
                 )
 
         update_calls = task_repo.update_status.call_args_list
-        statuses = [c[0][1].status for c in update_calls]
+        statuses = [c[0][2].status for c in update_calls]
         assert "failed" in statuses
