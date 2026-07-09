@@ -3,6 +3,7 @@ from uuid import uuid4
 import pytest
 
 from shared.config import QueueBackendType, QueueSettings
+from shared.errors import BackendConfigError
 from shared.queue.base import QueueMessage
 from shared.queue.factory import create_queue_publisher, create_queue_subscriber
 from shared.queue.sync import SyncQueuePublisher, SyncQueueSubscriber
@@ -46,5 +47,5 @@ def test_factory_raises_for_unknown_backend() -> None:
     object.__setattr__(settings, "queue_backend", "unknown")  # type: ignore[arg-type]
     object.__setattr__(settings, "pubsub_project_id", None)
 
-    with pytest.raises(ValueError, match="Unknown queue backend"):
+    with pytest.raises(BackendConfigError, match="Unknown queue backend"):
         create_queue_publisher(settings)

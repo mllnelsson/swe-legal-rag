@@ -9,6 +9,7 @@ from ai import summarize_document
 from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentUpdate
 from shared.dtos.task import TaskCreate, TaskStatusUpdate
+from shared.enums import PipelineStep, TaskStatus
 from shared.queue.base import QueueMessage, QueuePublisher
 from shared.repositories import ChunkRepo, DocumentRepo, TaskRepo
 
@@ -30,15 +31,15 @@ async def process_chunking(
     task_repo: TaskRepo,
     queue_publisher: QueuePublisher,
     session: AsyncSession,
-    next_topic: str = "embed",
+    next_topic: PipelineStep = PipelineStep.EMBED,
 ) -> None:
     task = await task_repo.get_by_id(session, task_id)
-    if task is None or task.status == "completed":
+    if task is None or task.status == TaskStatus.COMPLETED:
         logger.info("Task %s already completed or not found, skipping", task_id)
         return
 
     await task_repo.update_status(
-        session, task_id, TaskStatusUpdate(status="processing")
+        session, task_id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
     )
     await session.commit()
 
@@ -48,7 +49,8 @@ async def process_chunking(
             session,
             task_id,
             TaskStatusUpdate(
-                status="failed", error_message=f"Document {document_id} not found"
+                status=TaskStatus.FAILED,
+                error_message=f"Document {document_id} not found",
             ),
         )
         await session.commit()
@@ -59,7 +61,7 @@ async def process_chunking(
             session,
             task_id,
             TaskStatusUpdate(
-                status="failed",
+                status=TaskStatus.FAILED,
                 error_message=f"Document {document_id} has no raw text",
             ),
         )
@@ -92,7 +94,12 @@ async def process_chunking(
             await chunk_repo.bulk_create(session, chunk_dtos)
 
         embed_task = await task_repo.create(
-            session, TaskCreate(document_id=document_id, step="embed", status="pending")
+            session,
+            TaskCreate(
+                document_id=document_id,
+                step=PipelineStep.EMBED,
+                status=TaskStatus.PENDING,
+            ),
         )
         await session.commit()
 
@@ -102,7 +109,7 @@ async def process_chunking(
         )
 
         await task_repo.update_status(
-            session, task_id, TaskStatusUpdate(status="completed")
+            session, task_id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
         )
         await session.commit()
 
@@ -119,7 +126,7 @@ async def process_chunking(
         await task_repo.update_status(
             session,
             task_id,
-            TaskStatusUpdate(status="failed", error_message=str(exc)),
+            TaskStatusUpdate(status=TaskStatus.FAILED, error_message=str(exc)),
         )
         await session.commit()
         raise

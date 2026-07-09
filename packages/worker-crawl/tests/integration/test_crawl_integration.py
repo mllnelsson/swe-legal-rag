@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 from unittest.mock import MagicMock
 
 import pytest
@@ -32,7 +33,7 @@ def _make_kwargs(
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
 
 

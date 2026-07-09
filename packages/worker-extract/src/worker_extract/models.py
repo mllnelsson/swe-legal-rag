@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from enum import StrEnum, auto
-
 from pydantic import BaseModel, ConfigDict
 
+# The entity vocabularies live in shared.enums (single source of truth used by the
+# DTOs too); re-exported here so worker-extract code has one import point for its
+# extraction models and their field types.
+from shared.enums import EntityRelevance, EntityType
 
-class EntityType(StrEnum):
-    LEGAL_CONCEPT = auto()
-    ROLE = auto()
-    PARISH = auto()
-    REGULATION = auto()
-
-
-class Relevance(StrEnum):
-    PRIMARY = auto()
-    MENTIONED = auto()
+__all__ = [
+    "EntityType",
+    "EntityRelevance",
+    "ExtractedEntity",
+    "ExtractedReference",
+    "ExtractionResult",
+]
 
 
 class ExtractedEntity(BaseModel):
@@ -22,7 +21,7 @@ class ExtractedEntity(BaseModel):
 
     name: str
     type: EntityType
-    relevance: Relevance
+    relevance: EntityRelevance
 
 
 class ExtractedReference(BaseModel):

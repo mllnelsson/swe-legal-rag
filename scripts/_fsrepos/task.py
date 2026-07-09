@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from _fsstore import now, store_of
 from shared.dtos.task import TaskCreate, TaskRead, TaskStatusUpdate
+from shared.enums import PipelineStep, TaskStatus
 
-_TERMINAL = {"completed", "failed"}
+_TERMINAL = {TaskStatus.COMPLETED, TaskStatus.FAILED}
 
 
 def _rows(session: AsyncSession) -> list[TaskRead]:
@@ -33,7 +34,7 @@ async def get_by_id(session: AsyncSession, task_id: UUID) -> TaskRead | None:
 
 
 async def get_by_document_and_step(
-    session: AsyncSession, document_id: UUID, step: str
+    session: AsyncSession, document_id: UUID, step: PipelineStep
 ) -> TaskRead | None:
     return next(
         (t for t in _rows(session) if t.document_id == document_id and t.step == step),
@@ -51,7 +52,7 @@ async def update_status(
                 "status": status_update.status,
                 "error_message": status_update.error_message,
             }
-            if status_update.status == "processing":
+            if status_update.status == TaskStatus.PROCESSING:
                 changes["started_at"] = now()
             elif status_update.status in _TERMINAL:
                 changes["completed_at"] = now()
@@ -63,7 +64,9 @@ async def update_status(
 # --- runner helpers (not part of the real repo; used by run_step for re-run prep) ---
 
 
-async def reset_to_pending(session: AsyncSession, document_id: UUID, step: str) -> UUID:
+async def reset_to_pending(
+    session: AsyncSession, document_id: UUID, step: PipelineStep
+) -> UUID:
     existing = await get_by_document_and_step(session, document_id, step)
     if existing is None:
         created = await create(session, TaskCreate(document_id=document_id, step=step))
@@ -73,7 +76,7 @@ async def reset_to_pending(session: AsyncSession, document_id: UUID, step: str) 
         if task.id == existing.id:
             rows[i] = task.model_copy(
                 update={
-                    "status": "pending",
+                    "status": TaskStatus.PENDING,
                     "error_message": None,
                     "started_at": None,
                     "completed_at": None,
@@ -84,7 +87,7 @@ async def reset_to_pending(session: AsyncSession, document_id: UUID, step: str) 
 
 
 async def delete_by_document_and_step(
-    session: AsyncSession, document_id: UUID, step: str
+    session: AsyncSession, document_id: UUID, step: PipelineStep
 ) -> None:
     store = store_of(session)
     store.rows["tasks"] = [

@@ -11,6 +11,7 @@ from _fsrepos import task as fs_task
 from _fsrepos import unresolved_reference as fs_unresolved
 from _fsstore import FsSession, FsStore
 from shared.dtos.document import DocumentCreate, DocumentUpdate
+from shared.enums import PipelineStep
 from shared.dtos.document_entity import DocumentEntityCreate
 from shared.dtos.entity import EntityCreate
 from shared.dtos.task import TaskCreate, TaskStatusUpdate
@@ -92,25 +93,28 @@ async def test_task_reset_and_clear(tmp_path: Path) -> None:
     )
     await fs_task.update_status(session, task.id, TaskStatusUpdate(status="completed"))
 
-    reset_id = await fs_task.reset_to_pending(session, doc_id, "parse")
+    reset_id = await fs_task.reset_to_pending(session, doc_id, PipelineStep.PARSE)
     assert reset_id == task.id
     after = await fs_task.get_by_id(session, task.id)
     assert after is not None
     assert after.status == "pending"
     assert after.completed_at is None
 
-    await fs_task.delete_by_document_and_step(session, doc_id, "parse")
-    assert await fs_task.get_by_document_and_step(session, doc_id, "parse") is None
+    await fs_task.delete_by_document_and_step(session, doc_id, PipelineStep.PARSE)
+    assert (
+        await fs_task.get_by_document_and_step(session, doc_id, PipelineStep.PARSE)
+        is None
+    )
 
 
 async def test_entity_upsert_dedups_on_name_and_type(tmp_path: Path) -> None:
     store = FsStore(tmp_path)
     session = _session(store)
     first = await fs_entity.upsert(
-        session, EntityCreate(name="Domkapitlet", type="organization")
+        session, EntityCreate(name="Domkapitlet", type="parish")
     )
     second = await fs_entity.upsert(
-        session, EntityCreate(name="Domkapitlet", type="organization")
+        session, EntityCreate(name="Domkapitlet", type="parish")
     )
     assert first.id == second.id
     assert len(store.rows["entities"]) == 1
@@ -123,7 +127,7 @@ async def test_document_entity_upgrades_relevance_to_primary(tmp_path: Path) -> 
     await fs_document_entity.upsert(
         session,
         DocumentEntityCreate(
-            document_id=doc_id, entity_id=entity_id, relevance="secondary"
+            document_id=doc_id, entity_id=entity_id, relevance="mentioned"
         ),
     )
     upgraded = await fs_document_entity.upsert(

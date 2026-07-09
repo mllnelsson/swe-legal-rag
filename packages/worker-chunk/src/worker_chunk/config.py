@@ -2,12 +2,14 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from shared.enums import PipelineStep
+
 
 class ChunkSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
     chunk_topic: str = "chunk"
-    chunk_next_topic: str = "embed"
+    chunk_next_topic: PipelineStep = PipelineStep.EMBED
 
 
 @lru_cache(maxsize=1)

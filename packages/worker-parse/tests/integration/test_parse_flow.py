@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 import ctypes
 import io
 
@@ -73,7 +74,7 @@ async def test_parse_flow_populates_raw_text_and_completes_task(
         queue_publisher=sync_publisher,
         parser=parse_pdf_with_pypdfium2,
         session=session,
-        next_topic="metadata",
+        next_topic=PipelineStep.METADATA,
     )
 
     doc_row = (

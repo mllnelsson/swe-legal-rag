@@ -2,12 +2,14 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from shared.enums import PipelineStep
+
 
 class ParseSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
     parse_topic: str = "parse"
-    parse_next_topic: str = "metadata"
+    parse_next_topic: PipelineStep = PipelineStep.METADATA
 
 
 @lru_cache(maxsize=1)

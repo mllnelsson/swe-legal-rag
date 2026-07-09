@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.enums import PipelineStep
 
 import uuid
 from datetime import datetime, timezone
@@ -119,7 +120,7 @@ async def _call(
     ref_repo: MagicMock,
     unresolved_repo: MagicMock,
     publisher: MagicMock,
-    next_topic: str = "chunk",
+    next_topic: PipelineStep = PipelineStep.CHUNK,
     strategy_result: ExtractionResult = _EMPTY_RESULT,
 ) -> None:
     with patch(
@@ -198,7 +199,7 @@ class TestWorkerProcessesDocument:
             ref_repo,
             unresolved_repo,
             publisher,
-            next_topic="chunk",
+            next_topic=PipelineStep.CHUNK,
         )
 
         publisher.publish.assert_called_once()
@@ -248,7 +249,7 @@ class TestWorkerProcessesDocument:
                     unresolved_repo=unresolved_repo,
                     queue_publisher=publisher,
                     session=session,
-                    next_topic="chunk",
+                    next_topic=PipelineStep.CHUNK,
                 )
 
         publisher.publish.assert_not_called()
@@ -410,7 +411,7 @@ class TestCheckpointing:
                     unresolved_repo=unresolved_repo,
                     queue_publisher=publisher,
                     session=session,
-                    next_topic="chunk",
+                    next_topic=PipelineStep.CHUNK,
                 )
 
         session.rollback.assert_called_once()

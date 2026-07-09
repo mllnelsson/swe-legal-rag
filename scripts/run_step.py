@@ -59,6 +59,7 @@ from _fsstore import FsSession, FsStore
 from shared.config import Settings, get_settings
 from shared.db import get_async_session
 from shared.dtos.document import DocumentCreate, DocumentUpdate
+from shared.enums import PipelineStep, TaskStatus
 from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
@@ -84,13 +85,13 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message
 logger = logging.getLogger("run_step")
 
 # Ingestion order. Value is the step each stage hands off to (None = terminal).
-PIPELINE: dict[str, str | None] = {
-    "download": "parse",
-    "parse": "metadata",
-    "metadata": "extract",
-    "extract": "chunk",
-    "chunk": "embed",
-    "embed": None,
+PIPELINE: dict[PipelineStep, PipelineStep | None] = {
+    PipelineStep.DOWNLOAD: PipelineStep.PARSE,
+    PipelineStep.PARSE: PipelineStep.METADATA,
+    PipelineStep.METADATA: PipelineStep.EXTRACT,
+    PipelineStep.EXTRACT: PipelineStep.CHUNK,
+    PipelineStep.CHUNK: PipelineStep.EMBED,
+    PipelineStep.EMBED: None,
 }
 
 
@@ -107,8 +108,8 @@ class NoopPublisher:
         )
 
 
-def _next_topic(step: str) -> str:
-    """Next step name for a non-terminal step (used as the publish topic)."""
+def _next_topic(step: PipelineStep) -> PipelineStep:
+    """Next step for a non-terminal step (used as the publish topic)."""
     next_step = PIPELINE[step]
     assert next_step is not None, f"{step!r} is terminal and has no next topic"
     return next_step
@@ -146,7 +147,7 @@ class DbCtx:
     async def document_exists(self, document_id: UUID) -> bool:
         return await self.session.get(Document, document_id) is not None
 
-    async def prepare_task(self, document_id: UUID, step: str) -> UUID:
+    async def prepare_task(self, document_id: UUID, step: PipelineStep) -> UUID:
         next_step = PIPELINE[step]
         if next_step is not None:
             await self.session.execute(
@@ -160,10 +161,10 @@ class DbCtx:
             )
         ).scalar_one_or_none()
         if task is None:
-            task = Task(document_id=document_id, step=step, status="pending")
+            task = Task(document_id=document_id, step=step, status=TaskStatus.PENDING)
             self.session.add(task)
         else:
-            task.status = "pending"
+            task.status = TaskStatus.PENDING
             task.error_message = None
             task.started_at = None
             task.completed_at = None
@@ -221,7 +222,7 @@ class FsCtx:
     async def document_exists(self, document_id: UUID) -> bool:
         return any(d.id == document_id for d in self.store.rows["documents"])
 
-    async def prepare_task(self, document_id: UUID, step: str) -> UUID:
+    async def prepare_task(self, document_id: UUID, step: PipelineStep) -> UUID:
         next_step = PIPELINE[step]
         if next_step is not None:
             await _fsrepos.task.delete_by_document_and_step(
@@ -260,7 +261,9 @@ async def open_ctx(args: argparse.Namespace) -> AsyncIterator[Ctx]:
             yield DbCtx(session)
 
 
-async def _run_step(ctx: Ctx, settings: Settings, step: str, document_id: UUID) -> str:
+async def _run_step(
+    ctx: Ctx, settings: Settings, step: PipelineStep, document_id: UUID
+) -> str:
     if not await ctx.document_exists(document_id):
         raise SystemExit(
             f"Document {document_id} not found. Run `crawl` or `docs` first."
@@ -271,120 +274,118 @@ async def _run_step(ctx: Ctx, settings: Settings, step: str, document_id: UUID) 
     repos = ctx.repos
     session = ctx.session
 
-    if step == "download":
-        from worker_download.config import get_download_settings
-        from worker_download.service import process_download
+    match step:
+        case PipelineStep.CRAWL:
+            raise SystemExit("Use the `crawl` command to run the crawl step.")
+        case PipelineStep.DOWNLOAD:
+            from worker_download.config import get_download_settings
+            from worker_download.service import process_download
 
-        ds = get_download_settings()
-        await process_download(
-            QueueMessage(task_id=task_id, document_id=document_id),
-            session=session,
-            document_repo=repos.document,
-            task_repo=repos.task,
-            storage=create_storage_backend(settings.storage),
-            queue_publisher=publisher,
-            timeout=ds.download_request_timeout,
-            max_retries=ds.download_max_retries,
-            rate_limit_delay=ds.download_rate_limit_delay,
-            next_topic=ds.download_next_topic,
-        )
+            ds = get_download_settings()
+            await process_download(
+                QueueMessage(task_id=task_id, document_id=document_id),
+                session=session,
+                document_repo=repos.document,
+                task_repo=repos.task,
+                storage=create_storage_backend(settings.storage),
+                queue_publisher=publisher,
+                timeout=ds.download_request_timeout,
+                max_retries=ds.download_max_retries,
+                rate_limit_delay=ds.download_rate_limit_delay,
+                next_topic=ds.download_next_topic,
+            )
+        case PipelineStep.PARSE:
+            from worker_parse.parser import parse_pdf_with_pypdfium2
+            from worker_parse.service import process_parse
 
-    elif step == "parse":
-        from worker_parse.parser import parse_pdf_with_pypdfium2
-        from worker_parse.service import process_parse
+            await process_parse(
+                document_id=document_id,
+                task_id=task_id,
+                storage=create_storage_backend(settings.storage),
+                document_repo=repos.document,
+                task_repo=repos.task,
+                queue_publisher=publisher,
+                parser=parse_pdf_with_pypdfium2,
+                session=session,
+                next_topic=_next_topic(PipelineStep.PARSE),
+            )
+        case PipelineStep.METADATA:
+            from worker_metadata.__main__ import _llm_extractor
+            from worker_metadata.patterns import extract_metadata_rule_based
+            from worker_metadata.service import process_metadata
 
-        await process_parse(
-            document_id=document_id,
-            task_id=task_id,
-            storage=create_storage_backend(settings.storage),
-            document_repo=repos.document,
-            task_repo=repos.task,
-            queue_publisher=publisher,
-            parser=parse_pdf_with_pypdfium2,
-            session=session,
-            next_topic=_next_topic("parse"),
-        )
+            await process_metadata(
+                document_id=document_id,
+                task_id=task_id,
+                document_repo=repos.document,
+                task_repo=repos.task,
+                queue_publisher=publisher,
+                rule_extractor=extract_metadata_rule_based,
+                llm_extractor=_llm_extractor,
+                session=session,
+                next_topic=_next_topic(PipelineStep.METADATA),
+            )
+        case PipelineStep.EXTRACT:
+            from worker_extract.services.extraction_service import process_extraction
 
-    elif step == "metadata":
-        from worker_metadata.__main__ import _llm_extractor
-        from worker_metadata.patterns import extract_metadata_rule_based
-        from worker_metadata.service import process_metadata
+            await process_extraction(
+                document_id=document_id,
+                task_id=task_id,
+                document_repo=repos.document,
+                task_repo=repos.task,
+                entity_repo=repos.entity,
+                doc_entity_repo=repos.doc_entity,
+                ref_repo=repos.ref,
+                unresolved_repo=repos.unresolved,
+                queue_publisher=publisher,
+                session=session,
+                next_topic=_next_topic(PipelineStep.EXTRACT),
+            )
+        case PipelineStep.CHUNK:
+            from worker_chunk.service import process_chunking
 
-        await process_metadata(
-            document_id=document_id,
-            task_id=task_id,
-            document_repo=repos.document,
-            task_repo=repos.task,
-            queue_publisher=publisher,
-            rule_extractor=extract_metadata_rule_based,
-            llm_extractor=_llm_extractor,
-            session=session,
-            next_topic=_next_topic("metadata"),
-        )
+            await process_chunking(
+                document_id=document_id,
+                task_id=task_id,
+                document_repo=repos.document,
+                chunk_repo=repos.chunk,
+                task_repo=repos.task,
+                queue_publisher=publisher,
+                session=session,
+                next_topic=_next_topic(PipelineStep.CHUNK),
+            )
+        case PipelineStep.EMBED:
+            from ai import create_embedding_provider
+            from worker_embed.service import process_embedding
 
-    elif step == "extract":
-        from worker_extract.services.extraction_service import process_extraction
-
-        await process_extraction(
-            document_id=document_id,
-            task_id=task_id,
-            document_repo=repos.document,
-            task_repo=repos.task,
-            entity_repo=repos.entity,
-            doc_entity_repo=repos.doc_entity,
-            ref_repo=repos.ref,
-            unresolved_repo=repos.unresolved,
-            queue_publisher=publisher,
-            session=session,
-            next_topic=_next_topic("extract"),
-        )
-
-    elif step == "chunk":
-        from worker_chunk.service import process_chunking
-
-        await process_chunking(
-            document_id=document_id,
-            task_id=task_id,
-            document_repo=repos.document,
-            chunk_repo=repos.chunk,
-            task_repo=repos.task,
-            queue_publisher=publisher,
-            session=session,
-            next_topic=_next_topic("chunk"),
-        )
-
-    elif step == "embed":
-        from ai import create_embedding_provider
-        from worker_embed.service import process_embedding
-
-        await process_embedding(
-            document_id=document_id,
-            task_id=task_id,
-            chunk_repo=repos.chunk,
-            task_repo=repos.task,
-            embedding_provider=create_embedding_provider(),
-            session=session,
-        )
+            await process_embedding(
+                document_id=document_id,
+                task_id=task_id,
+                chunk_repo=repos.chunk,
+                task_repo=repos.task,
+                embedding_provider=create_embedding_provider(),
+                session=session,
+            )
 
     final = await repos.task.get_by_id(session, task_id)
     status = final.status if final else "unknown"
     logger.info(
         "Step %r finished for document %s -> task status=%s", step, document_id, status
     )
-    if final and final.status == "failed":
+    if final and final.status == TaskStatus.FAILED:
         logger.error("Error: %s", final.error_message)
     return status
 
 
 async def _run_chain(
-    ctx: Ctx, settings: Settings, document_id: UUID, until: str | None
+    ctx: Ctx, settings: Settings, document_id: UUID, until: PipelineStep | None
 ) -> None:
     steps = list(PIPELINE)
     if until is not None:
         steps = steps[: steps.index(until) + 1]
     for step in steps:
         status = await _run_step(ctx, settings, step, document_id)
-        if status != "completed":
+        if status != TaskStatus.COMPLETED:
             logger.error("Chain stopped at %r (status=%s)", step, status)
             return
     logger.info("Chain complete for document %s through %r", document_id, steps[-1])
@@ -471,9 +472,12 @@ async def _dispatch(args: argparse.Namespace) -> None:
         elif args.command == "crawl":
             await _run_crawl(ctx)
         elif args.command == "chain":
-            await _run_chain(ctx, settings, UUID(args.document_id), args.until)
+            until = PipelineStep(args.until) if args.until is not None else None
+            await _run_chain(ctx, settings, UUID(args.document_id), until)
         else:
-            await _run_step(ctx, settings, args.command, UUID(args.document_id))
+            await _run_step(
+                ctx, settings, PipelineStep(args.command), UUID(args.document_id)
+            )
 
 
 def main() -> None:

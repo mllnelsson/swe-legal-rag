@@ -9,13 +9,13 @@ from worker_extract.models import (
     ExtractionResult,
     ExtractedEntity,
     ExtractedReference,
-    Relevance,
+    EntityRelevance,
 )
 
 logger = logging.getLogger(__name__)
 
 _VALID_TYPES = {e.value for e in EntityType}
-_VALID_RELEVANCES = {r.value for r in Relevance}
+_VALID_RELEVANCES = {r.value for r in EntityRelevance}
 
 
 def _deduplicate_references(
@@ -55,7 +55,7 @@ def parse_llm_response(raw_json: str) -> ExtractionResult:
             ExtractedEntity(
                 name=name,
                 type=EntityType(entity_type),
-                relevance=Relevance(relevance),
+                relevance=EntityRelevance(relevance),
             )
         )
 

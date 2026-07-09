@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,7 +37,7 @@ def _make_kwargs(
         timeout=5,
         max_retries=1,
         rate_limit_delay=0,
-        next_topic="parse",
+        next_topic=PipelineStep.PARSE,
     )
 
 

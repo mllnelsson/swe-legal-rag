@@ -9,6 +9,7 @@ from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentCreate, DocumentUpdate
 from shared.dtos.entity import EntityCreate
 from shared.dtos.task import TaskStatusUpdate
+from shared.enums import PipelineStep, TaskStatus
 from shared.repositories import chunk as chunk_repo
 from shared.repositories import document as document_repo
 from shared.repositories import entity as entity_repo
@@ -151,7 +152,9 @@ class TestTaskRepository:
         result_mock.scalars.return_value = [task]
         session.execute.return_value = result_mock
 
-        results = await task_repo.list_by_step_and_status(session, "crawl", "pending")
+        results = await task_repo.list_by_step_and_status(
+            session, PipelineStep.CRAWL, TaskStatus.PENDING
+        )
 
         session.execute.assert_called_once()
         assert len(results) == 1

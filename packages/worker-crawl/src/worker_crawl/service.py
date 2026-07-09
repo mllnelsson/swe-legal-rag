@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document import DocumentCreate
 from shared.dtos.task import TaskCreate
+from shared.enums import PipelineStep, TaskStatus
 from shared.queue.base import QueueMessage, QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
 from worker_crawl.client import CrawlClient
@@ -27,7 +28,7 @@ async def process_crawl(
     queue_publisher: QueuePublisher,
     client: CrawlClient,
     source_url: str,
-    topic: str,
+    topic: PipelineStep,
 ) -> CrawlResult:
     urls = client.fetch_pdf_urls(source_url)
     new_count = 0
@@ -51,11 +52,19 @@ async def process_crawl(
 
             await task_repo.create(
                 session,
-                TaskCreate(document_id=doc.id, step="crawl", status="completed"),
+                TaskCreate(
+                    document_id=doc.id,
+                    step=PipelineStep.CRAWL,
+                    status=TaskStatus.COMPLETED,
+                ),
             )
             download_task = await task_repo.create(
                 session,
-                TaskCreate(document_id=doc.id, step="download", status="pending"),
+                TaskCreate(
+                    document_id=doc.id,
+                    step=PipelineStep.DOWNLOAD,
+                    status=TaskStatus.PENDING,
+                ),
             )
             # Commit before publishing so rows are visible to any separate session
             # (required when QUEUE_BACKEND=sync dispatches inline in the same process)

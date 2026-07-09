@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from worker_extract.models import ExtractionResult, Relevance
+from worker_extract.models import ExtractionResult, EntityRelevance
 from worker_extract.parsing import parse_llm_response
 
 _VALID_JSON = json.dumps(
@@ -85,7 +85,7 @@ class TestParseLLMResponse:
     def test_parse_deduplicates_entities_keeps_primary(self) -> None:
         result = parse_llm_response(_DUPLICATE_ENTITY_JSON)
         assert len(result.entities) == 1
-        assert result.entities[0].relevance == Relevance.PRIMARY
+        assert result.entities[0].relevance == EntityRelevance.PRIMARY
 
     def test_parse_skips_entities_with_invalid_type(self) -> None:
         result = parse_llm_response(_INVALID_TYPE_JSON)

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from shared.dtos.entity import EntityRead
 from worker_extract.entities import deduplicate_entities, normalize_entity_name
-from worker_extract.models import EntityType, ExtractedEntity, Relevance
+from worker_extract.models import EntityType, ExtractedEntity, EntityRelevance
 from worker_extract.services.entity_service import persist_entities
 
 # Sentinel standing in for the AsyncSession handle threaded to the repo functions.
@@ -16,7 +16,7 @@ session = MagicMock()
 def _entity(
     name: str,
     etype: EntityType = EntityType.ROLE,
-    relevance: Relevance = Relevance.MENTIONED,
+    relevance: EntityRelevance = EntityRelevance.MENTIONED,
 ) -> ExtractedEntity:
     return ExtractedEntity(name=name, type=etype, relevance=relevance)
 
@@ -44,12 +44,12 @@ class TestNormalizeEntityName:
 class TestDeduplicateEntities:
     def test_entity_persist_dedup_primary_wins_over_mentioned(self) -> None:
         entities = [
-            _entity("kyrkoherde", relevance=Relevance.MENTIONED),
-            _entity("kyrkoherde", relevance=Relevance.PRIMARY),
+            _entity("kyrkoherde", relevance=EntityRelevance.MENTIONED),
+            _entity("kyrkoherde", relevance=EntityRelevance.PRIMARY),
         ]
         result = deduplicate_entities(entities)
         assert len(result) == 1
-        assert result[0].relevance == Relevance.PRIMARY
+        assert result[0].relevance == EntityRelevance.PRIMARY
 
     def test_entity_persist_dedup_keeps_distinct_types(self) -> None:
         entities = [
@@ -61,8 +61,8 @@ class TestDeduplicateEntities:
 
     def test_entity_persist_dedup_case_insensitive(self) -> None:
         entities = [
-            _entity("Kyrkoherde", relevance=Relevance.MENTIONED),
-            _entity("kyrkoherde", relevance=Relevance.PRIMARY),
+            _entity("Kyrkoherde", relevance=EntityRelevance.MENTIONED),
+            _entity("kyrkoherde", relevance=EntityRelevance.PRIMARY),
         ]
         result = deduplicate_entities(entities)
         assert len(result) == 1
@@ -123,8 +123,8 @@ class TestPersistEntities:
         doc_entity_repo.upsert = AsyncMock()
 
         entities = [
-            _entity("kyrkoherde", relevance=Relevance.MENTIONED),
-            _entity("kyrkoherde", relevance=Relevance.PRIMARY),
+            _entity("kyrkoherde", relevance=EntityRelevance.MENTIONED),
+            _entity("kyrkoherde", relevance=EntityRelevance.PRIMARY),
         ]
         await persist_entities(
             session, entity_repo, doc_entity_repo, uuid.uuid4(), entities

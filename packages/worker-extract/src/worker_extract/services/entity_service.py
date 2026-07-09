@@ -22,13 +22,13 @@ async def persist_entities(
     for entity in deduped:
         normalized_name = normalize_entity_name(entity.name)
         entity_read = await entity_repo.upsert(
-            session, EntityCreate(name=normalized_name, type=str(entity.type))
+            session, EntityCreate(name=normalized_name, type=entity.type)
         )
         await doc_entity_repo.upsert(
             session,
             DocumentEntityCreate(
                 document_id=document_id,
                 entity_id=entity_read.id,
-                relevance=str(entity.relevance),
+                relevance=entity.relevance,
             ),
         )

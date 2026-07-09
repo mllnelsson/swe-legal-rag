@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.enums import PipelineStep
 
 import datetime
 import uuid
@@ -101,7 +102,7 @@ async def _call(
         rule_extractor=rule_extractor,
         llm_extractor=llm_extractor,
         session=session,
-        next_topic="extract",
+        next_topic=PipelineStep.EXTRACT,
     )
 
 

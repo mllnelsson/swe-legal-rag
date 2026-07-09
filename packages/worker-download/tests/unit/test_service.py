@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -86,7 +87,7 @@ def _make_deps(
         timeout=5,
         max_retries=max_retries,
         rate_limit_delay=0,
-        next_topic="parse",
+        next_topic=PipelineStep.PARSE,
     )
     return kwargs, session, task_repo, doc_repo, storage, publisher
 

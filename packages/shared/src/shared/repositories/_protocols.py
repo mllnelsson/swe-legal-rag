@@ -34,6 +34,7 @@ from shared.dtos.unresolved_reference import (
     UnresolvedReferenceCreate,
     UnresolvedReferenceRead,
 )
+from shared.enums import PipelineStep
 
 
 class DocumentRepo(Protocol):
@@ -71,7 +72,9 @@ class TaskRepo(Protocol):
     @property
     def get_by_document_and_step(
         self,
-    ) -> Callable[[AsyncSession, uuid.UUID, str], Awaitable[TaskRead | None]]: ...
+    ) -> Callable[
+        [AsyncSession, uuid.UUID, PipelineStep], Awaitable[TaskRead | None]
+    ]: ...
     @property
     def update_status(
         self,

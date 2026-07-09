@@ -153,7 +153,7 @@ async def test_tool_loop_max_iterations_raises() -> None:
     assert mock_provider.generate.await_count == 3
 
 
-async def test_tool_loop_unknown_tool_raises_key_error() -> None:
+async def test_tool_loop_unknown_tool_raises_tool_execution_error() -> None:
     tc = ToolCall(id="tc-1", name="missing_tool", arguments={})
     response = _make_response("", tool_calls=(tc,))
 
@@ -162,7 +162,7 @@ async def test_tool_loop_unknown_tool_raises_key_error() -> None:
 
     tools = [ToolDefinition(name="missing_tool", description="Missing", parameters={})]
 
-    with pytest.raises(KeyError, match="missing_tool"):
+    with pytest.raises(ToolExecutionError, match="missing_tool"):
         await tool_loop(
             [Message(role=Role.user, content="Go")],
             tools,

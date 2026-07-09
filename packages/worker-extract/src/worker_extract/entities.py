@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from worker_extract.models import ExtractedEntity, Relevance
+from worker_extract.models import ExtractedEntity, EntityRelevance
 
 __all__ = ["normalize_entity_name", "deduplicate_entities"]
 
@@ -27,6 +27,6 @@ def deduplicate_entities(entities: list[ExtractedEntity]) -> list[ExtractedEntit
     seen: dict[tuple[str, str], ExtractedEntity] = {}
     for entity in entities:
         key = (normalize_entity_name(entity.name), str(entity.type))
-        if key not in seen or entity.relevance == Relevance.PRIMARY:
+        if key not in seen or entity.relevance == EntityRelevance.PRIMARY:
             seen[key] = entity
     return list(seen.values())

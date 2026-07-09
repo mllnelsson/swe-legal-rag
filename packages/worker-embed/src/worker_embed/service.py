@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai import EmbeddingProvider
 from shared.config import EMBEDDING_DIMENSION
 from shared.dtos.task import TaskStatusUpdate
+from shared.enums import TaskStatus
 from shared.repositories import ChunkRepo, TaskRepo
+from worker_embed.errors import (
+    EmbeddingCountMismatchError,
+    EmbeddingDimensionError,
+    NoChunksError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,19 +28,19 @@ async def process_embedding(
     session: AsyncSession,
 ) -> None:
     task = await task_repo.get_by_id(session, task_id)
-    if task is None or task.status == "completed":
+    if task is None or task.status == TaskStatus.COMPLETED:
         logger.info("Task %s already completed or not found, skipping", task_id)
         return
 
     await task_repo.update_status(
-        session, task_id, TaskStatusUpdate(status="processing")
+        session, task_id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
     )
     await session.commit()
 
     try:
         chunks = await chunk_repo.get_by_document_id(session, document_id)
         if not chunks:
-            raise ValueError(
+            raise NoChunksError(
                 f"No chunks found for document {document_id} — chunk worker must run first"
             )
 
@@ -43,13 +49,13 @@ async def process_embedding(
         vectors = await embedding_provider.embed(texts)
 
         if len(vectors) != len(chunks):
-            raise ValueError(
+            raise EmbeddingCountMismatchError(
                 f"Embedding count mismatch: expected {len(chunks)}, got {len(vectors)}"
             )
 
         for vector in vectors:
             if len(vector) != EMBEDDING_DIMENSION:
-                raise ValueError(
+                raise EmbeddingDimensionError(
                     f"Embedding dimension mismatch: expected {EMBEDDING_DIMENSION}, got {len(vector)}"
                 )
 
@@ -57,7 +63,7 @@ async def process_embedding(
         await chunk_repo.update_embeddings(session, updates)
 
         await task_repo.update_status(
-            session, task_id, TaskStatusUpdate(status="completed")
+            session, task_id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
         )
         await session.commit()
 
@@ -69,7 +75,7 @@ async def process_embedding(
         await task_repo.update_status(
             session,
             task_id,
-            TaskStatusUpdate(status="failed", error_message=str(exc)),
+            TaskStatusUpdate(status=TaskStatus.FAILED, error_message=str(exc)),
         )
         await session.commit()
         raise

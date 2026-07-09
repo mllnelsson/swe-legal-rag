@@ -6,9 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document import DocumentUpdate
 from shared.dtos.task import TaskCreate, TaskStatusUpdate
+from shared.enums import PipelineStep, TaskStatus
 from shared.queue.base import QueueMessage, QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
 from shared.storage.base import StorageBackend
+from worker_download.errors import DownloadError
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ MIN_ATTEMPTS = 1
 
 
 def _download_pdf(url: str, timeout: int, max_retries: int) -> bytes:
-    last_error: Exception = RuntimeError(f"No attempts made for {url}")
+    last_error: Exception = DownloadError(f"No attempts made for {url}")
     headers = {"User-Agent": _USER_AGENT}
     with httpx.Client(timeout=timeout, headers=headers) as client:
         for attempt in range(max(MIN_ATTEMPTS, max_retries)):
@@ -54,15 +56,15 @@ async def process_download(
     timeout: int,
     max_retries: int,
     rate_limit_delay: float,
-    next_topic: str,
+    next_topic: PipelineStep,
 ) -> None:
     task = await task_repo.get_by_id(session, message.task_id)
-    if task is None or task.status == "completed":
+    if task is None or task.status == TaskStatus.COMPLETED:
         logger.info("Task %s already completed or not found, skipping", message.task_id)
         return
 
     await task_repo.update_status(
-        session, task.id, TaskStatusUpdate(status="processing")
+        session, task.id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
     )
     await session.commit()
 
@@ -72,7 +74,7 @@ async def process_download(
             session,
             task.id,
             TaskStatusUpdate(
-                status="failed",
+                status=TaskStatus.FAILED,
                 error_message=f"Document {message.document_id} not found",
             ),
         )
@@ -82,7 +84,11 @@ async def process_download(
     if document.gcs_uri is not None:
         parse_task = await task_repo.create(
             session,
-            TaskCreate(document_id=document.id, step="parse", status="pending"),
+            TaskCreate(
+                document_id=document.id,
+                step=PipelineStep.PARSE,
+                status=TaskStatus.PENDING,
+            ),
         )
         await session.commit()
         queue_publisher.publish(
@@ -90,7 +96,7 @@ async def process_download(
             QueueMessage(task_id=parse_task.id, document_id=document.id),
         )
         await task_repo.update_status(
-            session, task.id, TaskStatusUpdate(status="completed")
+            session, task.id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
         )
         await session.commit()
         return
@@ -102,7 +108,11 @@ async def process_download(
         await document_repo.update(session, document.id, DocumentUpdate(gcs_uri=uri))
         parse_task = await task_repo.create(
             session,
-            TaskCreate(document_id=document.id, step="parse", status="pending"),
+            TaskCreate(
+                document_id=document.id,
+                step=PipelineStep.PARSE,
+                status=TaskStatus.PENDING,
+            ),
         )
         await session.commit()
         queue_publisher.publish(
@@ -110,7 +120,7 @@ async def process_download(
             QueueMessage(task_id=parse_task.id, document_id=document.id),
         )
         await task_repo.update_status(
-            session, task.id, TaskStatusUpdate(status="completed")
+            session, task.id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
         )
         await session.commit()
         time.sleep(rate_limit_delay)
@@ -125,6 +135,6 @@ async def process_download(
         await task_repo.update_status(
             session,
             task.id,
-            TaskStatusUpdate(status="failed", error_message=str(e)),
+            TaskStatusUpdate(status=TaskStatus.FAILED, error_message=str(e)),
         )
         await session.commit()

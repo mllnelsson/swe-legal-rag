@@ -2,13 +2,15 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from shared.enums import PipelineStep
+
 
 class DownloadSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
     download_request_timeout: int = 60
     download_topic: str = "download"
-    download_next_topic: str = "parse"
+    download_next_topic: PipelineStep = PipelineStep.PARSE
     download_max_retries: int = 3
     download_rate_limit_delay: float = 0.5
 

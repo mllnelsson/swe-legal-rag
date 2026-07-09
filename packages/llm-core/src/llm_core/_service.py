@@ -99,7 +99,9 @@ async def tool_loop(
                 await on_tool_call(tc, history)
 
             if tc.name not in executors:
-                raise KeyError(f"No executor registered for tool {tc.name!r}")
+                raise ToolExecutionError(
+                    tc.name, f"No executor registered for tool {tc.name!r}"
+                )
 
             try:
                 result = await executors[tc.name](**tc.arguments)

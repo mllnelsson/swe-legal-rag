@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -95,7 +96,7 @@ async def _call_process_parse(
         queue_publisher=publisher,
         parser=parser,
         session=session,
-        next_topic="metadata",
+        next_topic=PipelineStep.METADATA,
     )
 
 

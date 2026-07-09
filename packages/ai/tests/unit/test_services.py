@@ -22,6 +22,7 @@ from ai.services import (
     synthesize_answer,
 )
 from llm_core import LLMResponse, Message, Role
+from shared.enums import EntityRelevance, EntityType
 
 
 @pytest.mark.asyncio
@@ -75,7 +76,9 @@ async def test_extract_entities() -> None:
     expected = EntityResult(
         entities=[
             ExtractedEntity(
-                name="överklaganderätt", type="legal_concept", relevance="primary"
+                name="överklaganderätt",
+                type=EntityType.LEGAL_CONCEPT,
+                relevance=EntityRelevance.PRIMARY,
             )
         ],
         references=[

@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -82,7 +83,7 @@ def _make_deps(
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
     return kwargs, session, publisher, client
 
@@ -176,7 +177,7 @@ async def test_run_commits_before_publish() -> None:
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
 
     assert committed_before_publish == [1], "commit must happen before publish"
@@ -223,7 +224,7 @@ async def test_run_continues_after_per_url_failure() -> None:
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
 
     assert result.total_found == 2
@@ -255,7 +256,7 @@ async def test_run_handles_integrity_error_as_duplicate() -> None:
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
 
     assert result == CrawlResult(total_found=1, new_documents=0, skipped=1)

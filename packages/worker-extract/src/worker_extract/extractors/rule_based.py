@@ -7,7 +7,7 @@ from worker_extract.models import (
     ExtractionResult,
     ExtractedEntity,
     ExtractedReference,
-    Relevance,
+    EntityRelevance,
 )
 
 _CASE_REF_RE = re.compile(
@@ -65,11 +65,11 @@ def _extract_sentence(text: str, pos: int) -> str:
     return text[sentence_start : sentence_end + 1].strip()
 
 
-def _relevance(text_len: int, pos: int) -> Relevance:
+def _relevance(text_len: int, pos: int) -> EntityRelevance:
     return (
-        Relevance.PRIMARY
+        EntityRelevance.PRIMARY
         if pos / max(text_len, 1) >= _PRIMARY_THRESHOLD
-        else Relevance.MENTIONED
+        else EntityRelevance.MENTIONED
     )
 
 

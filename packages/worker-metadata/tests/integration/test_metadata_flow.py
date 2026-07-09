@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.enums import PipelineStep
 
 import datetime
 from unittest.mock import AsyncMock
@@ -36,7 +37,7 @@ async def test_metadata_flow_populates_fields_and_completes_task(
         rule_extractor=extract_metadata_rule_based,
         llm_extractor=llm_extractor,
         session=session,
-        next_topic="extract",
+        next_topic=PipelineStep.EXTRACT,
     )
 
     doc_row = (

@@ -4,9 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document_entity import DocumentEntityCreate, DocumentEntityRead
+from shared.enums import EntityRelevance
 from shared.models.document_entity import DocumentEntity
-
-_PRIMARY = "primary"
 
 
 async def create(
@@ -49,8 +48,10 @@ async def upsert(
         session.add(de)
         await session.flush()
         await session.refresh(de)
-    elif dto.relevance == _PRIMARY and de.relevance != _PRIMARY:
-        de.relevance = _PRIMARY
+    elif dto.relevance == EntityRelevance.PRIMARY and (
+        de.relevance != EntityRelevance.PRIMARY
+    ):
+        de.relevance = EntityRelevance.PRIMARY
         await session.flush()
         await session.refresh(de)
     return DocumentEntityRead.model_validate(de)

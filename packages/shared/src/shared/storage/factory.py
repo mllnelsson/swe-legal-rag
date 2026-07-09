@@ -1,4 +1,5 @@
 from shared.config import StorageBackendType, StorageSettings
+from shared.errors import BackendConfigError
 from shared.storage.base import StorageBackend
 
 
@@ -13,4 +14,6 @@ def create_storage_backend(settings: StorageSettings) -> StorageBackend:
 
             return GCSStorageBackend(settings.gcs_bucket)  # type: ignore[arg-type]
         case _:
-            raise ValueError(f"Unknown storage backend: {settings.storage_backend}")
+            raise BackendConfigError(
+                f"Unknown storage backend: {settings.storage_backend}"
+            )

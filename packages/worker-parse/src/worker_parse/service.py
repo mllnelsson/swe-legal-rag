@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document import DocumentUpdate
 from shared.dtos.task import TaskCreate, TaskStatusUpdate
+from shared.enums import PipelineStep, TaskStatus
 from shared.queue.base import QueueMessage, QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
 from shared.storage.base import StorageBackend
@@ -24,15 +25,15 @@ async def process_parse(
     queue_publisher: QueuePublisher,
     parser: Parser,
     session: AsyncSession,
-    next_topic: str = "metadata",
+    next_topic: PipelineStep = PipelineStep.METADATA,
 ) -> None:
     task = await task_repo.get_by_id(session, task_id)
-    if task is None or task.status == "completed":
+    if task is None or task.status == TaskStatus.COMPLETED:
         logger.info("Task %s already completed or not found, skipping", task_id)
         return
 
     await task_repo.update_status(
-        session, task.id, TaskStatusUpdate(status="processing")
+        session, task.id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
     )
     await session.commit()
 
@@ -42,7 +43,8 @@ async def process_parse(
             session,
             task.id,
             TaskStatusUpdate(
-                status="failed", error_message=f"Document {document_id} not found"
+                status=TaskStatus.FAILED,
+                error_message=f"Document {document_id} not found",
             ),
         )
         await session.commit()
@@ -53,7 +55,7 @@ async def process_parse(
             session,
             task.id,
             TaskStatusUpdate(
-                status="failed",
+                status=TaskStatus.FAILED,
                 error_message=f"Document {document_id} has no stored PDF",
             ),
         )
@@ -69,7 +71,11 @@ async def process_parse(
         )
         metadata_task = await task_repo.create(
             session,
-            TaskCreate(document_id=document.id, step="metadata", status="pending"),
+            TaskCreate(
+                document_id=document.id,
+                step=PipelineStep.METADATA,
+                status=TaskStatus.PENDING,
+            ),
         )
         await session.commit()
         queue_publisher.publish(
@@ -77,7 +83,7 @@ async def process_parse(
             QueueMessage(task_id=metadata_task.id, document_id=document.id),
         )
         await task_repo.update_status(
-            session, task.id, TaskStatusUpdate(status="completed")
+            session, task.id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
         )
         await session.commit()
     except Exception as e:
@@ -86,6 +92,6 @@ async def process_parse(
         await task_repo.update_status(
             session,
             task.id,
-            TaskStatusUpdate(status="failed", error_message=str(e)),
+            TaskStatusUpdate(status=TaskStatus.FAILED, error_message=str(e)),
         )
         await session.commit()

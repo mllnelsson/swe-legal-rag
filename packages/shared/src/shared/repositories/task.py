@@ -5,10 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.task import TaskCreate, TaskRead, TaskStatusUpdate
+from shared.enums import PipelineStep, TaskStatus
 from shared.models.task import Task
 
-_PROCESSING = "processing"
-_TERMINAL = {"completed", "failed"}
+_TERMINAL = {TaskStatus.COMPLETED, TaskStatus.FAILED}
 
 
 async def create(session: AsyncSession, dto: TaskCreate) -> TaskRead:
@@ -25,7 +25,7 @@ async def get_by_id(session: AsyncSession, task_id: uuid.UUID) -> TaskRead | Non
 
 
 async def get_by_document_and_step(
-    session: AsyncSession, document_id: uuid.UUID, step: str
+    session: AsyncSession, document_id: uuid.UUID, step: PipelineStep
 ) -> TaskRead | None:
     result = await session.execute(
         select(Task).where(Task.document_id == document_id, Task.step == step)
@@ -43,7 +43,7 @@ async def update_status(
     now = datetime.now(tz=timezone.utc)
     task.status = status_update.status
     task.error_message = status_update.error_message
-    if status_update.status == _PROCESSING:
+    if status_update.status == TaskStatus.PROCESSING:
         task.started_at = now
     elif status_update.status in _TERMINAL:
         task.completed_at = now
@@ -53,7 +53,7 @@ async def update_status(
 
 
 async def list_by_step_and_status(
-    session: AsyncSession, step: str, status: str
+    session: AsyncSession, step: PipelineStep, status: TaskStatus
 ) -> list[TaskRead]:
     result = await session.execute(
         select(Task).where(Task.step == step, Task.status == status)

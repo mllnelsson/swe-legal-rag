@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.enums import PipelineStep
 
 import uuid
 from datetime import datetime, timezone
@@ -233,7 +234,7 @@ class TestProcessChunkingSuccess:
                 task_repo=task_repo,
                 queue_publisher=publisher,
                 session=session,
-                next_topic="embed",
+                next_topic=PipelineStep.EMBED,
             )
 
         publisher.publish.assert_called_once()

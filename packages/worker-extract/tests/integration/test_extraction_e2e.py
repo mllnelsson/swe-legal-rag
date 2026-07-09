@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.enums import PipelineStep
 
 import pytest
 from sqlalchemy import func, select
@@ -66,7 +67,7 @@ async def _run_extraction(
         unresolved_repo=unresolved_repo,
         queue_publisher=sync_publisher,
         session=session,
-        next_topic="chunk",
+        next_topic=PipelineStep.CHUNK,
     )
     return doc, task
 
@@ -371,7 +372,7 @@ async def test_extraction_idempotency(
         unresolved_repo=unresolved_repo,
         queue_publisher=sync_publisher,
         session=session,
-        next_topic="chunk",
+        next_topic=PipelineStep.CHUNK,
     )
 
     entity_count_after_second = (
