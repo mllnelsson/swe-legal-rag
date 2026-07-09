@@ -12,9 +12,7 @@ _TEXT_WITH_CASE_REF = (
     "Nämnden avslår överklagandet. Hänvisas även till ärende ÖN 2021-0345."
 )
 
-_TEXT_WITH_DNR = (
-    "Kyrkoherden överklagade med hänvisning till ärende ÖN dnr 2020-1234."
-)
+_TEXT_WITH_DNR = "Kyrkoherden överklagade med hänvisning till ärende ÖN dnr 2020-1234."
 
 _TEXT_NO_REFS = (
     "Kyrkoherden överklagade beslut om behörighet utan att nämna tidigare ärenden."
@@ -42,7 +40,9 @@ class TestRuleBasedCrossReferences:
         assert result.references == []
 
     def test_extract_references_standalone(self) -> None:
-        refs = extract_references("Se ärende ÖN 2022-0099 och ÖN 2022-0100 för detaljer.")
+        refs = extract_references(
+            "Se ärende ÖN 2022-0099 och ÖN 2022-0100 för detaljer."
+        )
         assert len(refs) == 2
         case_numbers = {r.case_number for r in refs}
         assert any("2022-0099" in cn for cn in case_numbers)
@@ -57,7 +57,9 @@ class TestRuleBasedEntityExtraction:
         assert any(e.name == "kyrkoherde" for e in roles)
 
     def test_rule_based_extracts_regulation(self) -> None:
-        text = "Med hänvisning till kyrkoordningen kapitel 32 § 5 avslogs överklagandet."
+        text = (
+            "Med hänvisning till kyrkoordningen kapitel 32 § 5 avslogs överklagandet."
+        )
         result = extract_rule_based(text)
         regs = [e for e in result.entities if e.type == EntityType.REGULATION]
         assert len(regs) >= 1

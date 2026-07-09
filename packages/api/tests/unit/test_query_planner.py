@@ -26,7 +26,10 @@ def _decompose_result(
 @pytest.mark.asyncio
 async def test_plan_query_no_filters():
     result = _decompose_result(semantic_query="vad gäller för överklaganden")
-    with patch("api.services.query_planner.ai.decompose_query", new=AsyncMock(return_value=result)):
+    with patch(
+        "api.services.query_planner.ai.decompose_query",
+        new=AsyncMock(return_value=result),
+    ):
         plan = await plan_query("vad gäller för överklaganden", [])
 
     assert isinstance(plan, QueryPlan)
@@ -43,7 +46,10 @@ async def test_plan_query_maps_date_filters():
         filters=DateFilter(start=date(2022, 1, 1), end=date(2023, 12, 31)),
         semantic_query="kyrkorådet beslut",
     )
-    with patch("api.services.query_planner.ai.decompose_query", new=AsyncMock(return_value=result)):
+    with patch(
+        "api.services.query_planner.ai.decompose_query",
+        new=AsyncMock(return_value=result),
+    ):
         plan = await plan_query("beslut från 2022 till 2023", [])
 
     assert plan.filter.date_from == date(2022, 1, 1)
@@ -53,7 +59,10 @@ async def test_plan_query_maps_date_filters():
 @pytest.mark.asyncio
 async def test_plan_query_maps_first_category():
     result = _decompose_result(categories=["Kyrkogårdsförvaltning", "Ekonomi"])
-    with patch("api.services.query_planner.ai.decompose_query", new=AsyncMock(return_value=result)):
+    with patch(
+        "api.services.query_planner.ai.decompose_query",
+        new=AsyncMock(return_value=result),
+    ):
         plan = await plan_query("kyrkogård", [])
 
     assert plan.filter.category == "Kyrkogårdsförvaltning"
@@ -62,7 +71,10 @@ async def test_plan_query_maps_first_category():
 @pytest.mark.asyncio
 async def test_plan_query_empty_categories_gives_none_category():
     result = _decompose_result(categories=[])
-    with patch("api.services.query_planner.ai.decompose_query", new=AsyncMock(return_value=result)):
+    with patch(
+        "api.services.query_planner.ai.decompose_query",
+        new=AsyncMock(return_value=result),
+    ):
         plan = await plan_query("generell fråga", [])
 
     assert plan.filter.category is None
@@ -71,7 +83,10 @@ async def test_plan_query_empty_categories_gives_none_category():
 @pytest.mark.asyncio
 async def test_plan_query_maps_entity_refs():
     result = _decompose_result(entity_refs=["Skattkärrens församling", "kyrkorådet"])
-    with patch("api.services.query_planner.ai.decompose_query", new=AsyncMock(return_value=result)):
+    with patch(
+        "api.services.query_planner.ai.decompose_query",
+        new=AsyncMock(return_value=result),
+    ):
         plan = await plan_query("vad beslutade skattkärren?", [])
 
     assert plan.filter.entity_names == ["Skattkärrens församling", "kyrkorådet"]
@@ -81,7 +96,10 @@ async def test_plan_query_maps_entity_refs():
 async def test_plan_query_passes_history_to_decompose():
     result = _decompose_result()
     history = [{"role": "user", "content": "Tidigare fråga"}]
-    with patch("api.services.query_planner.ai.decompose_query", new=AsyncMock(return_value=result)) as mock:
+    with patch(
+        "api.services.query_planner.ai.decompose_query",
+        new=AsyncMock(return_value=result),
+    ) as mock:
         await plan_query("Följdfråga", history)
 
     mock.assert_called_once_with("Följdfråga", history, provider=None)

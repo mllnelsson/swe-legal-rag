@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 import logging
 
-from worker_extract.models import EntityType, ExtractionResult, ExtractedEntity, ExtractedReference, Relevance
+from worker_extract.models import (
+    EntityType,
+    ExtractionResult,
+    ExtractedEntity,
+    ExtractedReference,
+    Relevance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +30,9 @@ def _deduplicate_entities(entities: list[ExtractedEntity]) -> list[ExtractedEnti
     return list(seen.values())
 
 
-def _deduplicate_references(references: list[ExtractedReference]) -> list[ExtractedReference]:
+def _deduplicate_references(
+    references: list[ExtractedReference],
+) -> list[ExtractedReference]:
     seen: dict[str, ExtractedReference] = {}
     for ref in references:
         if ref.case_number not in seen:
@@ -55,11 +63,13 @@ def parse_llm_response(raw_json: str) -> ExtractionResult:
         name = _normalize_name(item.get("name", ""))
         if not name:
             continue
-        entities.append(ExtractedEntity(
-            name=name,
-            type=EntityType(entity_type),
-            relevance=Relevance(relevance),
-        ))
+        entities.append(
+            ExtractedEntity(
+                name=name,
+                type=EntityType(entity_type),
+                relevance=Relevance(relevance),
+            )
+        )
 
     references: list[ExtractedReference] = []
     for item in raw_references:
@@ -67,7 +77,11 @@ def parse_llm_response(raw_json: str) -> ExtractionResult:
         reference_context = item.get("reference_context", "").strip()
         if not case_number:
             continue
-        references.append(ExtractedReference(case_number=case_number, reference_context=reference_context))
+        references.append(
+            ExtractedReference(
+                case_number=case_number, reference_context=reference_context
+            )
+        )
 
     return ExtractionResult(
         entities=_deduplicate_entities(entities),

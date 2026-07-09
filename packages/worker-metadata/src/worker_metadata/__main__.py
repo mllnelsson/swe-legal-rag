@@ -12,7 +12,7 @@ from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_publisher, create_queue_subscriber
 from shared.queue.base import QueueMessage
-from shared.repositories import DocumentRepository, TaskRepository
+from shared.repositories import document, task
 from worker_metadata.config import get_metadata_settings
 from worker_metadata.patterns import MetadataResult, extract_metadata_rule_based
 from worker_metadata.service import process_metadata
@@ -48,13 +48,11 @@ def main() -> None:
     def handle_message(message: QueueMessage) -> None:
         async def _handle() -> None:
             async with get_async_session() as session:
-                doc_repo = DocumentRepository(session)
-                task_repo = TaskRepository(session)
                 await process_metadata(
                     document_id=message.document_id,
                     task_id=message.task_id,
-                    document_repo=doc_repo,
-                    task_repo=task_repo,
+                    document_repo=document,
+                    task_repo=task,
                     queue_publisher=publisher,
                     rule_extractor=extract_metadata_rule_based,
                     llm_extractor=_llm_extractor,

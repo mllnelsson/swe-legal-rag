@@ -3,35 +3,38 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from shared.dtos.session import SessionCreate, SessionRead, SessionUpdate
-from shared.repositories.session import SessionRepository
+from shared.repositories import session as session_repo
 
 
 async def get_or_create_session(
     session_id: uuid.UUID | None,
-    repo: SessionRepository,
+    session: AsyncSession,
 ) -> SessionRead:
     if session_id is not None:
-        existing = await repo.get_by_id(session_id)
+        existing = await session_repo.get_by_id(session, session_id)
         if existing is not None:
             return existing
-    return await repo.create(SessionCreate())
+    return await session_repo.create(session, SessionCreate())
 
 
 async def append_turn(
     session_id: uuid.UUID,
     question: str,
     answer: str,
-    repo: SessionRepository,
+    session: AsyncSession,
 ) -> None:
-    existing = await repo.get_by_id(session_id)
+    existing = await session_repo.get_by_id(session, session_id)
     if existing is None:
         return
     new_entries = [
         {"role": "user", "content": question},
         {"role": "assistant", "content": answer},
     ]
-    await repo.update(
+    await session_repo.update(
+        session,
         session_id,
         SessionUpdate(
             history=list(existing.history) + new_entries,

@@ -72,7 +72,7 @@ def _make_service(
     doc_repo.update = AsyncMock()
     storage.store.return_value = storage_uri
 
-    async def create_task(dto):
+    async def create_task(_session, dto):
         return _make_task_read(dto.document_id, dto.step, dto.status)
 
     task_repo.create = create_task
@@ -104,10 +104,12 @@ async def test_handle_message_happy_path(mock_download) -> None:
     await service.handle_message(msg)
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[0][0][1].status == "processing"
-    assert status_calls[1][0][1].status == "completed"
+    assert status_calls[0][0][2].status == "processing"
+    assert status_calls[1][0][2].status == "completed"
 
-    storage.store.assert_called_once_with(f"documents/{doc.id}/original.pdf", b"PDF_CONTENT")
+    storage.store.assert_called_once_with(
+        f"documents/{doc.id}/original.pdf", b"PDF_CONTENT"
+    )
     doc_repo.update.assert_called_once()
 
     assert session.commit.call_count == 3
@@ -157,9 +159,9 @@ async def test_handle_message_fails_on_missing_document() -> None:
     await service.handle_message(msg)
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[0][0][1].status == "processing"
-    assert status_calls[1][0][1].status == "failed"
-    assert str(doc_id) in status_calls[1][0][1].error_message
+    assert status_calls[0][0][2].status == "processing"
+    assert status_calls[1][0][2].status == "failed"
+    assert str(doc_id) in status_calls[1][0][2].error_message
     assert session.commit.call_count == 2
     publisher.publish.assert_not_called()
     storage.store.assert_not_called()
@@ -183,7 +185,7 @@ async def test_handle_message_idempotent_with_existing_gcs_uri(mock_download) ->
     assert message.document_id == doc.id
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[-1][0][1].status == "completed"
+    assert status_calls[-1][0][2].status == "completed"
 
 
 @patch("worker_download.service._download_pdf")
@@ -201,8 +203,8 @@ async def test_handle_message_marks_failed_on_http_error(mock_download) -> None:
     publisher.publish.assert_not_called()
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[-1][0][1].status == "failed"
-    assert "Connection refused" in status_calls[-1][0][1].error_message
+    assert status_calls[-1][0][2].status == "failed"
+    assert "Connection refused" in status_calls[-1][0][2].error_message
 
     session.rollback.assert_called_once()
 
@@ -222,8 +224,8 @@ async def test_handle_message_marks_failed_on_storage_error(mock_download) -> No
     publisher.publish.assert_not_called()
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[-1][0][1].status == "failed"
-    assert "disk full" in status_calls[-1][0][1].error_message
+    assert status_calls[-1][0][2].status == "failed"
+    assert "disk full" in status_calls[-1][0][2].error_message
 
     session.rollback.assert_called_once()
 
@@ -234,7 +236,10 @@ async def test_download_retries_on_5xx(mock_sleep) -> None:
     doc = _make_doc_read()
     task = _make_task_read(doc.id)
     service, _, task_repo, _, storage, publisher = _make_service(
-        task, doc, storage_uri=f"gs://bucket/documents/{doc.id}/original.pdf", max_retries=2
+        task,
+        doc,
+        storage_uri=f"gs://bucket/documents/{doc.id}/original.pdf",
+        max_retries=2,
     )
 
     call_count = [0]
@@ -253,7 +258,7 @@ async def test_download_retries_on_5xx(mock_sleep) -> None:
     assert call_count[0] == 2
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[-1][0][1].status == "completed"
+    assert status_calls[-1][0][2].status == "completed"
 
     storage.store.assert_called_once()
     publisher.publish.assert_called_once()

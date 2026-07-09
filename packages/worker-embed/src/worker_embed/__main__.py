@@ -11,7 +11,7 @@ from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_subscriber
 from shared.queue.base import QueueMessage
-from shared.repositories import ChunkRepository, TaskRepository
+from shared.repositories import chunk, task
 from worker_embed.config import get_embed_settings
 from worker_embed.service import process_embedding
 
@@ -33,8 +33,8 @@ def main() -> None:
                 await process_embedding(
                     document_id=message.document_id,
                     task_id=message.task_id,
-                    chunk_repo=ChunkRepository(session),
-                    task_repo=TaskRepository(session),
+                    chunk_repo=chunk,
+                    task_repo=task,
                     embedding_provider=embedding_provider,
                     session=session,
                 )

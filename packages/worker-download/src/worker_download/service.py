@@ -7,8 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.dtos.document import DocumentUpdate
 from shared.dtos.task import TaskCreate, TaskStatusUpdate
 from shared.queue.base import QueueMessage, QueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
+from shared.repositories import DocumentRepo, TaskRepo
 from shared.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -40,8 +39,8 @@ class DownloadService:
     def __init__(
         self,
         session: AsyncSession,
-        document_repo: DocumentRepository,
-        task_repo: TaskRepository,
+        document_repo: DocumentRepo,
+        task_repo: TaskRepo,
         storage: StorageBackend,
         queue_publisher: QueuePublisher,
         timeout: int = 60,
@@ -60,17 +59,24 @@ class DownloadService:
         self._next_topic = next_topic
 
     async def handle_message(self, message: QueueMessage) -> None:
-        task = await self._task_repo.get_by_id(message.task_id)
+        task = await self._task_repo.get_by_id(self._session, message.task_id)
         if task is None or task.status == "completed":
-            logger.info("Task %s already completed or not found, skipping", message.task_id)
+            logger.info(
+                "Task %s already completed or not found, skipping", message.task_id
+            )
             return
 
-        await self._task_repo.update_status(task.id, TaskStatusUpdate(status="processing"))
+        await self._task_repo.update_status(
+            self._session, task.id, TaskStatusUpdate(status="processing")
+        )
         await self._session.commit()
 
-        document = await self._document_repo.get_by_id(message.document_id)
+        document = await self._document_repo.get_by_id(
+            self._session, message.document_id
+        )
         if document is None:
             await self._task_repo.update_status(
+                self._session,
                 task.id,
                 TaskStatusUpdate(
                     status="failed",
@@ -82,31 +88,41 @@ class DownloadService:
 
         if document.gcs_uri is not None:
             parse_task = await self._task_repo.create(
-                TaskCreate(document_id=document.id, step="parse", status="pending")
+                self._session,
+                TaskCreate(document_id=document.id, step="parse", status="pending"),
             )
             await self._session.commit()
             self._queue_publisher.publish(
                 self._next_topic,
                 QueueMessage(task_id=parse_task.id, document_id=document.id),
             )
-            await self._task_repo.update_status(task.id, TaskStatusUpdate(status="completed"))
+            await self._task_repo.update_status(
+                self._session, task.id, TaskStatusUpdate(status="completed")
+            )
             await self._session.commit()
             return
 
         try:
-            pdf_bytes = _download_pdf(document.source_url, self._timeout, self._max_retries)
+            pdf_bytes = _download_pdf(
+                document.source_url, self._timeout, self._max_retries
+            )
             key = f"documents/{document.id}/original.pdf"
             uri = self._storage.store(key, pdf_bytes)
-            await self._document_repo.update(document.id, DocumentUpdate(gcs_uri=uri))
+            await self._document_repo.update(
+                self._session, document.id, DocumentUpdate(gcs_uri=uri)
+            )
             parse_task = await self._task_repo.create(
-                TaskCreate(document_id=document.id, step="parse", status="pending")
+                self._session,
+                TaskCreate(document_id=document.id, step="parse", status="pending"),
             )
             await self._session.commit()
             self._queue_publisher.publish(
                 self._next_topic,
                 QueueMessage(task_id=parse_task.id, document_id=document.id),
             )
-            await self._task_repo.update_status(task.id, TaskStatusUpdate(status="completed"))
+            await self._task_repo.update_status(
+                self._session, task.id, TaskStatusUpdate(status="completed")
+            )
             await self._session.commit()
             time.sleep(self._rate_limit_delay)
         except Exception as e:
@@ -118,6 +134,7 @@ class DownloadService:
                 e,
             )
             await self._task_repo.update_status(
+                self._session,
                 task.id,
                 TaskStatusUpdate(status="failed", error_message=str(e)),
             )

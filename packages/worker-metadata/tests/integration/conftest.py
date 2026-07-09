@@ -13,8 +13,10 @@ from shared.dtos.task import TaskCreate
 from shared.models import Base  # noqa: F401 - registers all models with Base.metadata
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueueBroker, SyncQueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
+from shared.repositories import (
+    document,
+    task,
+)
 
 _DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/overklagan"
@@ -58,13 +60,13 @@ async def session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def document_repo(session: AsyncSession) -> DocumentRepository:
-    return DocumentRepository(session)
+def document_repo(session: AsyncSession):
+    return document
 
 
 @pytest.fixture
-def task_repo(session: AsyncSession) -> TaskRepository:
-    return TaskRepository(session)
+def task_repo(session: AsyncSession):
+    return task
 
 
 @pytest.fixture
@@ -80,17 +82,20 @@ def sync_publisher(published_messages: list[QueueMessage]) -> SyncQueuePublisher
 
 
 @pytest.fixture
-async def test_document(session: AsyncSession, document_repo: DocumentRepository):
-    doc = await document_repo.create(DocumentCreate(source_url="https://example.com/decision.pdf"))
-    await document_repo.update(doc.id, DocumentUpdate(raw_text=_SWEDISH_TEXT))
+async def test_document(session: AsyncSession, document_repo):
+    doc = await document_repo.create(
+        session, DocumentCreate(source_url="https://example.com/decision.pdf")
+    )
+    await document_repo.update(session, doc.id, DocumentUpdate(raw_text=_SWEDISH_TEXT))
     await session.commit()
-    return await document_repo.get_by_id(doc.id)
+    return await document_repo.get_by_id(session, doc.id)
 
 
 @pytest.fixture
-async def metadata_task(session: AsyncSession, task_repo: TaskRepository, test_document):
+async def metadata_task(session: AsyncSession, task_repo, test_document):
     task = await task_repo.create(
-        TaskCreate(document_id=test_document.id, step="metadata", status="pending")
+        session,
+        TaskCreate(document_id=test_document.id, step="metadata", status="pending"),
     )
     await session.commit()
     return task

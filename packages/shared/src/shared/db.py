@@ -46,7 +46,9 @@ def _get_async_session_factory() -> async_sessionmaker[AsyncSession]:
         _async_engine = create_async_engine(
             _async_url(get_settings().database.database_url)
         )
-        _async_session_factory = async_sessionmaker(_async_engine, expire_on_commit=False)
+        _async_session_factory = async_sessionmaker(
+            _async_engine, expire_on_commit=False
+        )
     return _async_session_factory
 
 

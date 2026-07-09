@@ -14,7 +14,9 @@ _NOW = datetime.now(tz=timezone.utc)
 _EMBEDDING_DIM = 768
 
 
-def _make_chunk(document_id: uuid.UUID, index: int, contextual_text: str | None = "ctx text") -> ChunkRead:
+def _make_chunk(
+    document_id: uuid.UUID, index: int, contextual_text: str | None = "ctx text"
+) -> ChunkRead:
     return ChunkRead(
         id=uuid.uuid4(),
         document_id=document_id,
@@ -282,7 +284,9 @@ class TestProcessEmbeddingErrorCases:
         task_repo.update_status = AsyncMock(return_value=task)
 
         embedding_provider = MagicMock()
-        embedding_provider.embed = AsyncMock(side_effect=RuntimeError("Model unavailable"))
+        embedding_provider.embed = AsyncMock(
+            side_effect=RuntimeError("Model unavailable")
+        )
 
         session = MagicMock()
         session.commit = AsyncMock()
@@ -324,5 +328,7 @@ class TestProcessEmbeddingErrorCases:
         )
 
         chunk_repo.get_by_document_id = MagicMock()
-        assert not hasattr(chunk_repo.get_by_document_id, "await_count") or \
-               not chunk_repo.get_by_document_id.called
+        assert (
+            not hasattr(chunk_repo.get_by_document_id, "await_count")
+            or not chunk_repo.get_by_document_id.called
+        )

@@ -31,7 +31,9 @@ def split_into_chunks(
 
         if current_token_count + sentence_tokens > max_tokens and current:
             chunks.append(" ".join(current))
-            current, current_token_count = _compute_overlap(current, overlap_tokens, enc)
+            current, current_token_count = _compute_overlap(
+                current, overlap_tokens, enc
+            )
 
         if sentence_tokens > max_tokens and not current:
             chunks.append(sentence)

@@ -88,7 +88,9 @@ def extract_decision_date(text: str) -> datetime.date | None:
             except ValueError:
                 pass
 
-    abbreviated = r"(\d{1,2})\s+(jan|feb|mar|apr|maj|jun|jul|aug|sep|okt|nov|dec)\.?\s+(\d{4})"
+    abbreviated = (
+        r"(\d{1,2})\s+(jan|feb|mar|apr|maj|jun|jul|aug|sep|okt|nov|dec)\.?\s+(\d{4})"
+    )
     m = re.search(abbreviated, text, re.IGNORECASE)
     if m:
         month = _SWEDISH_MONTHS.get(m.group(2).lower())
@@ -104,7 +106,9 @@ def extract_decision_date(text: str) -> datetime.date | None:
 def extract_decision_outcome(text: str) -> str | None:
     search_text = text[-2000:] if len(text) > 2000 else text
     for keyword in _OUTCOME_KEYWORDS:
-        m = re.search(r"[^.!?\n]*" + keyword + r"[^.!?\n]*[.!?]?", search_text, re.IGNORECASE)
+        m = re.search(
+            r"[^.!?\n]*" + keyword + r"[^.!?\n]*[.!?]?", search_text, re.IGNORECASE
+        )
         if m:
             return m.group(0).strip()
     return None

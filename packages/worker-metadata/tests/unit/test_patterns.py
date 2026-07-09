@@ -36,11 +36,15 @@ def test_extract_case_number_no_match() -> None:
 
 
 def test_extract_decision_date_iso_format() -> None:
-    assert extract_decision_date("Beslut 2023-01-15 i ärendet") == datetime.date(2023, 1, 15)
+    assert extract_decision_date("Beslut 2023-01-15 i ärendet") == datetime.date(
+        2023, 1, 15
+    )
 
 
 def test_extract_decision_date_swedish_textual() -> None:
-    assert extract_decision_date("den 15 januari 2023 beslutade nämnden") == datetime.date(2023, 1, 15)
+    assert extract_decision_date(
+        "den 15 januari 2023 beslutade nämnden"
+    ) == datetime.date(2023, 1, 15)
 
 
 def test_extract_decision_date_abbreviated() -> None:
@@ -82,11 +86,17 @@ def test_extract_category_arende_heading() -> None:
 
 
 def test_extract_category_amne_heading() -> None:
-    assert extract_category("Ämne: Tillsättning av kyrkoherde\n") == "Tillsättning av kyrkoherde"
+    assert (
+        extract_category("Ämne: Tillsättning av kyrkoherde\n")
+        == "Tillsättning av kyrkoherde"
+    )
 
 
 def test_extract_category_no_match() -> None:
-    assert extract_category("Överklagandenämnden beslutade att bifalla överklagandet.") is None
+    assert (
+        extract_category("Överklagandenämnden beslutade att bifalla överklagandet.")
+        is None
+    )
 
 
 # --- MetadataResult + is_complete ---

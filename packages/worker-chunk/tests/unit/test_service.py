@@ -81,7 +81,9 @@ class TestProcessChunkingSuccess:
 
         canned_summary = "Sammanfattning av målet."
 
-        with patch("worker_chunk.service.summarize_document", new=AsyncMock()) as mock_summarize:
+        with patch(
+            "worker_chunk.service.summarize_document", new=AsyncMock()
+        ) as mock_summarize:
             from ai.dtos import SummarizeResult
 
             mock_summarize.return_value = SummarizeResult(summary=canned_summary)
@@ -122,7 +124,9 @@ class TestProcessChunkingSuccess:
         session.commit = AsyncMock()
         session.rollback = AsyncMock()
 
-        with patch("worker_chunk.service.summarize_document", new=AsyncMock()) as mock_summarize:
+        with patch(
+            "worker_chunk.service.summarize_document", new=AsyncMock()
+        ) as mock_summarize:
             from ai.dtos import SummarizeResult
 
             mock_summarize.return_value = SummarizeResult(summary="Summary.")
@@ -171,7 +175,9 @@ class TestProcessChunkingSuccess:
 
         canned_summary = "Kyrkoherden överklagade och nämnden avslog."
 
-        with patch("worker_chunk.service.summarize_document", new=AsyncMock()) as mock_summarize:
+        with patch(
+            "worker_chunk.service.summarize_document", new=AsyncMock()
+        ) as mock_summarize:
             from ai.dtos import SummarizeResult
 
             mock_summarize.return_value = SummarizeResult(summary=canned_summary)
@@ -213,7 +219,9 @@ class TestProcessChunkingSuccess:
         session.commit = AsyncMock()
         session.rollback = AsyncMock()
 
-        with patch("worker_chunk.service.summarize_document", new=AsyncMock()) as mock_summarize:
+        with patch(
+            "worker_chunk.service.summarize_document", new=AsyncMock()
+        ) as mock_summarize:
             from ai.dtos import SummarizeResult
 
             mock_summarize.return_value = SummarizeResult(summary="Summary.")
@@ -340,7 +348,9 @@ class TestProcessChunkingErrorCases:
         session.commit = AsyncMock()
         session.rollback = AsyncMock()
 
-        with patch("worker_chunk.service.summarize_document", new=AsyncMock()) as mock_summarize:
+        with patch(
+            "worker_chunk.service.summarize_document", new=AsyncMock()
+        ) as mock_summarize:
             mock_summarize.side_effect = RuntimeError("LLM unavailable")
             with pytest.raises(RuntimeError, match="LLM unavailable"):
                 await process_chunking(

@@ -8,7 +8,7 @@ from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_publisher, create_queue_subscriber
 from shared.queue.base import QueueMessage
-from shared.repositories import DocumentRepository, TaskRepository
+from shared.repositories import document, task
 from shared.storage import create_storage_backend
 from worker_parse.config import get_parse_settings
 from worker_parse.parser import parse_pdf_with_pypdfium2
@@ -30,14 +30,12 @@ def main() -> None:
     def handle_message(message: QueueMessage) -> None:
         async def _handle() -> None:
             async with get_async_session() as session:
-                doc_repo = DocumentRepository(session)
-                task_repo = TaskRepository(session)
                 await process_parse(
                     document_id=message.document_id,
                     task_id=message.task_id,
                     storage=storage,
-                    document_repo=doc_repo,
-                    task_repo=task_repo,
+                    document_repo=document,
+                    task_repo=task,
                     queue_publisher=publisher,
                     parser=parse_pdf_with_pypdfium2,
                     session=session,
@@ -55,7 +53,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
 
-    logger.info("Parse worker starting, subscribing to topic: %s", parse_settings.parse_topic)
+    logger.info(
+        "Parse worker starting, subscribing to topic: %s", parse_settings.parse_topic
+    )
     subscriber.start()
 
 

@@ -119,7 +119,16 @@ async def test_rule_based_succeeds_no_llm_called() -> None:
     rule_extractor = MagicMock(return_value=complete_result)
     llm_extractor = AsyncMock()
 
-    await _call(doc.id, task.id, session, doc_repo, task_repo, publisher, rule_extractor, llm_extractor)
+    await _call(
+        doc.id,
+        task.id,
+        session,
+        doc_repo,
+        task_repo,
+        publisher,
+        rule_extractor,
+        llm_extractor,
+    )
 
     llm_extractor.assert_not_called()
 
@@ -157,9 +166,20 @@ async def test_partial_rule_based_llm_fills_gaps() -> None:
     )
     llm_extractor = AsyncMock(return_value=llm_result)
 
-    await _call(doc.id, task.id, session, doc_repo, task_repo, publisher, rule_extractor, llm_extractor)
+    await _call(
+        doc.id,
+        task.id,
+        session,
+        doc_repo,
+        task_repo,
+        publisher,
+        rule_extractor,
+        llm_extractor,
+    )
 
-    llm_extractor.assert_called_once_with(_SWEDISH_TEXT, ["decision_outcome", "category"])
+    llm_extractor.assert_called_once_with(
+        _SWEDISH_TEXT, ["decision_outcome", "category"]
+    )
 
     _, update_dto = doc_repo.update.call_args[0]
     assert update_dto.case_number == "2023-0042"
@@ -181,7 +201,16 @@ async def test_both_fail_all_none_still_completes() -> None:
     rule_extractor = MagicMock(return_value=MetadataResult())
     llm_extractor = AsyncMock(return_value=MetadataResult())
 
-    await _call(doc.id, task.id, session, doc_repo, task_repo, publisher, rule_extractor, llm_extractor)
+    await _call(
+        doc.id,
+        task.id,
+        session,
+        doc_repo,
+        task_repo,
+        publisher,
+        rule_extractor,
+        llm_extractor,
+    )
 
     doc_repo.update.assert_called_once()
     _, update_dto = doc_repo.update.call_args[0]
@@ -205,7 +234,16 @@ async def test_exception_during_processing_marks_task_failed() -> None:
     rule_extractor = MagicMock(return_value=MetadataResult())
     llm_extractor = AsyncMock(return_value=MetadataResult())
 
-    await _call(doc.id, task.id, session, doc_repo, task_repo, publisher, rule_extractor, llm_extractor)
+    await _call(
+        doc.id,
+        task.id,
+        session,
+        doc_repo,
+        task_repo,
+        publisher,
+        rule_extractor,
+        llm_extractor,
+    )
 
     session.rollback.assert_called_once()
 

@@ -7,8 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.sync import SyncQueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
 from worker_crawl.service import CrawlResult, CrawlService
 
 _FAKE_URLS = [
@@ -21,8 +19,8 @@ _FAKE_URLS = [
 def _make_service(
     urls: list[str],
     session: AsyncSession,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    task_repo,
     publisher: SyncQueuePublisher,
 ) -> CrawlService:
     client = MagicMock()
@@ -41,12 +39,14 @@ def _make_service(
 @pytest.mark.integration
 async def test_full_crawl_creates_documents_and_tasks(
     session: AsyncSession,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    task_repo,
     sync_publisher: SyncQueuePublisher,
     published_messages: list,
 ) -> None:
-    service = _make_service(_FAKE_URLS, session, document_repo, task_repo, sync_publisher)
+    service = _make_service(
+        _FAKE_URLS, session, document_repo, task_repo, sync_publisher
+    )
     result = await service.run()
 
     assert result == CrawlResult(total_found=3, new_documents=3, skipped=0)
@@ -57,29 +57,39 @@ async def test_full_crawl_creates_documents_and_tasks(
     assert {d.source_url for d in docs} == set(_FAKE_URLS)
 
     crawl_tasks = (
-        await session.execute(
-            select(Task).where(Task.step == "crawl", Task.status == "completed")
+        (
+            await session.execute(
+                select(Task).where(Task.step == "crawl", Task.status == "completed")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(crawl_tasks) == 3
 
     download_tasks = (
-        await session.execute(
-            select(Task).where(Task.step == "download", Task.status == "pending")
+        (
+            await session.execute(
+                select(Task).where(Task.step == "download", Task.status == "pending")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(download_tasks) == 3
 
 
 @pytest.mark.integration
 async def test_crawl_idempotent_rerun(
     session: AsyncSession,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    task_repo,
     sync_publisher: SyncQueuePublisher,
     published_messages: list,
 ) -> None:
-    service = _make_service(_FAKE_URLS, session, document_repo, task_repo, sync_publisher)
+    service = _make_service(
+        _FAKE_URLS, session, document_repo, task_repo, sync_publisher
+    )
 
     first_result = await service.run()
     assert first_result == CrawlResult(total_found=3, new_documents=3, skipped=0)

@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from shared.dtos.search import ChunkSearchResult, DocumentFilter
-from shared.repositories.chunk import ChunkRepository
-from shared.repositories.search import SearchRepository
+from shared.repositories import chunk as chunk_repo
+from shared.repositories import search as search_repo
 
 
 def _make_session() -> MagicMock:
@@ -28,15 +28,14 @@ def _rows_result(rows: list) -> MagicMock:
     return result
 
 
-class TestSearchRepositoryFindCandidates:
+class TestSearchFindCandidates:
     @pytest.mark.asyncio
     async def test_empty_filter_returns_all_doc_ids(self):
         session = _make_session()
         doc_id = uuid.uuid4()
         session.execute.return_value = _scalars_result([doc_id])
 
-        repo = SearchRepository(session)
-        result = await repo.find_candidate_documents(DocumentFilter())
+        result = await search_repo.find_candidate_documents(session, DocumentFilter())
 
         session.execute.assert_called_once()
         assert result == [doc_id]
@@ -46,8 +45,9 @@ class TestSearchRepositoryFindCandidates:
         session = _make_session()
         session.execute.return_value = _scalars_result([])
 
-        repo = SearchRepository(session)
-        await repo.find_candidate_documents(DocumentFilter(date_from=date(2023, 1, 1)))
+        await search_repo.find_candidate_documents(
+            session, DocumentFilter(date_from=date(2023, 1, 1))
+        )
 
         session.execute.assert_called_once()
 
@@ -56,8 +56,9 @@ class TestSearchRepositoryFindCandidates:
         session = _make_session()
         session.execute.return_value = _scalars_result([])
 
-        repo = SearchRepository(session)
-        await repo.find_candidate_documents(DocumentFilter(date_to=date(2024, 12, 31)))
+        await search_repo.find_candidate_documents(
+            session, DocumentFilter(date_to=date(2024, 12, 31))
+        )
 
         session.execute.assert_called_once()
 
@@ -66,8 +67,9 @@ class TestSearchRepositoryFindCandidates:
         session = _make_session()
         session.execute.return_value = _scalars_result([])
 
-        repo = SearchRepository(session)
-        await repo.find_candidate_documents(DocumentFilter(category="kyrklig"))
+        await search_repo.find_candidate_documents(
+            session, DocumentFilter(category="kyrklig")
+        )
 
         session.execute.assert_called_once()
 
@@ -76,8 +78,9 @@ class TestSearchRepositoryFindCandidates:
         session = _make_session()
         session.execute.return_value = _scalars_result([])
 
-        repo = SearchRepository(session)
-        await repo.find_candidate_documents(DocumentFilter(entity_names=["kyrkorådet"]))
+        await search_repo.find_candidate_documents(
+            session, DocumentFilter(entity_names=["kyrkorådet"])
+        )
 
         session.execute.assert_called_once()
 
@@ -86,9 +89,8 @@ class TestSearchRepositoryFindCandidates:
         session = _make_session()
         session.execute.return_value = _scalars_result([])
 
-        repo = SearchRepository(session)
-        await repo.find_candidate_documents(
-            DocumentFilter(references_case_number="123/2020")
+        await search_repo.find_candidate_documents(
+            session, DocumentFilter(references_case_number="123/2020")
         )
 
         session.execute.assert_called_once()
@@ -99,13 +101,12 @@ class TestSearchRepositoryFindCandidates:
         ids = [uuid.uuid4(), uuid.uuid4()]
         session.execute.return_value = _scalars_result(ids)
 
-        repo = SearchRepository(session)
-        result = await repo.find_candidate_documents(DocumentFilter())
+        result = await search_repo.find_candidate_documents(session, DocumentFilter())
 
         assert result == ids
 
 
-class TestChunkRepositorySearch:
+class TestChunkSearch:
     def _make_chunk_row(self, score: float) -> SimpleNamespace:
         chunk = SimpleNamespace(
             id=uuid.uuid4(),
@@ -121,8 +122,9 @@ class TestChunkRepositorySearch:
         row = self._make_chunk_row(score=0.1)
         session.execute.return_value = _rows_result([row])
 
-        repo = ChunkRepository(session)
-        results = await repo.vector_search(embedding=[0.1, 0.2], document_ids=None)
+        results = await chunk_repo.vector_search(
+            session, embedding=[0.1, 0.2], document_ids=None
+        )
 
         assert len(results) == 1
         assert isinstance(results[0], ChunkSearchResult)
@@ -134,9 +136,8 @@ class TestChunkRepositorySearch:
         session = _make_session()
         session.execute.return_value = _rows_result([])
 
-        repo = ChunkRepository(session)
         doc_ids = [uuid.uuid4()]
-        await repo.vector_search(embedding=[0.1], document_ids=doc_ids)
+        await chunk_repo.vector_search(session, embedding=[0.1], document_ids=doc_ids)
 
         session.execute.assert_called_once()
 
@@ -145,8 +146,7 @@ class TestChunkRepositorySearch:
         session = _make_session()
         session.execute.return_value = _rows_result([])
 
-        repo = ChunkRepository(session)
-        await repo.vector_search(embedding=[0.1], document_ids=None)
+        await chunk_repo.vector_search(session, embedding=[0.1], document_ids=None)
 
         session.execute.assert_called_once()
 
@@ -156,8 +156,9 @@ class TestChunkRepositorySearch:
         row = self._make_chunk_row(score=0.75)
         session.execute.return_value = _rows_result([row])
 
-        repo = ChunkRepository(session)
-        results = await repo.text_search(query="kyrklig förvaltning", document_ids=None)
+        results = await chunk_repo.text_search(
+            session, query="kyrklig förvaltning", document_ids=None
+        )
 
         assert len(results) == 1
         assert isinstance(results[0], ChunkSearchResult)
@@ -168,8 +169,7 @@ class TestChunkRepositorySearch:
         session = _make_session()
         session.execute.return_value = _rows_result([])
 
-        repo = ChunkRepository(session)
         doc_ids = [uuid.uuid4(), uuid.uuid4()]
-        await repo.text_search(query="test", document_ids=doc_ids)
+        await chunk_repo.text_search(session, query="test", document_ids=doc_ids)
 
         session.execute.assert_called_once()

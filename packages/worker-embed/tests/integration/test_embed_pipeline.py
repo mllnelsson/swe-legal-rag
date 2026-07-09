@@ -12,9 +12,6 @@ from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentCreate
 from shared.dtos.task import TaskCreate
 from shared.models.chunk import Chunk
-from shared.repositories.chunk import ChunkRepository
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
 from worker_embed.service import process_embedding
 
 pytestmark = pytest.mark.integration
@@ -36,12 +33,14 @@ def _make_mock_embedding_provider(count: int) -> MagicMock:
 
 
 async def _create_test_chunks(
-    document_repo: DocumentRepository,
-    chunk_repo: ChunkRepository,
+    document_repo,
+    chunk_repo,
     session: AsyncSession,
     chunk_count: int = 2,
 ) -> tuple[UUID, list]:
-    doc = await document_repo.create(DocumentCreate(source_url="https://example.com/test.pdf"))
+    doc = await document_repo.create(
+        session, DocumentCreate(source_url="https://example.com/test.pdf")
+    )
     await session.flush()
 
     dtos = [
@@ -54,7 +53,7 @@ async def _create_test_chunks(
         )
         for i in range(chunk_count)
     ]
-    chunks = await chunk_repo.bulk_create(dtos)
+    chunks = await chunk_repo.bulk_create(session, dtos)
     await session.commit()
     return doc.id, chunks
 
@@ -62,14 +61,16 @@ async def _create_test_chunks(
 class TestEmbedPipelineEndToEnd:
     async def test_embeddings_are_populated(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session
+        )
         task = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -83,21 +84,23 @@ class TestEmbedPipelineEndToEnd:
             session=session,
         )
 
-        updated = await chunk_repo.get_by_document_id(document_id)
+        updated = await chunk_repo.get_by_document_id(session, document_id)
         for chunk in updated:
             assert chunk.embedding is not None
             assert len(chunk.embedding) == EMBEDDING_DIMENSION
 
     async def test_embeddings_differ_from_placeholder(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session
+        )
         task = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -111,20 +114,22 @@ class TestEmbedPipelineEndToEnd:
             session=session,
         )
 
-        updated = await chunk_repo.get_by_document_id(document_id)
+        updated = await chunk_repo.get_by_document_id(session, document_id)
         for chunk in updated:
             assert chunk.embedding != _PLACEHOLDER_EMBEDDING
 
     async def test_tsv_is_populated(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session
+        )
         task = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -146,14 +151,16 @@ class TestEmbedPipelineEndToEnd:
 
     async def test_tsv_matches_swedish_query(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session
+        )
         task = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -180,14 +187,16 @@ class TestEmbedPipelineEndToEnd:
 
     async def test_task_marked_completed(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session
+        )
         task = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -201,7 +210,7 @@ class TestEmbedPipelineEndToEnd:
             session=session,
         )
 
-        updated_task = await task_repo.get_by_id(task.id)
+        updated_task = await task_repo.get_by_id(session, task.id)
         assert updated_task is not None
         assert updated_task.status == "completed"
 
@@ -209,14 +218,16 @@ class TestEmbedPipelineEndToEnd:
 class TestIndexFunctionality:
     async def test_hnsw_similarity_search_returns_results(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session
+        )
         task = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -245,14 +256,16 @@ class TestIndexFunctionality:
 
     async def test_gin_full_text_search_returns_results(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session
+        )
         task = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -281,14 +294,16 @@ class TestIndexFunctionality:
 class TestEmbedPipelineIdempotency:
     async def test_rerun_overwrites_embeddings(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session
+        )
         task1 = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -305,7 +320,7 @@ class TestEmbedPipelineIdempotency:
         )
 
         task2 = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -321,21 +336,23 @@ class TestEmbedPipelineIdempotency:
             session=session,
         )
 
-        updated = await chunk_repo.get_by_document_id(document_id)
+        updated = await chunk_repo.get_by_document_id(session, document_id)
         for chunk in updated:
             assert chunk.embedding is not None
             assert chunk.embedding[0] == pytest.approx(0.999)
 
     async def test_rerun_does_not_create_duplicate_chunks(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         session: AsyncSession,
     ) -> None:
-        document_id, chunks = await _create_test_chunks(document_repo, chunk_repo, session, chunk_count=2)
+        document_id, chunks = await _create_test_chunks(
+            document_repo, chunk_repo, session, chunk_count=2
+        )
         task1 = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -350,7 +367,7 @@ class TestEmbedPipelineIdempotency:
         )
 
         task2 = await task_repo.create(
-            TaskCreate(document_id=document_id, step="embed", status="pending")
+            session, TaskCreate(document_id=document_id, step="embed", status="pending")
         )
         await session.commit()
 
@@ -364,5 +381,5 @@ class TestEmbedPipelineIdempotency:
             session=session,
         )
 
-        final_chunks = await chunk_repo.get_by_document_id(document_id)
+        final_chunks = await chunk_repo.get_by_document_id(session, document_id)
         assert len(final_chunks) == len(chunks)

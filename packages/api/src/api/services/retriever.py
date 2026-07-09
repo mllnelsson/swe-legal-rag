@@ -13,9 +13,9 @@ from api.config import RetrievalSettings
 from api.services.query_planner import QueryPlan
 from shared.dtos.document import DocumentRead
 from shared.dtos.search import ChunkSearchResult, DocumentFilter
-from shared.repositories.chunk import ChunkRepository
-from shared.repositories.document import DocumentRepository
-from shared.repositories.search import SearchRepository
+from shared.repositories import chunk as chunk_repo
+from shared.repositories import document as document_repo
+from shared.repositories import search as search_repo
 from shared.search.rrf import rrf_fuse
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,9 @@ def _filter_is_empty(f: DocumentFilter) -> bool:
     )
 
 
-def _make_retrieved_chunk(chunk: ChunkSearchResult, doc: DocumentRead | None) -> RetrievedChunk:
+def _make_retrieved_chunk(
+    chunk: ChunkSearchResult, doc: DocumentRead | None
+) -> RetrievedChunk:
     return RetrievedChunk(
         chunk_id=chunk.id,
         document_id=chunk.document_id,
@@ -69,10 +71,14 @@ class _RerankResult(BaseModel):
     ranked_indices: list[int]
 
 
-async def _rerank(question: str, chunks: list[ChunkSearchResult]) -> list[ChunkSearchResult]:
+async def _rerank(
+    question: str, chunks: list[ChunkSearchResult]
+) -> list[ChunkSearchResult]:
     from llm_core import Message, Role, generate_structured
 
-    snippets = "\n".join(f"[{i}] {chunk.chunk_text[:400]}" for i, chunk in enumerate(chunks))
+    snippets = "\n".join(
+        f"[{i}] {chunk.chunk_text[:400]}" for i, chunk in enumerate(chunks)
+    )
     messages = [
         Message(
             role=Role.user,
@@ -102,17 +108,15 @@ async def retrieve(
     embedding_provider: EmbeddingProvider,
     settings: RetrievalSettings,
 ) -> list[RetrievedChunk]:
-    search_repo = SearchRepository(session)
-    chunk_repo = ChunkRepository(session)
-    doc_repo = DocumentRepository(session)
-
     candidate_ids: list[uuid.UUID] | None
     if _filter_is_empty(plan.filter):
         candidate_ids = None
     else:
-        candidates = await search_repo.find_candidate_documents(plan.filter)
+        candidates = await search_repo.find_candidate_documents(session, plan.filter)
         if not candidates:
-            logger.warning("Filter yielded no candidates; falling back to unfiltered search")
+            logger.warning(
+                "Filter yielded no candidates; falling back to unfiltered search"
+            )
             candidate_ids = None
         else:
             candidate_ids = candidates
@@ -121,14 +125,26 @@ async def retrieve(
     query_embedding = embeddings[0]
 
     vector_results, text_results = await asyncio.gather(
-        chunk_repo.vector_search(query_embedding, candidate_ids, limit=settings.retrieval_search_limit),
-        chunk_repo.text_search(plan.semantic_query, candidate_ids, limit=settings.retrieval_search_limit),
+        chunk_repo.vector_search(
+            session,
+            query_embedding,
+            candidate_ids,
+            limit=settings.retrieval_search_limit,
+        ),
+        chunk_repo.text_search(
+            session,
+            plan.semantic_query,
+            candidate_ids,
+            limit=settings.retrieval_search_limit,
+        ),
     )
 
-    fused_ids = rrf_fuse([
-        [r.id for r in vector_results],
-        [r.id for r in text_results],
-    ])[: settings.retrieval_top_k]
+    fused_ids = rrf_fuse(
+        [
+            [r.id for r in vector_results],
+            [r.id for r in text_results],
+        ]
+    )[: settings.retrieval_top_k]
 
     chunk_map: dict[uuid.UUID, ChunkSearchResult] = {r.id: r for r in vector_results}
     chunk_map.update({r.id: r for r in text_results})
@@ -138,7 +154,9 @@ async def retrieve(
         top_chunks = await _rerank(plan.semantic_query, top_chunks)
 
     doc_ids = list(dict.fromkeys(c.document_id for c in top_chunks))
-    doc_reads = await asyncio.gather(*[doc_repo.get_by_id(did) for did in doc_ids])
+    doc_reads = await asyncio.gather(
+        *[document_repo.get_by_id(session, did) for did in doc_ids]
+    )
     doc_map = {d.id: d for d in doc_reads if d is not None}
 
     return [

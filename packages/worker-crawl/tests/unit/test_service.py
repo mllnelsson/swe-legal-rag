@@ -58,19 +58,19 @@ def _make_service(
 
     client.fetch_pdf_urls.return_value = urls
 
-    async def get_by_source_url(url: str) -> DocumentRead | None:
+    async def get_by_source_url(_session, url: str) -> DocumentRead | None:
         if url in existing_urls:
             return _make_doc_read(url)
         return None
 
     doc_repo.get_by_source_url = get_by_source_url
 
-    async def create_doc(dto):
+    async def create_doc(_session, dto):
         return _make_doc_read(dto.source_url)
 
     doc_repo.create = create_doc
 
-    async def create_task(dto):
+    async def create_task(_session, dto):
         return _make_task_read(dto.document_id, dto.step, dto.status)
 
     task_repo.create = create_task
@@ -125,9 +125,7 @@ async def test_run_returns_empty_result_for_no_urls() -> None:
 
 @pytest.mark.asyncio
 async def test_run_publishes_correct_message() -> None:
-    service, _, publisher, _ = _make_service(
-        urls=["https://example.com/doc.pdf"]
-    )
+    service, _, publisher, _ = _make_service(urls=["https://example.com/doc.pdf"])
 
     await service.run()
 
@@ -162,8 +160,14 @@ async def test_run_commits_before_publish() -> None:
     client = MagicMock()
     client.fetch_pdf_urls.return_value = ["https://example.com/doc.pdf"]
     doc_repo.get_by_source_url = AsyncMock(return_value=None)
-    doc_repo.create = AsyncMock(return_value=_make_doc_read("https://example.com/doc.pdf"))
-    task_repo.create = AsyncMock(side_effect=lambda dto: _make_task_read(dto.document_id, dto.step, dto.status))
+    doc_repo.create = AsyncMock(
+        return_value=_make_doc_read("https://example.com/doc.pdf")
+    )
+    task_repo.create = AsyncMock(
+        side_effect=lambda _session, dto: _make_task_read(
+            dto.document_id, dto.step, dto.status
+        )
+    )
 
     service = CrawlService(
         session=session,
@@ -197,16 +201,16 @@ async def test_run_continues_after_per_url_failure() -> None:
 
     call_count = [0]
 
-    async def get_by_source_url(url: str) -> None:
+    async def get_by_source_url(_session, url: str) -> None:
         return None
 
-    async def create_doc(dto):
+    async def create_doc(_session, dto):
         call_count[0] += 1
         if "fail" in dto.source_url:
             raise RuntimeError("network failure")
         return _make_doc_read(dto.source_url)
 
-    async def create_task(dto):
+    async def create_task(_session, dto):
         return _make_task_read(dto.document_id, dto.step, dto.status)
 
     doc_repo.get_by_source_url = get_by_source_url

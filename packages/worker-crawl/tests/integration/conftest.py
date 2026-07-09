@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from shared.models import Base  # noqa: F401 - registers all models with Base.metadata
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueueBroker, SyncQueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
+from shared.repositories import (
+    document,
+    task,
+)
 
 _DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/overklagan"
@@ -47,13 +49,13 @@ async def session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def document_repo(session: AsyncSession) -> DocumentRepository:
-    return DocumentRepository(session)
+def document_repo(session: AsyncSession):
+    return document
 
 
 @pytest.fixture
-def task_repo(session: AsyncSession) -> TaskRepository:
-    return TaskRepository(session)
+def task_repo(session: AsyncSession):
+    return task
 
 
 @pytest.fixture

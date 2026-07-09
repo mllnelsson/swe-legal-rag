@@ -6,7 +6,12 @@ from enum import StrEnum, auto
 from worker_extract.extractors.base import ExtractionStrategy
 from worker_extract.extractors.llm import LLMStrategy
 from worker_extract.extractors.rule_based import RuleBasedStrategy
-from worker_extract.models import ExtractionResult, ExtractedEntity, ExtractedReference, Relevance
+from worker_extract.models import (
+    ExtractionResult,
+    ExtractedEntity,
+    ExtractedReference,
+    Relevance,
+)
 
 _ENTITY_COUNT_PER_1000_CHARS = 1
 _DEFAULT_STRATEGY_VALUE = "rule_based_with_llm_fallback"
@@ -25,7 +30,9 @@ def _is_result_complete(result: ExtractionResult, document_text: str) -> bool:
     return len(result.entities) >= min_expected
 
 
-def _merge_results(primary: ExtractionResult, fallback: ExtractionResult) -> ExtractionResult:
+def _merge_results(
+    primary: ExtractionResult, fallback: ExtractionResult
+) -> ExtractionResult:
     entity_map: dict[tuple[str, str], ExtractedEntity] = {}
     for entity in primary.entities + fallback.entities:
         key = (entity.name, str(entity.type))
@@ -48,7 +55,9 @@ class _FallbackStrategy:
         self._rule_based = RuleBasedStrategy()
         self._llm = LLMStrategy()
 
-    async def extract(self, document_text: str, case_number: str | None = None) -> ExtractionResult:
+    async def extract(
+        self, document_text: str, case_number: str | None = None
+    ) -> ExtractionResult:
         result = await self._rule_based.extract(document_text, case_number)
         if _is_result_complete(result, document_text):
             return result
