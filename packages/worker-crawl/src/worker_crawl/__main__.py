@@ -9,7 +9,7 @@ from shared.queue import create_queue_publisher
 from shared.repositories import document, task
 from worker_crawl.client import CrawlClient
 from worker_crawl.config import get_crawl_settings
-from worker_crawl.service import CrawlService
+from worker_crawl.service import process_crawl
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ async def _run() -> None:
     client = CrawlClient(timeout=crawl_settings.crawl_request_timeout)
 
     async with get_async_session() as session:
-        service = CrawlService(
+        result = await process_crawl(
             session=session,
             document_repo=document,
             task_repo=task,
@@ -32,7 +32,6 @@ async def _run() -> None:
             source_url=crawl_settings.crawl_source_url,
             topic=crawl_settings.crawl_topic,
         )
-        result = await service.run()
 
     logger.info(
         "Crawl complete: found=%d new=%d skipped=%d",

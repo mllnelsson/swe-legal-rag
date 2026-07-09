@@ -273,10 +273,11 @@ async def _run_step(ctx: Ctx, settings: Settings, step: str, document_id: UUID) 
 
     if step == "download":
         from worker_download.config import get_download_settings
-        from worker_download.service import DownloadService
+        from worker_download.service import process_download
 
         ds = get_download_settings()
-        service = DownloadService(
+        await process_download(
+            QueueMessage(task_id=task_id, document_id=document_id),
             session=session,
             document_repo=repos.document,
             task_repo=repos.task,
@@ -286,9 +287,6 @@ async def _run_step(ctx: Ctx, settings: Settings, step: str, document_id: UUID) 
             max_retries=ds.download_max_retries,
             rate_limit_delay=ds.download_rate_limit_delay,
             next_topic=ds.download_next_topic,
-        )
-        await service.handle_message(
-            QueueMessage(task_id=task_id, document_id=document_id)
         )
 
     elif step == "parse":
@@ -427,10 +425,10 @@ async def _seed(ctx: Ctx, json_path: str) -> None:
 async def _run_crawl(ctx: Ctx) -> None:
     from worker_crawl.client import CrawlClient
     from worker_crawl.config import get_crawl_settings
-    from worker_crawl.service import CrawlService
+    from worker_crawl.service import process_crawl
 
     cs = get_crawl_settings()
-    service = CrawlService(
+    result = await process_crawl(
         session=ctx.session,
         document_repo=ctx.repos.document,
         task_repo=ctx.repos.task,
@@ -439,7 +437,6 @@ async def _run_crawl(ctx: Ctx) -> None:
         source_url=cs.crawl_source_url,
         topic=cs.crawl_topic,
     )
-    result = await service.run()
     logger.info(
         "Crawl complete: found=%d new=%d skipped=%d",
         result.total_found,

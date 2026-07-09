@@ -14,20 +14,20 @@ from shared.models.task import Task
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueuePublisher
 from shared.storage.local import LocalStorageBackend
-from worker_download.service import DownloadService
+from worker_download.service import process_download
 
 _FAKE_PDF = b"%PDF-1.4 fake content"
 _FAKE_URL = "https://example.com/test.pdf"
 
 
-def _make_service(
+def _make_kwargs(
     session: AsyncSession,
     document_repo,
     task_repo,
     storage: LocalStorageBackend,
     publisher: SyncQueuePublisher,
-) -> DownloadService:
-    return DownloadService(
+) -> dict:
+    return dict(
         session=session,
         document_repo=document_repo,
         task_repo=task_repo,
@@ -58,10 +58,12 @@ async def test_full_download_stores_pdf_and_updates_document(
 
     with respx.mock:
         respx.get(_FAKE_URL).mock(return_value=httpx.Response(200, content=_FAKE_PDF))
-        service = _make_service(
+        kwargs = _make_kwargs(
             session, document_repo, task_repo, local_storage, sync_publisher
         )
-        await service.handle_message(QueueMessage(task_id=task.id, document_id=doc.id))
+        await process_download(
+            QueueMessage(task_id=task.id, document_id=doc.id), **kwargs
+        )
 
     expected_path = tmp_path / "documents" / str(doc.id) / "original.pdf"
     assert expected_path.exists()
@@ -108,10 +110,12 @@ async def test_download_idempotent_rerun(
     await session.commit()
 
     with patch("worker_download.service._download_pdf") as mock_download:
-        service = _make_service(
+        kwargs = _make_kwargs(
             session, document_repo, task_repo, local_storage, sync_publisher
         )
-        await service.handle_message(QueueMessage(task_id=task.id, document_id=doc.id))
+        await process_download(
+            QueueMessage(task_id=task.id, document_id=doc.id), **kwargs
+        )
         mock_download.assert_not_called()
 
     task_row = (
