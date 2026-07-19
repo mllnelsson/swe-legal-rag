@@ -18,4 +18,6 @@ class DocumentReference(Base):
     )
     reference_context: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
-    __table_args__ = (Index("ix_document_references_target_document_id", "target_document_id"),)
+    __table_args__ = (
+        Index("ix_document_references_target_document_id", "target_document_id"),
+    )

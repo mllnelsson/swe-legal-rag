@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -95,26 +96,30 @@ async def _call_process_parse(
         queue_publisher=publisher,
         parser=parser,
         session=session,
-        next_topic="metadata",
+        next_topic=PipelineStep.METADATA,
     )
 
 
 async def test_happy_path_parses_and_publishes() -> None:
     doc = _make_doc_read()
     task = _make_task_read(doc.id)
-    session, storage, doc_repo, task_repo, publisher = _make_deps(task, doc, b"PDF_BYTES")
+    session, storage, doc_repo, task_repo, publisher = _make_deps(
+        task, doc, b"PDF_BYTES"
+    )
     parser = MagicMock(return_value="parsed text")
 
-    await _call_process_parse(doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser)
+    await _call_process_parse(
+        doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser
+    )
 
     parser.assert_called_once_with(b"PDF_BYTES")
 
     doc_repo.update.assert_called_once()
-    _doc_id, update_dto = doc_repo.update.call_args[0]
+    _session, _doc_id, update_dto = doc_repo.update.call_args[0]
     assert _doc_id == doc.id
     assert update_dto.raw_text == "parsed text"
 
-    status_calls = [call[0][1] for call in task_repo.update_status.call_args_list]
+    status_calls = [call[0][2] for call in task_repo.update_status.call_args_list]
     assert status_calls[0].status == "processing"
     assert status_calls[-1].status == "completed"
 
@@ -133,9 +138,11 @@ async def test_parser_failure_marks_task_failed() -> None:
     session, storage, doc_repo, task_repo, publisher = _make_deps(task, doc)
     parser = MagicMock(side_effect=ParseError("corrupt PDF"))
 
-    await _call_process_parse(doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser)
+    await _call_process_parse(
+        doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser
+    )
 
-    status_calls = [call[0][1] for call in task_repo.update_status.call_args_list]
+    status_calls = [call[0][2] for call in task_repo.update_status.call_args_list]
     assert status_calls[-1].status == "failed"
     assert "corrupt PDF" in status_calls[-1].error_message
 
@@ -150,9 +157,11 @@ async def test_storage_failure_marks_task_failed() -> None:
     storage.retrieve.side_effect = OSError("disk error")
     parser = MagicMock()
 
-    await _call_process_parse(doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser)
+    await _call_process_parse(
+        doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser
+    )
 
-    status_calls = [call[0][1] for call in task_repo.update_status.call_args_list]
+    status_calls = [call[0][2] for call in task_repo.update_status.call_args_list]
     assert status_calls[-1].status == "failed"
     assert "disk error" in status_calls[-1].error_message
 
@@ -167,9 +176,11 @@ async def test_document_not_found_marks_task_failed() -> None:
     session, storage, doc_repo, task_repo, publisher = _make_deps(task, document=None)
     parser = MagicMock()
 
-    await _call_process_parse(doc_id, task.id, session, storage, doc_repo, task_repo, publisher, parser)
+    await _call_process_parse(
+        doc_id, task.id, session, storage, doc_repo, task_repo, publisher, parser
+    )
 
-    status_calls = [call[0][1] for call in task_repo.update_status.call_args_list]
+    status_calls = [call[0][2] for call in task_repo.update_status.call_args_list]
     assert status_calls[0].status == "processing"
     assert status_calls[-1].status == "failed"
     assert str(doc_id) in status_calls[-1].error_message
@@ -185,7 +196,9 @@ async def test_already_completed_task_is_skipped() -> None:
     session, storage, doc_repo, task_repo, publisher = _make_deps(task, doc)
     parser = MagicMock()
 
-    await _call_process_parse(doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser)
+    await _call_process_parse(
+        doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser
+    )
 
     task_repo.update_status.assert_not_called()
     session.commit.assert_not_called()
@@ -199,9 +212,11 @@ async def test_missing_gcs_uri_marks_task_failed() -> None:
     session, storage, doc_repo, task_repo, publisher = _make_deps(task, doc)
     parser = MagicMock()
 
-    await _call_process_parse(doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser)
+    await _call_process_parse(
+        doc.id, task.id, session, storage, doc_repo, task_repo, publisher, parser
+    )
 
-    status_calls = [call[0][1] for call in task_repo.update_status.call_args_list]
+    status_calls = [call[0][2] for call in task_repo.update_status.call_args_list]
     assert status_calls[-1].status == "failed"
 
     publisher.publish.assert_not_called()

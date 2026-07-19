@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.main import create_app
-from api.routes.chat import format_sse, get_db
+from api.routes.chat import _format_sse, _get_db
 from api.services.answerer import DoneEvent, SourcesEvent, TokenEvent
 from shared.dtos.session import SessionRead
 
@@ -37,35 +37,35 @@ def _make_client():
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield mock_db
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[_get_db] = override_get_db
     return app, TestClient(app)
 
 
 class TestFormatSse:
     def test_basic_format(self):
-        result = format_sse("token", {"text": "hello"})
+        result = _format_sse("token", {"text": "hello"})
         assert result == 'event: token\ndata: {"text": "hello"}\n\n'
 
     def test_data_is_json_encoded(self):
-        result = format_sse("sources", {"sources": []})
+        result = _format_sse("sources", {"sources": []})
         assert "data: " in result
         data_line = [ln for ln in result.split("\n") if ln.startswith("data:")][0]
-        parsed = json.loads(data_line[len("data: "):])
+        parsed = json.loads(data_line[len("data: ") :])
         assert parsed == {"sources": []}
 
     def test_event_name_in_output(self):
-        result = format_sse("done", {"session_id": "abc"})
+        result = _format_sse("done", {"session_id": "abc"})
         assert result.startswith("event: done\n")
 
     def test_ends_with_double_newline(self):
-        result = format_sse("token", {"text": "x"})
+        result = _format_sse("token", {"text": "x"})
         assert result.endswith("\n\n")
 
     def test_unicode_content_round_trips(self):
         swedish = "kyrkorätten säger: åäö"
-        result = format_sse("token", {"text": swedish})
+        result = _format_sse("token", {"text": swedish})
         data_line = [ln for ln in result.split("\n") if ln.startswith("data:")][0]
-        parsed = json.loads(data_line[len("data: "):])
+        parsed = json.loads(data_line[len("data: ") :])
         assert parsed["text"] == swedish
 
 
@@ -89,7 +89,9 @@ class TestChatEndpointValidation:
         assert response.status_code == 422
 
     def test_invalid_session_id_returns_422(self):
-        response = self.client.post("/api/chat", json={"message": "hi", "session_id": "not-a-uuid"})
+        response = self.client.post(
+            "/api/chat", json={"message": "hi", "session_id": "not-a-uuid"}
+        )
         assert response.status_code == 422
 
 
@@ -99,9 +101,9 @@ def _parse_sse(text: str) -> list[dict]:
     current: dict = {}
     for line in text.split("\n"):
         if line.startswith("event: "):
-            current["event"] = line[len("event: "):]
+            current["event"] = line[len("event: ") :]
         elif line.startswith("data: "):
-            current["data"] = json.loads(line[len("data: "):])
+            current["data"] = json.loads(line[len("data: ") :])
         elif line == "" and current:
             events.append(current)
             current = {}
@@ -129,8 +131,13 @@ class TestChatEndpointSseStream:
 
     def test_token_events_streamed(self):
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
-            patch("api.routes.chat.answer_query", self._fake_answer_query(tokens=["Hej", " världen"])),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch(
+                "api.routes.chat.answer_query",
+                self._fake_answer_query(tokens=["Hej", " världen"]),
+            ),
         ):
             response = self.client.post("/api/chat", json={"message": "test"})
 
@@ -143,7 +150,9 @@ class TestChatEndpointSseStream:
 
     def test_sources_event_after_tokens(self):
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
             patch("api.routes.chat.answer_query", self._fake_answer_query()),
         ):
             response = self.client.post("/api/chat", json={"message": "test"})
@@ -155,7 +164,9 @@ class TestChatEndpointSseStream:
 
     def test_done_event_last_with_session_id(self):
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
             patch("api.routes.chat.answer_query", self._fake_answer_query()),
         ):
             response = self.client.post("/api/chat", json={"message": "test"})
@@ -168,7 +179,9 @@ class TestChatEndpointSseStream:
 
     def test_null_session_id_creates_new_session(self):
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session) as mock_create,
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ) as mock_create,
             patch("api.routes.chat.answer_query", self._fake_answer_query()),
         ):
             self.client.post("/api/chat", json={"message": "test", "session_id": None})
@@ -180,17 +193,23 @@ class TestChatEndpointSseStream:
     def test_existing_session_id_passed_to_get_or_create(self):
         existing_id = uuid.uuid4()
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session) as mock_create,
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ) as mock_create,
             patch("api.routes.chat.answer_query", self._fake_answer_query()),
         ):
-            self.client.post("/api/chat", json={"message": "test", "session_id": str(existing_id)})
+            self.client.post(
+                "/api/chat", json={"message": "test", "session_id": str(existing_id)}
+            )
 
         mock_create.assert_called_once()
         assert mock_create.call_args.args[0] == existing_id
 
     def test_response_content_type_is_event_stream(self):
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
             patch("api.routes.chat.answer_query", self._fake_answer_query()),
         ):
             response = self.client.post("/api/chat", json={"message": "test"})
@@ -199,7 +218,9 @@ class TestChatEndpointSseStream:
 
     def test_no_cache_headers_set(self):
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
             patch("api.routes.chat.answer_query", self._fake_answer_query()),
         ):
             response = self.client.post("/api/chat", json={"message": "test"})
@@ -222,7 +243,9 @@ class TestChatEndpointErrorHandling:
             raise RuntimeError("LLM provider failed")
 
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
             patch("api.routes.chat.answer_query", _failing_answer_query),
         ):
             response = self.client.post("/api/chat", json={"message": "test"})
@@ -238,7 +261,9 @@ class TestChatEndpointErrorHandling:
             raise RuntimeError("failure")
 
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
             patch("api.routes.chat.answer_query", _failing_answer_query),
         ):
             response = self.client.post("/api/chat", json={"message": "test"})
@@ -253,7 +278,9 @@ class TestChatEndpointErrorHandling:
             yield  # make it an async generator
 
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
             patch("api.routes.chat.answer_query", _failing_answer_query),
         ):
             response = self.client.post("/api/chat", json={"message": "test"})
@@ -267,7 +294,9 @@ class TestChatEndpointErrorHandling:
     def test_pre_stream_error_does_not_emit_error_event(self):
         """Validation errors before streaming → 422, not SSE error."""
         with (
-            patch("api.routes.chat.get_or_create_session", return_value=self.chat_session),
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
         ):
             response = self.client.post("/api/chat", json={"message": ""})
 

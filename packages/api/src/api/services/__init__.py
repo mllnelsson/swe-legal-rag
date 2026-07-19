@@ -8,7 +8,11 @@ from api.services.answerer import (
 )
 from api.services.query_planner import QueryPlan, plan_query
 from api.services.retriever import RetrievedChunk, retrieve
-from api.services.session_service import append_turn, get_or_create_session, history_for_llm
+from api.services.session_service import (
+    append_turn,
+    get_or_create_session,
+    history_for_llm,
+)
 
 __all__ = [
     "answer_query",

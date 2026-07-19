@@ -16,6 +16,9 @@ ToolExecutor = Callable[..., Awaitable[Any]]
 ToolCallCallback = Callable[[ToolCall, list[Message]], Awaitable[None]]
 ToolResultCallback = Callable[[ToolCall, Any, list[Message]], Awaitable[None]]
 
+# Safety bound on the agentic tool-calling loop before giving up.
+DEFAULT_MAX_ITERATIONS = 10
+
 
 @dataclass(frozen=True, slots=True)
 class ToolLoopResult:
@@ -71,7 +74,7 @@ async def tool_loop(
     *,
     provider: LLMProvider | None = None,
     config: LLMConfig | None = None,
-    max_iterations: int = 10,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
     on_tool_call: ToolCallCallback | None = None,
     on_tool_result: ToolResultCallback | None = None,
 ) -> ToolLoopResult:
@@ -96,7 +99,9 @@ async def tool_loop(
                 await on_tool_call(tc, history)
 
             if tc.name not in executors:
-                raise KeyError(f"No executor registered for tool {tc.name!r}")
+                raise ToolExecutionError(
+                    tc.name, f"No executor registered for tool {tc.name!r}"
+                )
 
             try:
                 result = await executors[tc.name](**tc.arguments)

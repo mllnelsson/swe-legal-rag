@@ -30,8 +30,17 @@ def upgrade() -> None:
         ),
         sa.Column("target_case_number", sa.String(), nullable=False),
         sa.Column("reference_context", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.UniqueConstraint("source_document_id", "target_case_number", name="uq_unresolved_refs_source_case"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.UniqueConstraint(
+            "source_document_id",
+            "target_case_number",
+            name="uq_unresolved_refs_source_case",
+        ),
     )
     op.create_index(
         "ix_unresolved_references_target_case_number",

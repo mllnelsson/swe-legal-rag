@@ -1,5 +1,8 @@
 from typing import Protocol, runtime_checkable
 
+# Default lifetime (seconds) of a signed download URL: one hour.
+DEFAULT_SIGNED_URL_TTL = 3600
+
 
 @runtime_checkable
 class StorageBackend(Protocol):
@@ -11,4 +14,4 @@ class StorageBackend(Protocol):
 
     def delete(self, key: str) -> None: ...
 
-    def get_url(self, key: str, expires_in: int = 3600) -> str: ...
+    def get_url(self, key: str, expires_in: int = DEFAULT_SIGNED_URL_TTL) -> str: ...

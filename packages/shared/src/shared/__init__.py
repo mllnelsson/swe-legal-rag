@@ -5,6 +5,7 @@ from shared.config import (
     get_settings,
 )
 from shared.db import Base, get_engine, get_session
+from shared.pipeline import StepInputError, run_pipeline_step
 from shared.queue import (
     QueueMessage,
     QueuePublisher,
@@ -21,6 +22,7 @@ __all__ = [
     "QueuePublisher",
     "QueueSubscriber",
     "Settings",
+    "StepInputError",
     "StorageBackend",
     "StorageBackendType",
     "create_queue_publisher",
@@ -29,4 +31,5 @@ __all__ = [
     "get_engine",
     "get_session",
     "get_settings",
+    "run_pipeline_step",
 ]

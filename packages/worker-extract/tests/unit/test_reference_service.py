@@ -8,7 +8,13 @@ from shared.dtos.document import DocumentRead
 from shared.dtos.document_reference import DocumentReferenceRead
 from shared.dtos.unresolved_reference import UnresolvedReferenceRead
 from worker_extract.models import ExtractedReference
-from worker_extract.services.reference_service import process_references, reconcile_references
+from worker_extract.services.reference_service import (
+    process_references,
+    reconcile_references,
+)
+
+# Sentinel standing in for the AsyncSession handle threaded to the repo functions.
+session = MagicMock()
 
 
 def _doc_read(case_number: str | None = "ÖN 2021-0001") -> DocumentRead:
@@ -62,14 +68,18 @@ class TestProcessReferences:
 
         source_id = uuid.uuid4()
         await process_references(
-            doc_repo, ref_repo, unresolved_repo,
-            source_id, "ÖN 2021-0001",
+            session,
+            doc_repo,
+            ref_repo,
+            unresolved_repo,
+            source_id,
+            "ÖN 2021-0001",
             [_ref("ÖN 2021-0999")],
         )
 
         ref_repo.upsert.assert_called_once()
         unresolved_repo.upsert.assert_not_called()
-        create_dto = ref_repo.upsert.call_args[0][0]
+        create_dto = ref_repo.upsert.call_args[0][1]
         assert create_dto.source_document_id == source_id
         assert create_dto.target_document_id == target_doc.id
 
@@ -83,14 +93,18 @@ class TestProcessReferences:
 
         source_id = uuid.uuid4()
         await process_references(
-            doc_repo, ref_repo, unresolved_repo,
-            source_id, "ÖN 2021-0001",
+            session,
+            doc_repo,
+            ref_repo,
+            unresolved_repo,
+            source_id,
+            "ÖN 2021-0001",
             [_ref("ÖN 2021-0999")],
         )
 
         ref_repo.upsert.assert_not_called()
         unresolved_repo.upsert.assert_called_once()
-        create_dto = unresolved_repo.upsert.call_args[0][0]
+        create_dto = unresolved_repo.upsert.call_args[0][1]
         assert create_dto.target_case_number == "ÖN 2021-0999"
 
     async def test_process_reference_skips_self_reference(self) -> None:
@@ -102,8 +116,12 @@ class TestProcessReferences:
         unresolved_repo.upsert = AsyncMock()
 
         await process_references(
-            doc_repo, ref_repo, unresolved_repo,
-            uuid.uuid4(), "ÖN 2021-0001",
+            session,
+            doc_repo,
+            ref_repo,
+            unresolved_repo,
+            uuid.uuid4(),
+            "ÖN 2021-0001",
             [_ref("ÖN 2021-0001")],
         )
 
@@ -119,7 +137,9 @@ class TestProcessReferences:
         unresolved_repo = MagicMock()
         unresolved_repo.upsert = AsyncMock()
 
-        await process_references(doc_repo, ref_repo, unresolved_repo, uuid.uuid4(), None, [])
+        await process_references(
+            session, doc_repo, ref_repo, unresolved_repo, uuid.uuid4(), None, []
+        )
 
         ref_repo.upsert.assert_not_called()
         unresolved_repo.upsert.assert_not_called()
@@ -133,8 +153,12 @@ class TestProcessReferences:
         unresolved_repo.upsert = AsyncMock()
 
         await process_references(
-            doc_repo, ref_repo, unresolved_repo,
-            uuid.uuid4(), None,
+            session,
+            doc_repo,
+            ref_repo,
+            unresolved_repo,
+            uuid.uuid4(),
+            None,
             [_ref("ÖN 2021-0999")],
         )
 
@@ -153,10 +177,12 @@ class TestReconcileReferences:
         ref_repo = MagicMock()
         ref_repo.upsert = AsyncMock(return_value=_doc_ref_read(source_id, document_id))
 
-        await reconcile_references(unresolved_repo, ref_repo, document_id, "ÖN 2021-0999")
+        await reconcile_references(
+            session, unresolved_repo, ref_repo, document_id, "ÖN 2021-0999"
+        )
 
         ref_repo.upsert.assert_called_once()
-        create_dto = ref_repo.upsert.call_args[0][0]
+        create_dto = ref_repo.upsert.call_args[0][1]
         assert create_dto.source_document_id == source_id
         assert create_dto.target_document_id == document_id
 
@@ -171,9 +197,11 @@ class TestReconcileReferences:
         ref_repo = MagicMock()
         ref_repo.upsert = AsyncMock(return_value=_doc_ref_read(source_id, document_id))
 
-        await reconcile_references(unresolved_repo, ref_repo, document_id, "ÖN 2021-0999")
+        await reconcile_references(
+            session, unresolved_repo, ref_repo, document_id, "ÖN 2021-0999"
+        )
 
-        unresolved_repo.delete.assert_called_once_with(ur.id)
+        unresolved_repo.delete.assert_called_once_with(session, ur.id)
 
     async def test_reconcil_returns_count(self) -> None:
         source_id = uuid.uuid4()
@@ -186,7 +214,9 @@ class TestReconcileReferences:
         ref_repo = MagicMock()
         ref_repo.upsert = AsyncMock(return_value=_doc_ref_read(source_id, document_id))
 
-        count = await reconcile_references(unresolved_repo, ref_repo, document_id, "ÖN 2021-0999")
+        count = await reconcile_references(
+            session, unresolved_repo, ref_repo, document_id, "ÖN 2021-0999"
+        )
 
         assert count == 3
 
@@ -198,7 +228,7 @@ class TestReconcileReferences:
         ref_repo.upsert = AsyncMock()
 
         count = await reconcile_references(
-            unresolved_repo, ref_repo, uuid.uuid4(), "ÖN 2021-0999"
+            session, unresolved_repo, ref_repo, uuid.uuid4(), "ÖN 2021-0999"
         )
 
         assert count == 0

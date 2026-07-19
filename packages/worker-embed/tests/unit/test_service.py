@@ -8,13 +8,20 @@ import pytest
 
 from shared.dtos.chunk import ChunkRead
 from shared.dtos.task import TaskRead
+from worker_embed.errors import (
+    EmbeddingCountMismatchError,
+    EmbeddingDimensionError,
+    NoChunksError,
+)
 from worker_embed.service import process_embedding
 
 _NOW = datetime.now(tz=timezone.utc)
 _EMBEDDING_DIM = 768
 
 
-def _make_chunk(document_id: uuid.UUID, index: int, contextual_text: str | None = "ctx text") -> ChunkRead:
+def _make_chunk(
+    document_id: uuid.UUID, index: int, contextual_text: str | None = "ctx text"
+) -> ChunkRead:
     return ChunkRead(
         id=uuid.uuid4(),
         document_id=document_id,
@@ -136,7 +143,7 @@ class TestProcessEmbeddingSuccess:
         )
 
         chunk_repo.update_embeddings.assert_awaited_once()
-        call_args = chunk_repo.update_embeddings.call_args[0][0]
+        call_args = chunk_repo.update_embeddings.call_args[0][1]
         assert call_args == [(chunks[0].id, vectors[0]), (chunks[1].id, vectors[1])]
 
     async def test_falls_back_to_chunk_text_when_contextual_text_is_none(self) -> None:
@@ -172,7 +179,7 @@ class TestProcessEmbeddingSuccess:
 
 
 class TestProcessEmbeddingErrorCases:
-    async def test_no_chunks_raises_value_error(self) -> None:
+    async def test_no_chunks_raises_embedding_error(self) -> None:
         document_id = uuid.uuid4()
         task = _make_task()
 
@@ -189,7 +196,7 @@ class TestProcessEmbeddingErrorCases:
         session.commit = AsyncMock()
         session.rollback = AsyncMock()
 
-        with pytest.raises(ValueError, match="No chunks found"):
+        with pytest.raises(NoChunksError, match="No chunks found"):
             await process_embedding(
                 document_id=document_id,
                 task_id=task.id,
@@ -200,10 +207,10 @@ class TestProcessEmbeddingErrorCases:
             )
 
         update_calls = task_repo.update_status.call_args_list
-        statuses = [c[0][1].status for c in update_calls]
+        statuses = [c[0][2].status for c in update_calls]
         assert "failed" in statuses
 
-    async def test_dimension_mismatch_raises_value_error(self) -> None:
+    async def test_dimension_mismatch_raises_embedding_error(self) -> None:
         document_id = uuid.uuid4()
         task = _make_task()
         chunks = [_make_chunk(document_id, 0)]
@@ -222,7 +229,7 @@ class TestProcessEmbeddingErrorCases:
         session.commit = AsyncMock()
         session.rollback = AsyncMock()
 
-        with pytest.raises(ValueError, match="dimension"):
+        with pytest.raises(EmbeddingDimensionError, match="dimension"):
             await process_embedding(
                 document_id=document_id,
                 task_id=task.id,
@@ -233,10 +240,10 @@ class TestProcessEmbeddingErrorCases:
             )
 
         update_calls = task_repo.update_status.call_args_list
-        statuses = [c[0][1].status for c in update_calls]
+        statuses = [c[0][2].status for c in update_calls]
         assert "failed" in statuses
 
-    async def test_vector_count_mismatch_raises_value_error(self) -> None:
+    async def test_vector_count_mismatch_raises_embedding_error(self) -> None:
         document_id = uuid.uuid4()
         task = _make_task()
         chunks = [_make_chunk(document_id, i) for i in range(3)]
@@ -255,7 +262,7 @@ class TestProcessEmbeddingErrorCases:
         session.commit = AsyncMock()
         session.rollback = AsyncMock()
 
-        with pytest.raises(ValueError, match="mismatch"):
+        with pytest.raises(EmbeddingCountMismatchError, match="mismatch"):
             await process_embedding(
                 document_id=document_id,
                 task_id=task.id,
@@ -266,7 +273,7 @@ class TestProcessEmbeddingErrorCases:
             )
 
         update_calls = task_repo.update_status.call_args_list
-        statuses = [c[0][1].status for c in update_calls]
+        statuses = [c[0][2].status for c in update_calls]
         assert "failed" in statuses
 
     async def test_embedding_client_failure_propagates(self) -> None:
@@ -282,7 +289,9 @@ class TestProcessEmbeddingErrorCases:
         task_repo.update_status = AsyncMock(return_value=task)
 
         embedding_provider = MagicMock()
-        embedding_provider.embed = AsyncMock(side_effect=RuntimeError("Model unavailable"))
+        embedding_provider.embed = AsyncMock(
+            side_effect=RuntimeError("Model unavailable")
+        )
 
         session = MagicMock()
         session.commit = AsyncMock()
@@ -299,7 +308,7 @@ class TestProcessEmbeddingErrorCases:
             )
 
         update_calls = task_repo.update_status.call_args_list
-        statuses = [c[0][1].status for c in update_calls]
+        statuses = [c[0][2].status for c in update_calls]
         assert "failed" in statuses
 
     async def test_already_completed_task_is_skipped(self) -> None:
@@ -324,5 +333,7 @@ class TestProcessEmbeddingErrorCases:
         )
 
         chunk_repo.get_by_document_id = MagicMock()
-        assert not hasattr(chunk_repo.get_by_document_id, "await_count") or \
-               not chunk_repo.get_by_document_id.called
+        assert (
+            not hasattr(chunk_repo.get_by_document_id, "await_count")
+            or not chunk_repo.get_by_document_id.called
+        )

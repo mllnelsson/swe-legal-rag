@@ -7,7 +7,7 @@ from worker_extract.models import (
     ExtractionResult,
     ExtractedEntity,
     ExtractedReference,
-    Relevance,
+    EntityRelevance,
 )
 
 _CASE_REF_RE = re.compile(
@@ -27,27 +27,31 @@ _PARISH_PATTERNS = [
     re.compile(r"\bförsamlingen\s+i\s+([A-ZÅÄÖ][a-zåäö]+)\b"),
 ]
 
-_KNOWN_ROLES = frozenset({
-    "kyrkoherde",
-    "kyrkoråd",
-    "kyrkofullmäktige",
-    "biskop",
-    "domkapitel",
-    "kontraktsprost",
-    "domprost",
-    "stiftsstyrelse",
-})
+_KNOWN_ROLES = frozenset(
+    {
+        "kyrkoherde",
+        "kyrkoråd",
+        "kyrkofullmäktige",
+        "biskop",
+        "domkapitel",
+        "kontraktsprost",
+        "domprost",
+        "stiftsstyrelse",
+    }
+)
 
-_KNOWN_LEGAL_CONCEPTS = frozenset({
-    "överklagande",
-    "behörighet",
-    "jäv",
-    "verkställighet",
-    "tjänstetillsättning",
-    "överklaganderätt",
-    "tjänsteförseelse",
-    "disciplinärende",
-})
+_KNOWN_LEGAL_CONCEPTS = frozenset(
+    {
+        "överklagande",
+        "behörighet",
+        "jäv",
+        "verkställighet",
+        "tjänstetillsättning",
+        "överklaganderätt",
+        "tjänsteförseelse",
+        "disciplinärende",
+    }
+)
 
 # Entities in the latter portion of the document are considered primary
 _PRIMARY_THRESHOLD = 0.6
@@ -61,8 +65,12 @@ def _extract_sentence(text: str, pos: int) -> str:
     return text[sentence_start : sentence_end + 1].strip()
 
 
-def _relevance(text_len: int, pos: int) -> Relevance:
-    return Relevance.PRIMARY if pos / max(text_len, 1) >= _PRIMARY_THRESHOLD else Relevance.MENTIONED
+def _relevance(text_len: int, pos: int) -> EntityRelevance:
+    return (
+        EntityRelevance.PRIMARY
+        if pos / max(text_len, 1) >= _PRIMARY_THRESHOLD
+        else EntityRelevance.MENTIONED
+    )
 
 
 def extract_references(text: str) -> list[ExtractedReference]:
@@ -73,10 +81,12 @@ def extract_references(text: str) -> list[ExtractedReference]:
         if case_number in seen:
             continue
         seen.add(case_number)
-        refs.append(ExtractedReference(
-            case_number=case_number,
-            reference_context=_extract_sentence(text, m.start()),
-        ))
+        refs.append(
+            ExtractedReference(
+                case_number=case_number,
+                reference_context=_extract_sentence(text, m.start()),
+            )
+        )
     return refs
 
 
@@ -137,16 +147,36 @@ def extract_entities_rule_based(text: str) -> list[ExtractedEntity]:
     entities: list[ExtractedEntity] = []
 
     for name, pos in _extract_regulations(text):
-        entities.append(ExtractedEntity(name=name, type=EntityType.REGULATION, relevance=_relevance(text_len, pos)))
+        entities.append(
+            ExtractedEntity(
+                name=name,
+                type=EntityType.REGULATION,
+                relevance=_relevance(text_len, pos),
+            )
+        )
 
     for name, pos in _extract_parishes(text):
-        entities.append(ExtractedEntity(name=name, type=EntityType.PARISH, relevance=_relevance(text_len, pos)))
+        entities.append(
+            ExtractedEntity(
+                name=name, type=EntityType.PARISH, relevance=_relevance(text_len, pos)
+            )
+        )
 
     for name, pos in _extract_roles(text):
-        entities.append(ExtractedEntity(name=name, type=EntityType.ROLE, relevance=_relevance(text_len, pos)))
+        entities.append(
+            ExtractedEntity(
+                name=name, type=EntityType.ROLE, relevance=_relevance(text_len, pos)
+            )
+        )
 
     for name, pos in _extract_legal_concepts(text):
-        entities.append(ExtractedEntity(name=name, type=EntityType.LEGAL_CONCEPT, relevance=_relevance(text_len, pos)))
+        entities.append(
+            ExtractedEntity(
+                name=name,
+                type=EntityType.LEGAL_CONCEPT,
+                relevance=_relevance(text_len, pos),
+            )
+        )
 
     return entities
 
@@ -159,5 +189,7 @@ def extract_rule_based(text: str) -> ExtractionResult:
 
 
 class RuleBasedStrategy:
-    async def extract(self, document_text: str, case_number: str | None = None) -> ExtractionResult:
+    async def extract(
+        self, document_text: str, case_number: str | None = None
+    ) -> ExtractionResult:
         return extract_rule_based(document_text)

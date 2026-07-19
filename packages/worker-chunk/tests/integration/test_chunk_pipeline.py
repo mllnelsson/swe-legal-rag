@@ -9,9 +9,6 @@ from ai.dtos import SummarizeResult
 from shared.dtos.document import DocumentCreate, DocumentUpdate
 from shared.dtos.task import TaskCreate
 from shared.queue.sync import SyncQueuePublisher
-from shared.repositories.chunk import ChunkRepository
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
 from worker_chunk.service import process_chunking
 
 pytestmark = pytest.mark.integration
@@ -70,13 +67,17 @@ _CANNED_SUMMARY = (
 
 @pytest.fixture
 async def document_with_text(
-    document_repo: DocumentRepository,
+    document_repo,
     session: AsyncSession,
 ) -> tuple:
-    doc = await document_repo.create(DocumentCreate(source_url="https://example.com/test.pdf"))
-    await document_repo.update(doc.id, DocumentUpdate(raw_text=_SWEDISH_LEGAL_TEXT))
+    doc = await document_repo.create(
+        session, DocumentCreate(source_url="https://example.com/test.pdf")
+    )
+    await document_repo.update(
+        session, doc.id, DocumentUpdate(raw_text=_SWEDISH_LEGAL_TEXT)
+    )
     await session.commit()
-    doc = await document_repo.get_by_id(doc.id)
+    doc = await document_repo.get_by_id(session, doc.id)
     assert doc is not None
     return doc
 
@@ -84,11 +85,12 @@ async def document_with_text(
 @pytest.fixture
 async def chunk_task(
     document_with_text,
-    task_repo: TaskRepository,
+    task_repo,
     session: AsyncSession,
 ) -> object:
     task = await task_repo.create(
-        TaskCreate(document_id=document_with_text.id, step="chunk", status="pending")
+        session,
+        TaskCreate(document_id=document_with_text.id, step="chunk", status="pending"),
     )
     await session.commit()
     return task
@@ -97,13 +99,15 @@ async def chunk_task(
 async def _run_chunking(
     document_id,
     task_id,
-    document_repo: DocumentRepository,
-    chunk_repo: ChunkRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    chunk_repo,
+    task_repo,
     sync_publisher: SyncQueuePublisher,
     session: AsyncSession,
 ) -> None:
-    with patch("worker_chunk.service.summarize_document", new=AsyncMock()) as mock_summarize:
+    with patch(
+        "worker_chunk.service.summarize_document", new=AsyncMock()
+    ) as mock_summarize:
         mock_summarize.return_value = SummarizeResult(summary=_CANNED_SUMMARY)
         await process_chunking(
             document_id=document_id,
@@ -121,9 +125,9 @@ class TestChunkPipelineEndToEnd:
         self,
         document_with_text,
         chunk_task,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         sync_publisher: SyncQueuePublisher,
         session: AsyncSession,
     ) -> None:
@@ -137,7 +141,7 @@ class TestChunkPipelineEndToEnd:
             session,
         )
 
-        updated_doc = await document_repo.get_by_id(document_with_text.id)
+        updated_doc = await document_repo.get_by_id(session, document_with_text.id)
         assert updated_doc is not None
         assert updated_doc.summary == _CANNED_SUMMARY
 
@@ -145,9 +149,9 @@ class TestChunkPipelineEndToEnd:
         self,
         document_with_text,
         chunk_task,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         sync_publisher: SyncQueuePublisher,
         session: AsyncSession,
     ) -> None:
@@ -161,7 +165,7 @@ class TestChunkPipelineEndToEnd:
             session,
         )
 
-        chunks = await chunk_repo.get_by_document_id(document_with_text.id)
+        chunks = await chunk_repo.get_by_document_id(session, document_with_text.id)
         assert len(chunks) > 0
         for chunk in chunks:
             assert chunk.document_id == document_with_text.id
@@ -170,9 +174,9 @@ class TestChunkPipelineEndToEnd:
         self,
         document_with_text,
         chunk_task,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         sync_publisher: SyncQueuePublisher,
         session: AsyncSession,
     ) -> None:
@@ -186,7 +190,7 @@ class TestChunkPipelineEndToEnd:
             session,
         )
 
-        chunks = await chunk_repo.get_by_document_id(document_with_text.id)
+        chunks = await chunk_repo.get_by_document_id(session, document_with_text.id)
         indices = [c.chunk_index for c in chunks]
         assert indices == list(range(len(chunks)))
 
@@ -194,9 +198,9 @@ class TestChunkPipelineEndToEnd:
         self,
         document_with_text,
         chunk_task,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         sync_publisher: SyncQueuePublisher,
         session: AsyncSession,
     ) -> None:
@@ -210,7 +214,7 @@ class TestChunkPipelineEndToEnd:
             session,
         )
 
-        chunks = await chunk_repo.get_by_document_id(document_with_text.id)
+        chunks = await chunk_repo.get_by_document_id(session, document_with_text.id)
         for chunk in chunks:
             assert chunk.contextual_text is not None
             assert _CANNED_SUMMARY in chunk.contextual_text
@@ -219,9 +223,9 @@ class TestChunkPipelineEndToEnd:
         self,
         document_with_text,
         chunk_task,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         sync_publisher: SyncQueuePublisher,
         session: AsyncSession,
     ) -> None:
@@ -235,7 +239,7 @@ class TestChunkPipelineEndToEnd:
             session,
         )
 
-        chunks = await chunk_repo.get_by_document_id(document_with_text.id)
+        chunks = await chunk_repo.get_by_document_id(session, document_with_text.id)
         for chunk in chunks:
             assert _CANNED_SUMMARY not in chunk.chunk_text
 
@@ -243,9 +247,9 @@ class TestChunkPipelineEndToEnd:
         self,
         document_with_text,
         chunk_task,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         sync_publisher: SyncQueuePublisher,
         published_messages: list,
         session: AsyncSession,
@@ -269,9 +273,9 @@ class TestChunkPipelineIdempotency:
         self,
         document_with_text,
         chunk_task,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         sync_publisher: SyncQueuePublisher,
         session: AsyncSession,
     ) -> None:
@@ -285,12 +289,17 @@ class TestChunkPipelineIdempotency:
             session,
         )
 
-        first_count = len(await chunk_repo.get_by_document_id(document_with_text.id))
+        first_count = len(
+            await chunk_repo.get_by_document_id(session, document_with_text.id)
+        )
 
         from shared.dtos.task import TaskCreate
 
         second_task = await task_repo.create(
-            TaskCreate(document_id=document_with_text.id, step="chunk", status="pending")
+            session,
+            TaskCreate(
+                document_id=document_with_text.id, step="chunk", status="pending"
+            ),
         )
         await session.commit()
 
@@ -304,16 +313,18 @@ class TestChunkPipelineIdempotency:
             session,
         )
 
-        second_count = len(await chunk_repo.get_by_document_id(document_with_text.id))
+        second_count = len(
+            await chunk_repo.get_by_document_id(session, document_with_text.id)
+        )
         assert first_count == second_count
 
     async def test_rerun_replaces_old_chunks(
         self,
         document_with_text,
         chunk_task,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
-        task_repo: TaskRepository,
+        document_repo,
+        chunk_repo,
+        task_repo,
         sync_publisher: SyncQueuePublisher,
         session: AsyncSession,
     ) -> None:
@@ -327,12 +338,18 @@ class TestChunkPipelineIdempotency:
             session,
         )
 
-        first_run_ids = {c.id for c in await chunk_repo.get_by_document_id(document_with_text.id)}
+        first_run_ids = {
+            c.id
+            for c in await chunk_repo.get_by_document_id(session, document_with_text.id)
+        }
 
         from shared.dtos.task import TaskCreate
 
         second_task = await task_repo.create(
-            TaskCreate(document_id=document_with_text.id, step="chunk", status="pending")
+            session,
+            TaskCreate(
+                document_id=document_with_text.id, step="chunk", status="pending"
+            ),
         )
         await session.commit()
 
@@ -346,5 +363,8 @@ class TestChunkPipelineIdempotency:
             session,
         )
 
-        second_run_ids = {c.id for c in await chunk_repo.get_by_document_id(document_with_text.id)}
+        second_run_ids = {
+            c.id
+            for c in await chunk_repo.get_by_document_id(session, document_with_text.id)
+        }
         assert first_run_ids.isdisjoint(second_run_ids)

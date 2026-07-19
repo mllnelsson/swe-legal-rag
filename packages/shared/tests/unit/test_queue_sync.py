@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from shared.errors import QueueHandlerError
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueueBroker, SyncQueuePublisher, SyncQueueSubscriber
 
@@ -30,7 +31,7 @@ def test_publish_to_unregistered_topic_raises() -> None:
     broker = SyncQueueBroker()
     pub = SyncQueuePublisher(broker)
 
-    with pytest.raises(ValueError, match="No handler registered"):
+    with pytest.raises(QueueHandlerError, match="No handler registered"):
         pub.publish("missing-topic", _make_message())
 
 

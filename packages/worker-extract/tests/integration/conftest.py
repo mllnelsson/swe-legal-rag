@@ -11,12 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from shared.models import Base  # noqa: F401 - registers all models
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueueBroker, SyncQueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.document_entity import DocumentEntityRepository
-from shared.repositories.document_reference import DocumentReferenceRepository
-from shared.repositories.entity import EntityRepository
-from shared.repositories.task import TaskRepository
-from shared.repositories.unresolved_reference import UnresolvedReferenceRepository
+from shared.repositories import (
+    document,
+    document_entity,
+    document_reference,
+    entity,
+    task,
+    unresolved_reference,
+)
 
 _DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/overklagan"
@@ -54,33 +56,33 @@ async def session(db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def document_repo(session: AsyncSession) -> DocumentRepository:
-    return DocumentRepository(session)
+def document_repo(session: AsyncSession):
+    return document
 
 
 @pytest.fixture
-def task_repo(session: AsyncSession) -> TaskRepository:
-    return TaskRepository(session)
+def task_repo(session: AsyncSession):
+    return task
 
 
 @pytest.fixture
-def entity_repo(session: AsyncSession) -> EntityRepository:
-    return EntityRepository(session)
+def entity_repo(session: AsyncSession):
+    return entity
 
 
 @pytest.fixture
-def doc_entity_repo(session: AsyncSession) -> DocumentEntityRepository:
-    return DocumentEntityRepository(session)
+def doc_entity_repo(session: AsyncSession):
+    return document_entity
 
 
 @pytest.fixture
-def ref_repo(session: AsyncSession) -> DocumentReferenceRepository:
-    return DocumentReferenceRepository(session)
+def ref_repo(session: AsyncSession):
+    return document_reference
 
 
 @pytest.fixture
-def unresolved_repo(session: AsyncSession) -> UnresolvedReferenceRepository:
-    return UnresolvedReferenceRepository(session)
+def unresolved_repo(session: AsyncSession):
+    return unresolved_reference
 
 
 @pytest.fixture

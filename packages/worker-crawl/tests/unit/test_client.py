@@ -18,7 +18,9 @@ def test_fetch_pdf_urls_returns_absolute_urls(client: CrawlClient) -> None:
         <a href="https://other.com/doc3.PDF">Doc 3</a>
         <a href="not-a-pdf.html">Not a PDF</a>
     </body></html>"""
-    respx.get("https://example.com/decisions").mock(return_value=httpx.Response(200, text=html))
+    respx.get("https://example.com/decisions").mock(
+        return_value=httpx.Response(200, text=html)
+    )
 
     urls = client.fetch_pdf_urls("https://example.com/decisions")
 
@@ -44,7 +46,9 @@ def test_fetch_pdf_urls_deduplicates(client: CrawlClient) -> None:
 
 @respx.mock
 def test_fetch_pdf_urls_empty_page(client: CrawlClient) -> None:
-    respx.get("https://example.com/").mock(return_value=httpx.Response(200, text="<html></html>"))
+    respx.get("https://example.com/").mock(
+        return_value=httpx.Response(200, text="<html></html>")
+    )
 
     urls = client.fetch_pdf_urls("https://example.com/")
 

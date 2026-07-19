@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 import ctypes
 import io
 
@@ -13,8 +14,6 @@ from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
 from shared.storage.local import LocalStorageBackend
 from worker_parse.parser import parse_pdf_with_pypdfium2
 from worker_parse.service import process_parse
@@ -44,15 +43,23 @@ def _make_pdf_bytes(text: str) -> bytes:
 @pytest.mark.integration
 async def test_parse_flow_populates_raw_text_and_completes_task(
     session: AsyncSession,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    task_repo,
     local_storage: LocalStorageBackend,
     sync_publisher: SyncQueuePublisher,
     published_messages: list[QueueMessage],
 ) -> None:
-    doc = await document_repo.create(DocumentCreate(source_url="https://example.com/doc.pdf"))
-    await document_repo.update(doc.id, DocumentUpdate(gcs_uri=f"gs://bucket/documents/{doc.id}/original.pdf"))
-    task = await task_repo.create(TaskCreate(document_id=doc.id, step="parse", status="pending"))
+    doc = await document_repo.create(
+        session, DocumentCreate(source_url="https://example.com/doc.pdf")
+    )
+    await document_repo.update(
+        session,
+        doc.id,
+        DocumentUpdate(gcs_uri=f"gs://bucket/documents/{doc.id}/original.pdf"),
+    )
+    task = await task_repo.create(
+        session, TaskCreate(document_id=doc.id, step="parse", status="pending")
+    )
     await session.commit()
 
     pdf_bytes = _make_pdf_bytes(_PDF_TEXT)
@@ -67,7 +74,7 @@ async def test_parse_flow_populates_raw_text_and_completes_task(
         queue_publisher=sync_publisher,
         parser=parse_pdf_with_pypdfium2,
         session=session,
-        next_topic="metadata",
+        next_topic=PipelineStep.METADATA,
     )
 
     doc_row = (

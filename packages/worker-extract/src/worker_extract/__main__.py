@@ -11,12 +11,12 @@ from shared.db import get_async_session
 from shared.queue import create_queue_publisher, create_queue_subscriber
 from shared.queue.base import QueueMessage
 from shared.repositories import (
-    DocumentEntityRepository,
-    DocumentReferenceRepository,
-    DocumentRepository,
-    EntityRepository,
-    TaskRepository,
-    UnresolvedReferenceRepository,
+    document,
+    document_entity,
+    document_reference,
+    entity,
+    task,
+    unresolved_reference,
 )
 from worker_extract.config import get_extract_settings
 from worker_extract.services.extraction_service import process_extraction
@@ -39,12 +39,12 @@ def main() -> None:
                 await process_extraction(
                     document_id=message.document_id,
                     task_id=message.task_id,
-                    document_repo=DocumentRepository(session),
-                    task_repo=TaskRepository(session),
-                    entity_repo=EntityRepository(session),
-                    doc_entity_repo=DocumentEntityRepository(session),
-                    ref_repo=DocumentReferenceRepository(session),
-                    unresolved_repo=UnresolvedReferenceRepository(session),
+                    document_repo=document,
+                    task_repo=task,
+                    entity_repo=entity,
+                    doc_entity_repo=document_entity,
+                    ref_repo=document_reference,
+                    unresolved_repo=unresolved_reference,
                     queue_publisher=publisher,
                     session=session,
                     next_topic=extract_settings.extract_next_topic,

@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -9,7 +10,7 @@ import pytest
 from shared.dtos.document import DocumentRead
 from shared.dtos.task import TaskRead
 from shared.queue.base import QueueMessage
-from worker_crawl.service import CrawlResult, CrawlService
+from worker_crawl.service import CrawlResult, process_crawl
 
 
 def _make_doc_read(source_url: str) -> DocumentRead:
@@ -41,10 +42,10 @@ def _make_task_read(document_id: uuid.UUID, step: str, status: str) -> TaskRead:
     )
 
 
-def _make_service(
+def _make_deps(
     urls: list[str],
     existing_urls: set[str] | None = None,
-) -> tuple[CrawlService, MagicMock, MagicMock, MagicMock]:
+) -> tuple[dict, MagicMock, MagicMock, MagicMock]:
     existing_urls = existing_urls or set()
 
     session = MagicMock()
@@ -58,42 +59,42 @@ def _make_service(
 
     client.fetch_pdf_urls.return_value = urls
 
-    async def get_by_source_url(url: str) -> DocumentRead | None:
+    async def get_by_source_url(_session, url: str) -> DocumentRead | None:
         if url in existing_urls:
             return _make_doc_read(url)
         return None
 
     doc_repo.get_by_source_url = get_by_source_url
 
-    async def create_doc(dto):
+    async def create_doc(_session, dto):
         return _make_doc_read(dto.source_url)
 
     doc_repo.create = create_doc
 
-    async def create_task(dto):
+    async def create_task(_session, dto):
         return _make_task_read(dto.document_id, dto.step, dto.status)
 
     task_repo.create = create_task
 
-    service = CrawlService(
+    kwargs = dict(
         session=session,
         document_repo=doc_repo,
         task_repo=task_repo,
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
-    return service, session, publisher, client
+    return kwargs, session, publisher, client
 
 
 @pytest.mark.asyncio
 async def test_run_creates_documents_for_new_urls() -> None:
-    service, session, publisher, _ = _make_service(
+    kwargs, session, publisher, _ = _make_deps(
         urls=["https://example.com/a.pdf", "https://example.com/b.pdf"]
     )
 
-    result = await service.run()
+    result = await process_crawl(**kwargs)
 
     assert result == CrawlResult(total_found=2, new_documents=2, skipped=0)
     assert publisher.publish.call_count == 2
@@ -102,12 +103,12 @@ async def test_run_creates_documents_for_new_urls() -> None:
 
 @pytest.mark.asyncio
 async def test_run_skips_existing_documents() -> None:
-    service, session, publisher, _ = _make_service(
+    kwargs, _session, publisher, _ = _make_deps(
         urls=["https://example.com/a.pdf", "https://example.com/b.pdf"],
         existing_urls={"https://example.com/a.pdf"},
     )
 
-    result = await service.run()
+    result = await process_crawl(**kwargs)
 
     assert result == CrawlResult(total_found=2, new_documents=1, skipped=1)
     assert publisher.publish.call_count == 1
@@ -115,9 +116,9 @@ async def test_run_skips_existing_documents() -> None:
 
 @pytest.mark.asyncio
 async def test_run_returns_empty_result_for_no_urls() -> None:
-    service, session, publisher, _ = _make_service(urls=[])
+    kwargs, _session, publisher, _ = _make_deps(urls=[])
 
-    result = await service.run()
+    result = await process_crawl(**kwargs)
 
     assert result == CrawlResult(total_found=0, new_documents=0, skipped=0)
     publisher.publish.assert_not_called()
@@ -125,11 +126,9 @@ async def test_run_returns_empty_result_for_no_urls() -> None:
 
 @pytest.mark.asyncio
 async def test_run_publishes_correct_message() -> None:
-    service, _, publisher, _ = _make_service(
-        urls=["https://example.com/doc.pdf"]
-    )
+    kwargs, _session, publisher, _ = _make_deps(urls=["https://example.com/doc.pdf"])
 
-    await service.run()
+    await process_crawl(**kwargs)
 
     assert publisher.publish.call_count == 1
     topic, message = publisher.publish.call_args[0]
@@ -162,19 +161,24 @@ async def test_run_commits_before_publish() -> None:
     client = MagicMock()
     client.fetch_pdf_urls.return_value = ["https://example.com/doc.pdf"]
     doc_repo.get_by_source_url = AsyncMock(return_value=None)
-    doc_repo.create = AsyncMock(return_value=_make_doc_read("https://example.com/doc.pdf"))
-    task_repo.create = AsyncMock(side_effect=lambda dto: _make_task_read(dto.document_id, dto.step, dto.status))
+    doc_repo.create = AsyncMock(
+        return_value=_make_doc_read("https://example.com/doc.pdf")
+    )
+    task_repo.create = AsyncMock(
+        side_effect=lambda _session, dto: _make_task_read(
+            dto.document_id, dto.step, dto.status
+        )
+    )
 
-    service = CrawlService(
+    await process_crawl(
         session=session,
         document_repo=doc_repo,
         task_repo=task_repo,
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
-    await service.run()
 
     assert committed_before_publish == [1], "commit must happen before publish"
 
@@ -197,33 +201,31 @@ async def test_run_continues_after_per_url_failure() -> None:
 
     call_count = [0]
 
-    async def get_by_source_url(url: str) -> None:
+    async def get_by_source_url(_session, url: str) -> None:
         return None
 
-    async def create_doc(dto):
+    async def create_doc(_session, dto):
         call_count[0] += 1
         if "fail" in dto.source_url:
             raise RuntimeError("network failure")
         return _make_doc_read(dto.source_url)
 
-    async def create_task(dto):
+    async def create_task(_session, dto):
         return _make_task_read(dto.document_id, dto.step, dto.status)
 
     doc_repo.get_by_source_url = get_by_source_url
     doc_repo.create = create_doc
     task_repo.create = create_task
 
-    service = CrawlService(
+    result = await process_crawl(
         session=session,
         document_repo=doc_repo,
         task_repo=task_repo,
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
-
-    result = await service.run()
 
     assert result.total_found == 2
     assert result.new_documents == 1
@@ -247,17 +249,15 @@ async def test_run_handles_integrity_error_as_duplicate() -> None:
         side_effect=IntegrityError("insert", {}, Exception("unique constraint"))
     )
 
-    service = CrawlService(
+    result = await process_crawl(
         session=session,
         document_repo=doc_repo,
         task_repo=task_repo,
         queue_publisher=publisher,
         client=client,
         source_url="https://example.com/decisions",
-        topic="download",
+        topic=PipelineStep.DOWNLOAD,
     )
-
-    result = await service.run()
 
     assert result == CrawlResult(total_found=1, new_documents=0, skipped=1)
     session.rollback.assert_called_once()

@@ -9,12 +9,15 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from shared.models import Base  # noqa: F401 — registers all ORM models
-from shared.repositories.chunk import ChunkRepository
-from shared.repositories.document import DocumentRepository
-from shared.repositories.document_entity import DocumentEntityRepository
-from shared.repositories.document_reference import DocumentReferenceRepository
-from shared.repositories.entity import EntityRepository
-from shared.repositories.search import SearchRepository
+from shared.repositories import (
+    chunk,
+    document,
+    document_entity,
+    document_reference,
+    entity,
+    search,
+)
+from shared.testing import bind_repo
 
 _DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/overklagan"
@@ -58,30 +61,30 @@ def truncate_sessions(db_engine):
 
 
 @pytest.fixture
-def document_repo(session: AsyncSession) -> DocumentRepository:
-    return DocumentRepository(session)
+def document_repo(session: AsyncSession):
+    return bind_repo(document, session)
 
 
 @pytest.fixture
-def chunk_repo(session: AsyncSession) -> ChunkRepository:
-    return ChunkRepository(session)
+def chunk_repo(session: AsyncSession):
+    return bind_repo(chunk, session)
 
 
 @pytest.fixture
-def search_repo(session: AsyncSession) -> SearchRepository:
-    return SearchRepository(session)
+def search_repo(session: AsyncSession):
+    return bind_repo(search, session)
 
 
 @pytest.fixture
-def entity_repo(session: AsyncSession) -> EntityRepository:
-    return EntityRepository(session)
+def entity_repo(session: AsyncSession):
+    return bind_repo(entity, session)
 
 
 @pytest.fixture
-def doc_entity_repo(session: AsyncSession) -> DocumentEntityRepository:
-    return DocumentEntityRepository(session)
+def doc_entity_repo(session: AsyncSession):
+    return bind_repo(document_entity, session)
 
 
 @pytest.fixture
-def doc_ref_repo(session: AsyncSession) -> DocumentReferenceRepository:
-    return DocumentReferenceRepository(session)
+def doc_ref_repo(session: AsyncSession):
+    return bind_repo(document_reference, session)

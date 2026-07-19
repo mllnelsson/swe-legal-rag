@@ -10,7 +10,7 @@ from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_publisher, create_queue_subscriber
 from shared.queue.base import QueueMessage
-from shared.repositories import ChunkRepository, DocumentRepository, TaskRepository
+from shared.repositories import chunk, document, task
 from worker_chunk.config import get_chunk_settings
 from worker_chunk.service import process_chunking
 
@@ -32,9 +32,9 @@ def main() -> None:
                 await process_chunking(
                     document_id=message.document_id,
                     task_id=message.task_id,
-                    document_repo=DocumentRepository(session),
-                    chunk_repo=ChunkRepository(session),
-                    task_repo=TaskRepository(session),
+                    document_repo=document,
+                    chunk_repo=chunk,
+                    task_repo=task,
                     queue_publisher=publisher,
                     session=session,
                     next_topic=chunk_settings.chunk_next_topic,

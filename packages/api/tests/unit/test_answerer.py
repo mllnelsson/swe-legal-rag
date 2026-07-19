@@ -91,7 +91,9 @@ class TestBuildSources:
         storage.get_url.return_value = "https://storage.example.com/signed"
         sources = _build_sources([chunk], storage=storage)
         assert sources[0].pdf_url == "https://storage.example.com/signed"
-        storage.get_url.assert_called_once_with(f"documents/{chunk.document_id}/original.pdf")
+        storage.get_url.assert_called_once_with(
+            f"documents/{chunk.document_id}/original.pdf"
+        )
 
     def test_storage_error_gives_none_pdf_url(self):
         chunk = _chunk()
@@ -122,7 +124,9 @@ class TestAnswerQuery:
 
         with (
             patch("api.services.answerer.plan_query", new=self._make_plan_mock()),
-            patch("api.services.answerer.retrieve", new=self._make_retrieve_mock([chunk])),
+            patch(
+                "api.services.answerer.retrieve", new=self._make_retrieve_mock([chunk])
+            ),
             patch("api.services.answerer.ai.synthesize_answer", _fake_synthesize),
         ):
             events: list[AnswerEvent] = []
@@ -158,7 +162,9 @@ class TestAnswerQuery:
 
         with (
             patch("api.services.answerer.plan_query", new=self._make_plan_mock()),
-            patch("api.services.answerer.retrieve", new=self._make_retrieve_mock([c1, c2])),
+            patch(
+                "api.services.answerer.retrieve", new=self._make_retrieve_mock([c1, c2])
+            ),
             patch("api.services.answerer.ai.synthesize_answer", _fake_synthesize),
         ):
             events: list[AnswerEvent] = []
@@ -222,14 +228,14 @@ class TestAnswerQuery:
         plan_mock.assert_called_once_with("Följdfråga", history, llm_provider=None)
 
     @pytest.mark.asyncio
-    async def test_append_turn_called_after_stream_with_session_repo(self):
+    async def test_append_turn_called_after_stream_with_chat_session_id(self):
         session_id = uuid.uuid4()
 
         async def _fake_synthesize(*_args, **_kwargs):
             yield "Enligt "
             yield "beslut..."
 
-        session_repo = AsyncMock()
+        db = MagicMock()
 
         with (
             patch("api.services.answerer.plan_query", new=self._make_plan_mock()),
@@ -240,11 +246,10 @@ class TestAnswerQuery:
             async for _ in answer_query(
                 "Vad gäller?",
                 [],
-                MagicMock(),
+                db,
                 embedding_provider=MagicMock(),
                 settings=_settings(),
                 chat_session_id=session_id,
-                session_repo=session_repo,
             ):
                 pass
 
@@ -252,11 +257,11 @@ class TestAnswerQuery:
             session_id,
             "Vad gäller?",
             "Enligt beslut...",
-            session_repo,
+            db,
         )
 
     @pytest.mark.asyncio
-    async def test_append_turn_not_called_without_session_repo(self):
+    async def test_append_turn_not_called_without_chat_session_id(self):
         async def _fake_synthesize(*_args, **_kwargs):
             yield "token"
 

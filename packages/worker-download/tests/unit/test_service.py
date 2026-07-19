@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +9,7 @@ import respx
 from shared.dtos.document import DocumentRead
 from shared.dtos.task import TaskRead
 from shared.queue.base import QueueMessage
-from worker_download.service import DownloadService
+from worker_download.service import process_download
 
 
 def _make_doc_read(
@@ -51,12 +52,12 @@ def _make_message(task_id: uuid.UUID, document_id: uuid.UUID) -> QueueMessage:
     return QueueMessage(task_id=task_id, document_id=document_id)
 
 
-def _make_service(
+def _make_deps(
     task: TaskRead | None,
     document: DocumentRead | None,
     storage_uri: str = "gs://bucket/doc/original.pdf",
     max_retries: int = 2,
-) -> tuple[DownloadService, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock]:
+) -> tuple[dict, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock]:
     session = MagicMock()
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
@@ -72,12 +73,12 @@ def _make_service(
     doc_repo.update = AsyncMock()
     storage.store.return_value = storage_uri
 
-    async def create_task(dto):
+    async def create_task(_session, dto):
         return _make_task_read(dto.document_id, dto.step, dto.status)
 
     task_repo.create = create_task
 
-    service = DownloadService(
+    kwargs = dict(
         session=session,
         document_repo=doc_repo,
         task_repo=task_repo,
@@ -86,28 +87,30 @@ def _make_service(
         timeout=5,
         max_retries=max_retries,
         rate_limit_delay=0,
-        next_topic="parse",
+        next_topic=PipelineStep.PARSE,
     )
-    return service, session, task_repo, doc_repo, storage, publisher
+    return kwargs, session, task_repo, doc_repo, storage, publisher
 
 
 @patch("worker_download.service._download_pdf")
 async def test_handle_message_happy_path(mock_download) -> None:
     doc = _make_doc_read()
     task = _make_task_read(doc.id)
-    service, session, task_repo, doc_repo, storage, publisher = _make_service(task, doc)
+    kwargs, session, task_repo, doc_repo, storage, publisher = _make_deps(task, doc)
 
     mock_download.return_value = b"PDF_CONTENT"
     storage.store.return_value = f"gs://bucket/documents/{doc.id}/original.pdf"
 
     msg = _make_message(task.id, doc.id)
-    await service.handle_message(msg)
+    await process_download(msg, **kwargs)
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[0][0][1].status == "processing"
-    assert status_calls[1][0][1].status == "completed"
+    assert status_calls[0][0][2].status == "processing"
+    assert status_calls[1][0][2].status == "completed"
 
-    storage.store.assert_called_once_with(f"documents/{doc.id}/original.pdf", b"PDF_CONTENT")
+    storage.store.assert_called_once_with(
+        f"documents/{doc.id}/original.pdf", b"PDF_CONTENT"
+    )
     doc_repo.update.assert_called_once()
 
     assert session.commit.call_count == 3
@@ -122,10 +125,10 @@ async def test_handle_message_happy_path(mock_download) -> None:
 async def test_handle_message_skips_completed_task() -> None:
     doc = _make_doc_read()
     task = _make_task_read(doc.id, status="completed")
-    service, session, task_repo, doc_repo, storage, publisher = _make_service(task, doc)
+    kwargs, session, task_repo, doc_repo, storage, publisher = _make_deps(task, doc)
 
     msg = _make_message(task.id, doc.id)
-    await service.handle_message(msg)
+    await process_download(msg, **kwargs)
 
     task_repo.update_status.assert_not_called()
     session.commit.assert_not_called()
@@ -134,12 +137,12 @@ async def test_handle_message_skips_completed_task() -> None:
 
 
 async def test_handle_message_skips_missing_task() -> None:
-    service, session, task_repo, doc_repo, storage, publisher = _make_service(
+    kwargs, session, task_repo, doc_repo, storage, publisher = _make_deps(
         task=None, document=None
     )
 
     msg = _make_message(uuid.uuid4(), uuid.uuid4())
-    await service.handle_message(msg)
+    await process_download(msg, **kwargs)
 
     task_repo.update_status.assert_not_called()
     session.commit.assert_not_called()
@@ -149,17 +152,17 @@ async def test_handle_message_skips_missing_task() -> None:
 async def test_handle_message_fails_on_missing_document() -> None:
     doc_id = uuid.uuid4()
     task = _make_task_read(doc_id)
-    service, session, task_repo, doc_repo, storage, publisher = _make_service(
+    kwargs, session, task_repo, doc_repo, storage, publisher = _make_deps(
         task=task, document=None
     )
 
     msg = _make_message(task.id, doc_id)
-    await service.handle_message(msg)
+    await process_download(msg, **kwargs)
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[0][0][1].status == "processing"
-    assert status_calls[1][0][1].status == "failed"
-    assert str(doc_id) in status_calls[1][0][1].error_message
+    assert status_calls[0][0][2].status == "processing"
+    assert status_calls[1][0][2].status == "failed"
+    assert str(doc_id) in status_calls[1][0][2].error_message
     assert session.commit.call_count == 2
     publisher.publish.assert_not_called()
     storage.store.assert_not_called()
@@ -169,10 +172,10 @@ async def test_handle_message_fails_on_missing_document() -> None:
 async def test_handle_message_idempotent_with_existing_gcs_uri(mock_download) -> None:
     doc = _make_doc_read(gcs_uri="gs://bucket/existing.pdf")
     task = _make_task_read(doc.id)
-    service, session, task_repo, doc_repo, storage, publisher = _make_service(task, doc)
+    kwargs, session, task_repo, doc_repo, storage, publisher = _make_deps(task, doc)
 
     msg = _make_message(task.id, doc.id)
-    await service.handle_message(msg)
+    await process_download(msg, **kwargs)
 
     mock_download.assert_not_called()
     storage.store.assert_not_called()
@@ -183,26 +186,26 @@ async def test_handle_message_idempotent_with_existing_gcs_uri(mock_download) ->
     assert message.document_id == doc.id
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[-1][0][1].status == "completed"
+    assert status_calls[-1][0][2].status == "completed"
 
 
 @patch("worker_download.service._download_pdf")
 async def test_handle_message_marks_failed_on_http_error(mock_download) -> None:
     doc = _make_doc_read()
     task = _make_task_read(doc.id)
-    service, session, task_repo, doc_repo, storage, publisher = _make_service(task, doc)
+    kwargs, session, task_repo, doc_repo, storage, publisher = _make_deps(task, doc)
 
     mock_download.side_effect = httpx.ConnectError("Connection refused")
 
     msg = _make_message(task.id, doc.id)
-    await service.handle_message(msg)
+    await process_download(msg, **kwargs)
 
     storage.store.assert_not_called()
     publisher.publish.assert_not_called()
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[-1][0][1].status == "failed"
-    assert "Connection refused" in status_calls[-1][0][1].error_message
+    assert status_calls[-1][0][2].status == "failed"
+    assert "Connection refused" in status_calls[-1][0][2].error_message
 
     session.rollback.assert_called_once()
 
@@ -211,19 +214,19 @@ async def test_handle_message_marks_failed_on_http_error(mock_download) -> None:
 async def test_handle_message_marks_failed_on_storage_error(mock_download) -> None:
     doc = _make_doc_read()
     task = _make_task_read(doc.id)
-    service, session, task_repo, doc_repo, storage, publisher = _make_service(task, doc)
+    kwargs, session, task_repo, doc_repo, storage, publisher = _make_deps(task, doc)
 
     mock_download.return_value = b"PDF_CONTENT"
     storage.store.side_effect = OSError("disk full")
 
     msg = _make_message(task.id, doc.id)
-    await service.handle_message(msg)
+    await process_download(msg, **kwargs)
 
     publisher.publish.assert_not_called()
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[-1][0][1].status == "failed"
-    assert "disk full" in status_calls[-1][0][1].error_message
+    assert status_calls[-1][0][2].status == "failed"
+    assert "disk full" in status_calls[-1][0][2].error_message
 
     session.rollback.assert_called_once()
 
@@ -233,8 +236,11 @@ async def test_handle_message_marks_failed_on_storage_error(mock_download) -> No
 async def test_download_retries_on_5xx(mock_sleep) -> None:
     doc = _make_doc_read()
     task = _make_task_read(doc.id)
-    service, _, task_repo, _, storage, publisher = _make_service(
-        task, doc, storage_uri=f"gs://bucket/documents/{doc.id}/original.pdf", max_retries=2
+    kwargs, _session, task_repo, _doc_repo, storage, publisher = _make_deps(
+        task,
+        doc,
+        storage_uri=f"gs://bucket/documents/{doc.id}/original.pdf",
+        max_retries=2,
     )
 
     call_count = [0]
@@ -248,12 +254,12 @@ async def test_download_retries_on_5xx(mock_sleep) -> None:
     respx.get(doc.source_url).mock(side_effect=make_response)
 
     msg = _make_message(task.id, doc.id)
-    await service.handle_message(msg)
+    await process_download(msg, **kwargs)
 
     assert call_count[0] == 2
 
     status_calls = task_repo.update_status.call_args_list
-    assert status_calls[-1][0][1].status == "completed"
+    assert status_calls[-1][0][2].status == "completed"
 
     storage.store.assert_called_once()
     publisher.publish.assert_called_once()

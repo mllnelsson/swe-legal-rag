@@ -57,7 +57,7 @@ Why single Postgres? At 1000 docs this is not a scale problem. pgvector handles 
 
 **Step 2 — Structured + Entity Pre-filter:** Narrows the candidate set using two paths: metadata filters (SQL WHERE on date, category, outcome) and entity-based filtering (join through `document_entities` to find documents involving specific entities). Also traverses `document_references` if the query implies precedent chains ("decisions that cite..." or follow-up questions about related rulings). This is the key trick — you're not doing semantic search across 1000 docs, you're searching across maybe 50-100 after filtering.
 
-*Implementation:* `shared/repositories/search.py` — `SearchRepository.find_candidate_documents(filter)`. Empty filter fast path: if all filter fields are None/empty, the DB call is skipped entirely and `candidate_ids=None` (unfiltered) is used directly — no unnecessary full-table fetch. Non-empty filter with zero results falls back to `candidate_ids=None` (graceful degradation with a warning log). Reference traversal queries `document_references` in both directions: documents that cite the target case AND documents that the target case cites.
+*Implementation:* `shared/repositories/search.py` — `search.find_candidate_documents(session, filter)` (a module function, not a class method). Empty filter fast path: if all filter fields are None/empty, the DB call is skipped entirely and `candidate_ids=None` (unfiltered) is used directly — no unnecessary full-table fetch. Non-empty filter with zero results falls back to `candidate_ids=None` (graceful degradation with a warning log). Reference traversal queries `document_references` in both directions: documents that cite the target case AND documents that the target case cites.
 
 **Step 3 — Hybrid Retrieval:** On the filtered subset, run both vector similarity search (pgvector) and full-text search (Swedish tsvector) in parallel. Combine scores with reciprocal rank fusion (RRF).
 
@@ -73,7 +73,7 @@ Why single Postgres? At 1000 docs this is not a scale problem. pgvector handles 
 
 **Session context:** Keep conversation history in memory (or lightweight session store) so the agent can handle follow-ups like "what about after 2021?" without the user re-explaining.
 
-*Implementation:* `sessions` table in Postgres. Each `POST /api/chat` creates or loads a session by `session_id` (UUID). The `done` SSE event returns the `session_id`; subsequent requests send it back. Full turn history is stored in a JSONB column; `history_for_llm()` truncates to the last `SESSION_MAX_HISTORY_TURNS` turn-pairs before sending to the LLM. Stale or missing session IDs silently create a new session — no client error. The API layer (`api/services/session_service.py`) owns all session logic; `shared/repositories/session.py` owns the DB access.
+*Implementation:* `sessions` table in Postgres. Each `POST /api/chat` creates or loads a session by `session_id` (UUID). The `done` SSE event returns the `session_id`; subsequent requests send it back. Full turn history is stored in a JSONB column; `history_for_llm()` truncates to the last `SESSION_MAX_HISTORY_TURNS` turn-pairs before sending to the LLM. Stale or missing session IDs silently create a new session — no client error. The API layer (`api/services/session_service.py`) owns all session logic; the `session` repo module (`shared/repositories/session.py`, a module of functions taking `AsyncSession`) owns the DB access.
 
 ## 4. Infrastructure / GCP Layout
 

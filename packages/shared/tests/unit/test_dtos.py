@@ -8,7 +8,10 @@ from pydantic import ValidationError
 from shared.dtos.chunk import ChunkCreate, ChunkRead
 from shared.dtos.document import DocumentCreate, DocumentRead, DocumentUpdate
 from shared.dtos.document_entity import DocumentEntityCreate, DocumentEntityRead
-from shared.dtos.document_reference import DocumentReferenceCreate, DocumentReferenceRead
+from shared.dtos.document_reference import (
+    DocumentReferenceCreate,
+    DocumentReferenceRead,
+)
 from shared.dtos.entity import EntityCreate, EntityRead
 from shared.dtos.session import SessionCreate, SessionRead, SessionUpdate
 from shared.dtos.task import TaskCreate, TaskRead, TaskStatusUpdate
@@ -117,7 +120,9 @@ class TestEntityDTOs:
 
     def test_read_from_attributes(self):
         now = datetime.now(tz=timezone.utc)
-        obj = SimpleNamespace(id=uuid.uuid4(), name="kyrkorådet", type="role", created_at=now)
+        obj = SimpleNamespace(
+            id=uuid.uuid4(), name="kyrkorådet", type="role", created_at=now
+        )
         dto = EntityRead.model_validate(obj)
         assert dto.name == "kyrkorådet"
         assert dto.type == "role"

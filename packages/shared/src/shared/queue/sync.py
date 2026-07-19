@@ -1,5 +1,6 @@
 from typing import Callable
 
+from shared.errors import QueueHandlerError
 from shared.queue.base import QueueMessage
 
 
@@ -13,7 +14,7 @@ class SyncQueueBroker:
     def dispatch(self, topic: str, message: QueueMessage) -> None:
         handler = self._handlers.get(topic)
         if handler is None:
-            raise ValueError(f"No handler registered for topic: {topic!r}")
+            raise QueueHandlerError(f"No handler registered for topic: {topic!r}")
         handler(message)
 
 

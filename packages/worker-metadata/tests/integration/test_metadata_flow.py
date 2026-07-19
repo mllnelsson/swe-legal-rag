@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.enums import PipelineStep
 
 import datetime
 from unittest.mock import AsyncMock
@@ -11,8 +12,6 @@ from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
 from worker_metadata.patterns import MetadataResult, extract_metadata_rule_based
 from worker_metadata.service import process_metadata
 
@@ -20,8 +19,8 @@ from worker_metadata.service import process_metadata
 @pytest.mark.integration
 async def test_metadata_flow_populates_fields_and_completes_task(
     session: AsyncSession,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    task_repo,
     sync_publisher: SyncQueuePublisher,
     published_messages: list[QueueMessage],
     test_document,
@@ -38,7 +37,7 @@ async def test_metadata_flow_populates_fields_and_completes_task(
         rule_extractor=extract_metadata_rule_based,
         llm_extractor=llm_extractor,
         session=session,
-        next_topic="extract",
+        next_topic=PipelineStep.EXTRACT,
     )
 
     doc_row = (

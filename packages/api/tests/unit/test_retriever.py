@@ -14,7 +14,9 @@ from shared.dtos.search import ChunkSearchResult, DocumentFilter
 
 
 def _settings(**kwargs) -> RetrievalSettings:
-    defaults = dict(retrieval_top_k=4, retrieval_search_limit=10, retrieval_rerank_enabled=False)
+    defaults = dict(
+        retrieval_top_k=4, retrieval_search_limit=10, retrieval_rerank_enabled=False
+    )
     return RetrievalSettings(**{**defaults, **kwargs})
 
 
@@ -22,7 +24,9 @@ def _plan(query: str = "kyrkorätt", **filter_kwargs) -> QueryPlan:
     return QueryPlan(semantic_query=query, filter=DocumentFilter(**filter_kwargs))
 
 
-def _chunk(document_id: uuid.UUID | None = None, text: str = "chunk text") -> ChunkSearchResult:
+def _chunk(
+    document_id: uuid.UUID | None = None, text: str = "chunk text"
+) -> ChunkSearchResult:
     return ChunkSearchResult(
         id=uuid.uuid4(),
         document_id=document_id or uuid.uuid4(),
@@ -65,11 +69,15 @@ class TestFilterIsEmpty:
         assert _filter_is_empty(DocumentFilter(entity_types=["PERSON"])) is False
 
     def test_references_case_number_makes_non_empty(self):
-        assert _filter_is_empty(DocumentFilter(references_case_number="123/2020")) is False
+        assert (
+            _filter_is_empty(DocumentFilter(references_case_number="123/2020")) is False
+        )
 
 
 class TestRetrieve:
-    def _make_embedding_provider(self, embedding: list[float] | None = None) -> MagicMock:
+    def _make_embedding_provider(
+        self, embedding: list[float] | None = None
+    ) -> MagicMock:
         provider = MagicMock()
         provider.embed = AsyncMock(return_value=[embedding or [0.1, 0.2]])
         return provider
@@ -81,14 +89,14 @@ class TestRetrieve:
         doc = _doc(doc_id)
 
         with (
-            patch("api.services.retriever.SearchRepository") as MockSearch,
-            patch("api.services.retriever.ChunkRepository") as MockChunk,
-            patch("api.services.retriever.DocumentRepository") as MockDoc,
+            patch("api.services.retriever.search_repo") as mock_search,
+            patch("api.services.retriever.chunk_repo") as mock_chunk,
+            patch("api.services.retriever.document_repo") as mock_doc,
         ):
-            MockSearch.return_value.find_candidate_documents = AsyncMock()
-            MockChunk.return_value.vector_search = AsyncMock(return_value=[chunk])
-            MockChunk.return_value.text_search = AsyncMock(return_value=[chunk])
-            MockDoc.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_search.find_candidate_documents = AsyncMock()
+            mock_chunk.vector_search = AsyncMock(return_value=[chunk])
+            mock_chunk.text_search = AsyncMock(return_value=[chunk])
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
 
             plan = _plan()  # empty filter
             result = await retrieve(
@@ -98,8 +106,8 @@ class TestRetrieve:
                 settings=_settings(),
             )
 
-            MockSearch.return_value.find_candidate_documents.assert_not_called()
-            MockChunk.return_value.vector_search.assert_called_once()
+            mock_search.find_candidate_documents.assert_not_called()
+            mock_chunk.vector_search.assert_called_once()
             assert len(result) == 1
 
     @pytest.mark.asyncio
@@ -109,14 +117,14 @@ class TestRetrieve:
         doc = _doc(doc_id)
 
         with (
-            patch("api.services.retriever.SearchRepository") as MockSearch,
-            patch("api.services.retriever.ChunkRepository") as MockChunk,
-            patch("api.services.retriever.DocumentRepository") as MockDoc,
+            patch("api.services.retriever.search_repo") as mock_search,
+            patch("api.services.retriever.chunk_repo") as mock_chunk,
+            patch("api.services.retriever.document_repo") as mock_doc,
         ):
-            MockSearch.return_value.find_candidate_documents = AsyncMock(return_value=[doc_id])
-            MockChunk.return_value.vector_search = AsyncMock(return_value=[chunk])
-            MockChunk.return_value.text_search = AsyncMock(return_value=[])
-            MockDoc.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_search.find_candidate_documents = AsyncMock(return_value=[doc_id])
+            mock_chunk.vector_search = AsyncMock(return_value=[chunk])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
 
             plan = _plan(category="Kyrkogård")
             await retrieve(
@@ -126,7 +134,7 @@ class TestRetrieve:
                 settings=_settings(),
             )
 
-            MockSearch.return_value.find_candidate_documents.assert_called_once()
+            mock_search.find_candidate_documents.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_fallback_to_unfiltered_when_candidates_empty(self):
@@ -135,14 +143,14 @@ class TestRetrieve:
         doc = _doc(doc_id)
 
         with (
-            patch("api.services.retriever.SearchRepository") as MockSearch,
-            patch("api.services.retriever.ChunkRepository") as MockChunk,
-            patch("api.services.retriever.DocumentRepository") as MockDoc,
+            patch("api.services.retriever.search_repo") as mock_search,
+            patch("api.services.retriever.chunk_repo") as mock_chunk,
+            patch("api.services.retriever.document_repo") as mock_doc,
         ):
-            MockSearch.return_value.find_candidate_documents = AsyncMock(return_value=[])
-            MockChunk.return_value.vector_search = AsyncMock(return_value=[chunk])
-            MockChunk.return_value.text_search = AsyncMock(return_value=[])
-            MockDoc.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_search.find_candidate_documents = AsyncMock(return_value=[])
+            mock_chunk.vector_search = AsyncMock(return_value=[chunk])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
 
             plan = _plan(category="Kyrkogård")
             await retrieve(
@@ -152,9 +160,13 @@ class TestRetrieve:
                 settings=_settings(),
             )
 
-            # vector_search and text_search should be called with document_ids=None (unfiltered)
-            call_kwargs = MockChunk.return_value.vector_search.call_args
-            assert call_kwargs.args[1] is None or call_kwargs.kwargs.get("document_ids") is None
+            # vector_search and text_search should be called with document_ids=None (unfiltered).
+            # positional args are (session, embedding, document_ids); document_ids is args[2].
+            call_kwargs = mock_chunk.vector_search.call_args
+            assert (
+                call_kwargs.args[2] is None
+                or call_kwargs.kwargs.get("document_ids") is None
+            )
 
     @pytest.mark.asyncio
     async def test_rerank_not_called_when_disabled(self):
@@ -163,15 +175,15 @@ class TestRetrieve:
         doc = _doc(doc_id)
 
         with (
-            patch("api.services.retriever.SearchRepository") as MockSearch,
-            patch("api.services.retriever.ChunkRepository") as MockChunk,
-            patch("api.services.retriever.DocumentRepository") as MockDoc,
+            patch("api.services.retriever.search_repo") as mock_search,
+            patch("api.services.retriever.chunk_repo") as mock_chunk,
+            patch("api.services.retriever.document_repo") as mock_doc,
             patch("api.services.retriever._rerank") as mock_rerank,
         ):
-            MockSearch.return_value.find_candidate_documents = AsyncMock(return_value=[])
-            MockChunk.return_value.vector_search = AsyncMock(return_value=[chunk])
-            MockChunk.return_value.text_search = AsyncMock(return_value=[])
-            MockDoc.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_search.find_candidate_documents = AsyncMock(return_value=[])
+            mock_chunk.vector_search = AsyncMock(return_value=[chunk])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
 
             plan = _plan()
             await retrieve(
@@ -190,15 +202,17 @@ class TestRetrieve:
         doc = _doc(doc_id)
 
         with (
-            patch("api.services.retriever.SearchRepository") as MockSearch,
-            patch("api.services.retriever.ChunkRepository") as MockChunk,
-            patch("api.services.retriever.DocumentRepository") as MockDoc,
-            patch("api.services.retriever._rerank", new=AsyncMock(return_value=[chunk])) as mock_rerank,
+            patch("api.services.retriever.search_repo") as mock_search,
+            patch("api.services.retriever.chunk_repo") as mock_chunk,
+            patch("api.services.retriever.document_repo") as mock_doc,
+            patch(
+                "api.services.retriever._rerank", new=AsyncMock(return_value=[chunk])
+            ) as mock_rerank,
         ):
-            MockSearch.return_value.find_candidate_documents = AsyncMock(return_value=[])
-            MockChunk.return_value.vector_search = AsyncMock(return_value=[chunk])
-            MockChunk.return_value.text_search = AsyncMock(return_value=[])
-            MockDoc.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_search.find_candidate_documents = AsyncMock(return_value=[])
+            mock_chunk.vector_search = AsyncMock(return_value=[chunk])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
 
             plan = _plan()
             await retrieve(
@@ -217,14 +231,14 @@ class TestRetrieve:
         doc = _doc(doc_id)
 
         with (
-            patch("api.services.retriever.SearchRepository") as MockSearch,
-            patch("api.services.retriever.ChunkRepository") as MockChunk,
-            patch("api.services.retriever.DocumentRepository") as MockDoc,
+            patch("api.services.retriever.search_repo") as mock_search,
+            patch("api.services.retriever.chunk_repo") as mock_chunk,
+            patch("api.services.retriever.document_repo") as mock_doc,
         ):
-            MockSearch.return_value.find_candidate_documents = AsyncMock(return_value=[])
-            MockChunk.return_value.vector_search = AsyncMock(return_value=[chunk])
-            MockChunk.return_value.text_search = AsyncMock(return_value=[])
-            MockDoc.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_search.find_candidate_documents = AsyncMock(return_value=[])
+            mock_chunk.vector_search = AsyncMock(return_value=[chunk])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
 
             plan = _plan()
             result = await retrieve(
@@ -248,16 +262,18 @@ class TestRetrieve:
         provider = self._make_embedding_provider()
 
         with (
-            patch("api.services.retriever.SearchRepository") as MockSearch,
-            patch("api.services.retriever.ChunkRepository") as MockChunk,
-            patch("api.services.retriever.DocumentRepository") as MockDoc,
+            patch("api.services.retriever.search_repo") as mock_search,
+            patch("api.services.retriever.chunk_repo") as mock_chunk,
+            patch("api.services.retriever.document_repo") as mock_doc,
         ):
-            MockSearch.return_value.find_candidate_documents = AsyncMock(return_value=[])
-            MockChunk.return_value.vector_search = AsyncMock(return_value=[chunk])
-            MockChunk.return_value.text_search = AsyncMock(return_value=[])
-            MockDoc.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_search.find_candidate_documents = AsyncMock(return_value=[])
+            mock_chunk.vector_search = AsyncMock(return_value=[chunk])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
 
             plan = _plan(query="kyrkorätt")
-            await retrieve(plan, MagicMock(), embedding_provider=provider, settings=_settings())
+            await retrieve(
+                plan, MagicMock(), embedding_provider=provider, settings=_settings()
+            )
 
             provider.embed.assert_called_once_with(["query: kyrkorätt"])

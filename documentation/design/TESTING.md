@@ -22,7 +22,7 @@ Do **not** test: dataclass/Pydantic model initialization, ORM model field declar
 Every package gets unit tests. Mock at the interface boundary — the abstractions in `shared` and `ai` are the seam.
 
 **What to mock:**
-- Database → mock the repo layer (return canned DTOs)
+- Database → mock the repo layer. Repos are **modules of functions** injected as Protocol-typed namespaces (`DocumentRepo`, `TaskRepo`, …), so mock by passing a `MagicMock()` namespace whose functions are `AsyncMock`s returning canned DTOs. Every repo function takes `session` as its first argument, so mock call-args are offset by one (e.g. the DTO is `call_args[0][2]`, not `[0][1]`).
 - LLM/embeddings → mock the `ai` interfaces (return canned responses)
 - GCS/storage → mock the storage interface
 - Pub/Sub/queue → mock the queue interface
@@ -34,10 +34,12 @@ Every package gets unit tests. Mock at the interface boundary — the abstractio
 - Prompt construction: assert the right context, filters, and chunks are assembled — don't assert on LLM output
 
 **Per-layer guidance:**
-- Repo layer: test query construction and ORM→DTO mapping against a mock session. Not worth testing simple passthrough queries.
-- Service layer: the bulk of unit tests live here. Mock repos and `ai` interfaces, test the orchestration logic.
+- Repo layer: test query construction and ORM→DTO mapping against a mock session (functions take `session` first). Not worth testing simple passthrough queries.
+- Service layer: the bulk of unit tests live here. Mock repo namespaces and `ai` interfaces, test the orchestration logic. Worker `process_*` bodies run inside `shared.pipeline.run_pipeline_step`, so assert on the status transitions (`processing` → `completed`/`failed`) and the published next-topic message.
 - Endpoint layer: test request validation, HTTP status codes, error response shapes. Thin layer, thin tests.
-- AI package: test prompt template rendering, response parsing, retry/fallback logic. Mock the provider HTTP calls.
+- AI package: test prompt rendering via the `render(template, context)` function, response parsing, retry/fallback logic. Mock the provider HTTP calls.
+
+> **Run unit tests per package** (`uv run pytest packages/<pkg>/tests/unit`). The aggregate glob `packages/*/tests/unit` silently shadows duplicate test-file basenames (`test_service.py`, `test_config.py`) under `--import-mode=importlib` — not every file is collected, so a per-package run is the reliable one.
 
 ## Integration Tests
 

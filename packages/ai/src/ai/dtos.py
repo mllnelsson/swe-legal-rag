@@ -4,6 +4,8 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict
 
+from shared.enums import EntityRelevance, EntityType
+
 
 class DateFilter(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -75,8 +77,8 @@ class ExtractedEntity(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
-    type: str
-    relevance: str
+    type: EntityType
+    relevance: EntityRelevance
 
 
 class ExtractedReference(BaseModel):

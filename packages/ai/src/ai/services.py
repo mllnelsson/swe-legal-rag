@@ -24,6 +24,7 @@ from ai.prompts import (
     ENTITY_EXTRACTION,
     METADATA_EXTRACTION,
     QUERY_DECOMPOSITION,
+    render,
 )
 
 
@@ -39,7 +40,7 @@ async def decompose_query(
             conversation_history or [], ensure_ascii=False
         ),
     }
-    messages = QUERY_DECOMPOSITION.render(context)
+    messages = render(QUERY_DECOMPOSITION, context)
     return await generate_structured(messages, DecomposeResult, provider=provider)  # type: ignore[return-value]
 
 
@@ -49,7 +50,7 @@ async def extract_metadata(
     provider: LLMProvider | None = None,
 ) -> MetadataResult:
     context = {"raw_text": raw_text}
-    messages = METADATA_EXTRACTION.render(context)
+    messages = render(METADATA_EXTRACTION, context)
     return await generate_structured(messages, MetadataResult, provider=provider)  # type: ignore[return-value]
 
 
@@ -63,7 +64,7 @@ async def extract_entities(
         "raw_text": raw_text,
         "case_number": case_number or "unknown",
     }
-    messages = ENTITY_EXTRACTION.render(context)
+    messages = render(ENTITY_EXTRACTION, context)
     return await generate_structured(messages, EntityResult, provider=provider)  # type: ignore[return-value]
 
 
@@ -73,7 +74,7 @@ async def summarize_document(
     provider: LLMProvider | None = None,
 ) -> SummarizeResult:
     context = {"raw_text": raw_text}
-    messages = DOCUMENT_SUMMARIZATION.render(context)
+    messages = render(DOCUMENT_SUMMARIZATION, context)
     response: LLMResponse = await generate(messages, provider=provider)
     return SummarizeResult(summary=response.message.content)
 
@@ -93,6 +94,6 @@ async def synthesize_answer(
             request.conversation_history or [], ensure_ascii=False
         ),
     }
-    messages = ANSWER_SYNTHESIS.render(context)
+    messages = render(ANSWER_SYNTHESIS, context)
     async for token in generate_stream(messages, provider=provider):
         yield token

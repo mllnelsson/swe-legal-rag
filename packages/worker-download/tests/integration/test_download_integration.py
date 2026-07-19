@@ -1,3 +1,4 @@
+from shared.enums import PipelineStep
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,23 +14,21 @@ from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
 from shared.storage.local import LocalStorageBackend
-from worker_download.service import DownloadService
+from worker_download.service import process_download
 
 _FAKE_PDF = b"%PDF-1.4 fake content"
 _FAKE_URL = "https://example.com/test.pdf"
 
 
-def _make_service(
+def _make_kwargs(
     session: AsyncSession,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    task_repo,
     storage: LocalStorageBackend,
     publisher: SyncQueuePublisher,
-) -> DownloadService:
-    return DownloadService(
+) -> dict:
+    return dict(
         session=session,
         document_repo=document_repo,
         task_repo=task_repo,
@@ -38,30 +37,34 @@ def _make_service(
         timeout=5,
         max_retries=1,
         rate_limit_delay=0,
-        next_topic="parse",
+        next_topic=PipelineStep.PARSE,
     )
 
 
 @pytest.mark.integration
 async def test_full_download_stores_pdf_and_updates_document(
     session: AsyncSession,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    task_repo,
     local_storage: LocalStorageBackend,
     sync_publisher: SyncQueuePublisher,
     published_messages: list,
     tmp_path: Path,
 ) -> None:
-    doc = await document_repo.create(DocumentCreate(source_url=_FAKE_URL))
+    doc = await document_repo.create(session, DocumentCreate(source_url=_FAKE_URL))
     task = await task_repo.create(
-        TaskCreate(document_id=doc.id, step="download", status="pending")
+        session, TaskCreate(document_id=doc.id, step="download", status="pending")
     )
     await session.commit()
 
     with respx.mock:
         respx.get(_FAKE_URL).mock(return_value=httpx.Response(200, content=_FAKE_PDF))
-        service = _make_service(session, document_repo, task_repo, local_storage, sync_publisher)
-        await service.handle_message(QueueMessage(task_id=task.id, document_id=doc.id))
+        kwargs = _make_kwargs(
+            session, document_repo, task_repo, local_storage, sync_publisher
+        )
+        await process_download(
+            QueueMessage(task_id=task.id, document_id=doc.id), **kwargs
+        )
 
     expected_path = tmp_path / "documents" / str(doc.id) / "original.pdf"
     assert expected_path.exists()
@@ -92,22 +95,28 @@ async def test_full_download_stores_pdf_and_updates_document(
 @pytest.mark.integration
 async def test_download_idempotent_rerun(
     session: AsyncSession,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo,
+    task_repo,
     local_storage: LocalStorageBackend,
     sync_publisher: SyncQueuePublisher,
     published_messages: list,
 ) -> None:
-    doc = await document_repo.create(DocumentCreate(source_url=_FAKE_URL))
-    await document_repo.update(doc.id, DocumentUpdate(gcs_uri="/existing/path.pdf"))
+    doc = await document_repo.create(session, DocumentCreate(source_url=_FAKE_URL))
+    await document_repo.update(
+        session, doc.id, DocumentUpdate(gcs_uri="/existing/path.pdf")
+    )
     task = await task_repo.create(
-        TaskCreate(document_id=doc.id, step="download", status="pending")
+        session, TaskCreate(document_id=doc.id, step="download", status="pending")
     )
     await session.commit()
 
     with patch("worker_download.service._download_pdf") as mock_download:
-        service = _make_service(session, document_repo, task_repo, local_storage, sync_publisher)
-        await service.handle_message(QueueMessage(task_id=task.id, document_id=doc.id))
+        kwargs = _make_kwargs(
+            session, document_repo, task_repo, local_storage, sync_publisher
+        )
+        await process_download(
+            QueueMessage(task_id=task.id, document_id=doc.id), **kwargs
+        )
         mock_download.assert_not_called()
 
     task_row = (
@@ -116,10 +125,14 @@ async def test_download_idempotent_rerun(
     assert task_row.status == "completed"
 
     parse_tasks = (
-        await session.execute(
-            select(Task).where(Task.document_id == doc.id, Task.step == "parse")
+        (
+            await session.execute(
+                select(Task).where(Task.document_id == doc.id, Task.step == "parse")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(parse_tasks) == 1
     assert parse_tasks[0].status == "pending"
 

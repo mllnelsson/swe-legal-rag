@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from worker_extract.extractors.factory import ExtractStrategyMode, get_extraction_strategy
+from worker_extract.extractors.factory import (
+    ExtractStrategyMode,
+    get_extraction_strategy,
+)
 from worker_extract.extractors.llm import LLMStrategy
 from worker_extract.extractors.rule_based import RuleBasedStrategy
 from worker_extract.models import ExtractionResult
@@ -22,18 +25,24 @@ class TestStrategySelection:
         assert isinstance(strategy, LLMStrategy)
 
     def test_strategy_fallback_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("EXTRACT_STRATEGY", ExtractStrategyMode.RULE_BASED_WITH_LLM_FALLBACK)
+        monkeypatch.setenv(
+            "EXTRACT_STRATEGY", ExtractStrategyMode.RULE_BASED_WITH_LLM_FALLBACK
+        )
         strategy = get_extraction_strategy()
         assert not isinstance(strategy, RuleBasedStrategy)
         assert not isinstance(strategy, LLMStrategy)
 
-    def test_strategy_default_is_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_strategy_default_is_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("EXTRACT_STRATEGY", raising=False)
         strategy = get_extraction_strategy()
         assert not isinstance(strategy, RuleBasedStrategy)
         assert not isinstance(strategy, LLMStrategy)
 
-    def test_strategy_invalid_env_var_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_strategy_invalid_env_var_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("EXTRACT_STRATEGY", "invalid_value")
         strategy = get_extraction_strategy()
         assert not isinstance(strategy, RuleBasedStrategy)

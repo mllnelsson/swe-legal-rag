@@ -145,8 +145,11 @@ fixtures by pointing `--store-dir` at different folders.
 Add `--store fs` to **any** of the commands above to run against JSON files under
 `./data/store/` (override with `--store-dir`) instead of Postgres — no database,
 no migrations, nothing dumped into the DB. The real worker services run unchanged;
-only the repositories are swapped for file-backed fakes
-(`scripts/_fsstore.py`). Each table is a JSON file of the pydantic DTOs
+only the injected **repo namespaces** are swapped — the real
+`shared.repositories.*` modules are replaced by the file-backed doubles in
+`scripts/_fsrepos/*` (backed by `scripts/_fsstore.py`). Both satisfy the same
+`shared.repositories._protocols` interfaces, so no worker code changes between DB
+and fs modes. Each table is a JSON file of the pydantic DTOs
 (`documents.json`, `tasks.json`, `chunks.json`, `entities.json`,
 `document_entities.json`, `references.json`, `unresolved.json`); PDFs still land
 under `LOCAL_STORAGE_PATH` via the local storage backend. `commit()` writes the

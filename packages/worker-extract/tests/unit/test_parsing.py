@@ -4,48 +4,65 @@ import json
 
 import pytest
 
-from worker_extract.models import ExtractionResult, Relevance
+from worker_extract.models import ExtractionResult, EntityRelevance
 from worker_extract.parsing import parse_llm_response
 
-_VALID_JSON = json.dumps({
-    "entities": [
-        {"name": "Överklaganderätt", "type": "legal_concept", "relevance": "primary"},
-        {"name": "  Kyrkoherde  ", "type": "role", "relevance": "mentioned"},
-    ],
-    "references": [
-        {"case_number": "ÖN 2021-0345", "reference_context": "Se ärende ÖN 2021-0345."},
-    ],
-})
+_VALID_JSON = json.dumps(
+    {
+        "entities": [
+            {
+                "name": "Överklaganderätt",
+                "type": "legal_concept",
+                "relevance": "primary",
+            },
+            {"name": "  Kyrkoherde  ", "type": "role", "relevance": "mentioned"},
+        ],
+        "references": [
+            {
+                "case_number": "ÖN 2021-0345",
+                "reference_context": "Se ärende ÖN 2021-0345.",
+            },
+        ],
+    }
+)
 
-_DUPLICATE_ENTITY_JSON = json.dumps({
-    "entities": [
-        {"name": "jäv", "type": "legal_concept", "relevance": "mentioned"},
-        {"name": "jäv", "type": "legal_concept", "relevance": "primary"},
-    ],
-    "references": [],
-})
+_DUPLICATE_ENTITY_JSON = json.dumps(
+    {
+        "entities": [
+            {"name": "jäv", "type": "legal_concept", "relevance": "mentioned"},
+            {"name": "jäv", "type": "legal_concept", "relevance": "primary"},
+        ],
+        "references": [],
+    }
+)
 
-_INVALID_TYPE_JSON = json.dumps({
-    "entities": [
-        {"name": "foo", "type": "unknown_type", "relevance": "primary"},
-    ],
-    "references": [],
-})
+_INVALID_TYPE_JSON = json.dumps(
+    {
+        "entities": [
+            {"name": "foo", "type": "unknown_type", "relevance": "primary"},
+        ],
+        "references": [],
+    }
+)
 
-_INVALID_RELEVANCE_JSON = json.dumps({
-    "entities": [
-        {"name": "kyrkoherde", "type": "role", "relevance": "invalid_relevance"},
-    ],
-    "references": [],
-})
+_INVALID_RELEVANCE_JSON = json.dumps(
+    {
+        "entities": [
+            {"name": "kyrkoherde", "type": "role", "relevance": "invalid_relevance"},
+        ],
+        "references": [],
+    }
+)
 
-_DUPLICATE_REF_JSON = json.dumps({
-    "entities": [],
-    "references": [
-        {"case_number": "ÖN 2021-0345", "reference_context": "First mention."},
-        {"case_number": "ÖN 2021-0345", "reference_context": "Second mention."},
-    ],
-})
+_DUPLICATE_REF_JSON = json.dumps(
+    {
+        "entities": [],
+        "references": [
+            {"case_number": "ÖN 2021-0345", "reference_context": "First mention."},
+            {"case_number": "ÖN 2021-0345", "reference_context": "Second mention."},
+        ],
+    }
+)
 
 
 class TestParseLLMResponse:
@@ -68,7 +85,7 @@ class TestParseLLMResponse:
     def test_parse_deduplicates_entities_keeps_primary(self) -> None:
         result = parse_llm_response(_DUPLICATE_ENTITY_JSON)
         assert len(result.entities) == 1
-        assert result.entities[0].relevance == Relevance.PRIMARY
+        assert result.entities[0].relevance == EntityRelevance.PRIMARY
 
     def test_parse_skips_entities_with_invalid_type(self) -> None:
         result = parse_llm_response(_INVALID_TYPE_JSON)

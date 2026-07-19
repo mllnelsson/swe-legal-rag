@@ -48,7 +48,9 @@ class QueueSettings(BaseSettings):
     @model_validator(mode="after")
     def _validate_pubsub(self) -> "QueueSettings":
         if self.queue_backend == QueueBackendType.PUBSUB and not self.pubsub_project_id:
-            raise ValueError("pubsub_project_id is required when queue_backend is pubsub")
+            raise ValueError(
+                "pubsub_project_id is required when queue_backend is pubsub"
+            )
         return self
 
 

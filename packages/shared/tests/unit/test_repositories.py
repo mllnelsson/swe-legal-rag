@@ -9,10 +9,11 @@ from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentCreate, DocumentUpdate
 from shared.dtos.entity import EntityCreate
 from shared.dtos.task import TaskStatusUpdate
-from shared.repositories.chunk import ChunkRepository
-from shared.repositories.document import DocumentRepository
-from shared.repositories.entity import EntityRepository
-from shared.repositories.task import TaskRepository
+from shared.enums import PipelineStep, TaskStatus
+from shared.repositories import chunk as chunk_repo
+from shared.repositories import document as document_repo
+from shared.repositories import entity as entity_repo
+from shared.repositories import task as task_repo
 
 
 def _make_session() -> MagicMock:
@@ -62,15 +63,18 @@ class TestDocumentRepository:
     async def test_create_adds_and_returns_dto(self):
         session = _make_session()
         doc = _mock_document()
-        session.refresh = AsyncMock(side_effect=lambda obj: setattr(obj, "id", doc.id) or None)
-        repo = DocumentRepository(session)
+        session.refresh = AsyncMock(
+            side_effect=lambda obj: setattr(obj, "id", doc.id) or None
+        )
 
         async def side_effect_refresh(obj):
             for k, v in vars(doc).items():
                 setattr(obj, k, v)
 
         session.refresh.side_effect = side_effect_refresh
-        dto = await repo.create(DocumentCreate(source_url="https://example.com"))
+        dto = await document_repo.create(
+            session, DocumentCreate(source_url="https://example.com")
+        )
 
         session.add.assert_called_once()
         session.flush.assert_called_once()
@@ -87,9 +91,8 @@ class TestDocumentRepository:
 
         session.refresh.side_effect = refresh
 
-        repo = DocumentRepository(session)
         update = DocumentUpdate(gcs_uri="gs://bucket/file.pdf")
-        await repo.update(doc.id, update)
+        await document_repo.update(session, doc.id, update)
 
         assert doc.gcs_uri == "gs://bucket/file.pdf"
         assert doc.raw_text is None
@@ -98,8 +101,9 @@ class TestDocumentRepository:
     async def test_update_returns_none_for_missing(self):
         session = _make_session()
         session.get.return_value = None
-        repo = DocumentRepository(session)
-        result = await repo.update(uuid.uuid4(), DocumentUpdate(gcs_uri="x"))
+        result = await document_repo.update(
+            session, uuid.uuid4(), DocumentUpdate(gcs_uri="x")
+        )
         assert result is None
 
 
@@ -115,8 +119,9 @@ class TestTaskRepository:
 
         session.refresh.side_effect = refresh
 
-        repo = TaskRepository(session)
-        await repo.update_status(task.id, TaskStatusUpdate(status="processing"))
+        await task_repo.update_status(
+            session, task.id, TaskStatusUpdate(status="processing")
+        )
 
         assert task.started_at is not None
         assert task.completed_at is None
@@ -132,8 +137,9 @@ class TestTaskRepository:
 
         session.refresh.side_effect = refresh
 
-        repo = TaskRepository(session)
-        await repo.update_status(task.id, TaskStatusUpdate(status="completed"))
+        await task_repo.update_status(
+            session, task.id, TaskStatusUpdate(status="completed")
+        )
 
         assert task.completed_at is not None
         assert task.started_at is None
@@ -146,8 +152,9 @@ class TestTaskRepository:
         result_mock.scalars.return_value = [task]
         session.execute.return_value = result_mock
 
-        repo = TaskRepository(session)
-        results = await repo.list_by_step_and_status("crawl", "pending")
+        results = await task_repo.list_by_step_and_status(
+            session, PipelineStep.CRAWL, TaskStatus.PENDING
+        )
 
         session.execute.assert_called_once()
         assert len(results) == 1
@@ -162,8 +169,12 @@ class TestChunkRepository:
         doc_id = uuid.uuid4()
         now = datetime.now(tz=timezone.utc)
         dtos = [
-            ChunkCreate(document_id=doc_id, chunk_index=0, chunk_text="first", embedding=[0.1]),
-            ChunkCreate(document_id=doc_id, chunk_index=1, chunk_text="second", embedding=[0.2]),
+            ChunkCreate(
+                document_id=doc_id, chunk_index=0, chunk_text="first", embedding=[0.1]
+            ),
+            ChunkCreate(
+                document_id=doc_id, chunk_index=1, chunk_text="second", embedding=[0.2]
+            ),
         ]
 
         call_count = 0
@@ -176,8 +187,7 @@ class TestChunkRepository:
 
         session.refresh.side_effect = refresh
 
-        repo = ChunkRepository(session)
-        results = await repo.bulk_create(dtos)
+        results = await chunk_repo.bulk_create(session, dtos)
 
         session.add_all.assert_called_once()
         assert len(results) == 2
@@ -201,8 +211,9 @@ class TestEntityRepository:
 
         session.refresh.side_effect = refresh
 
-        repo = EntityRepository(session)
-        entity = await repo.upsert(EntityCreate(name="kyrkorådet", type="role"))
+        entity = await entity_repo.upsert(
+            session, EntityCreate(name="kyrkorådet", type="role")
+        )
 
         session.add.assert_called_once()
         assert entity.name == "kyrkorådet"
@@ -211,13 +222,16 @@ class TestEntityRepository:
     async def test_upsert_returns_existing_entity(self):
         session = _make_session()
         now = datetime.now(tz=timezone.utc)
-        existing = SimpleNamespace(id=uuid.uuid4(), name="kyrkorådet", type="role", created_at=now)
+        existing = SimpleNamespace(
+            id=uuid.uuid4(), name="kyrkorådet", type="role", created_at=now
+        )
         result_mock = MagicMock()
         result_mock.scalar_one_or_none.return_value = existing
         session.execute.return_value = result_mock
 
-        repo = EntityRepository(session)
-        entity = await repo.upsert(EntityCreate(name="kyrkorådet", type="role"))
+        entity = await entity_repo.upsert(
+            session, EntityCreate(name="kyrkorådet", type="role")
+        )
 
         session.add.assert_not_called()
         assert entity.name == "kyrkorådet"

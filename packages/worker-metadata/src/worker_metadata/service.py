@@ -7,10 +7,10 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document import DocumentUpdate
-from shared.dtos.task import TaskCreate, TaskStatusUpdate
-from shared.queue.base import QueueMessage, QueuePublisher
-from shared.repositories.document import DocumentRepository
-from shared.repositories.task import TaskRepository
+from shared.enums import PipelineStep
+from shared.pipeline import StepInputError, run_pipeline_step
+from shared.queue.base import QueuePublisher
+from shared.repositories import DocumentRepo, TaskRepo
 from worker_metadata.patterns import MetadataResult, is_complete
 
 logger = logging.getLogger(__name__)
@@ -21,43 +21,21 @@ _METADATA_FIELDS = ("case_number", "decision_date", "decision_outcome", "categor
 async def process_metadata(
     document_id: UUID,
     task_id: UUID,
-    document_repo: DocumentRepository,
-    task_repo: TaskRepository,
+    document_repo: DocumentRepo,
+    task_repo: TaskRepo,
     queue_publisher: QueuePublisher,
     rule_extractor: Callable[[str], MetadataResult],
     llm_extractor: Callable[[str, list[str]], Awaitable[MetadataResult]],
     session: AsyncSession,
-    next_topic: str = "extract",
+    next_topic: PipelineStep = PipelineStep.EXTRACT,
 ) -> None:
-    task = await task_repo.get_by_id(task_id)
-    if task is None or task.status == "completed":
-        logger.info("Task %s already completed or not found, skipping", task_id)
-        return
+    async def body() -> None:
+        document = await document_repo.get_by_id(session, document_id)
+        if document is None:
+            raise StepInputError(f"Document {document_id} not found")
+        if document.raw_text is None:
+            raise StepInputError(f"Document {document_id} has no raw text")
 
-    await task_repo.update_status(task.id, TaskStatusUpdate(status="processing"))
-    await session.commit()
-
-    document = await document_repo.get_by_id(document_id)
-    if document is None:
-        await task_repo.update_status(
-            task.id,
-            TaskStatusUpdate(status="failed", error_message=f"Document {document_id} not found"),
-        )
-        await session.commit()
-        return
-
-    if document.raw_text is None:
-        await task_repo.update_status(
-            task.id,
-            TaskStatusUpdate(
-                status="failed",
-                error_message=f"Document {document_id} has no raw text",
-            ),
-        )
-        await session.commit()
-        return
-
-    try:
         result = rule_extractor(document.raw_text)
 
         if not is_complete(result):
@@ -74,9 +52,12 @@ async def process_metadata(
                     if llm_value is not None:
                         setattr(result, field, llm_value)
             except Exception as exc:
-                logger.warning("LLM extraction failed for document %s: %s", document_id, exc)
+                logger.warning(
+                    "LLM extraction failed for document %s: %s", document_id, exc
+                )
 
         await document_repo.update(
+            session,
             document.id,
             DocumentUpdate(
                 case_number=result.case_number,
@@ -85,21 +66,13 @@ async def process_metadata(
                 category=result.category,
             ),
         )
-        extract_task = await task_repo.create(
-            TaskCreate(document_id=document.id, step="extract", status="pending")
-        )
-        await session.commit()
-        queue_publisher.publish(
-            next_topic,
-            QueueMessage(task_id=extract_task.id, document_id=document.id),
-        )
-        await task_repo.update_status(task.id, TaskStatusUpdate(status="completed"))
-        await session.commit()
-    except Exception as exc:
-        await session.rollback()
-        logger.error("Failed to process metadata for document %s: %s", document_id, exc)
-        await task_repo.update_status(
-            task.id,
-            TaskStatusUpdate(status="failed", error_message=str(exc)),
-        )
-        await session.commit()
+
+    await run_pipeline_step(
+        task_repo=task_repo,
+        session=session,
+        task_id=task_id,
+        document_id=document_id,
+        next_step=next_topic,
+        queue_publisher=queue_publisher,
+        body=body,
+    )

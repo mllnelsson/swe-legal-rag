@@ -5,20 +5,29 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from shared.dtos.entity import EntityRead
-from worker_extract.models import EntityType, ExtractedEntity, Relevance
-from worker_extract.services.entity_service import (
-    _deduplicate_entities,
-    normalize_entity_name,
-    persist_entities,
-)
+from worker_extract.entities import deduplicate_entities, normalize_entity_name
+from worker_extract.models import EntityType, ExtractedEntity, EntityRelevance
+from worker_extract.services.entity_service import persist_entities
+
+# Sentinel standing in for the AsyncSession handle threaded to the repo functions.
+session = MagicMock()
 
 
-def _entity(name: str, etype: EntityType = EntityType.ROLE, relevance: Relevance = Relevance.MENTIONED) -> ExtractedEntity:
+def _entity(
+    name: str,
+    etype: EntityType = EntityType.ROLE,
+    relevance: EntityRelevance = EntityRelevance.MENTIONED,
+) -> ExtractedEntity:
     return ExtractedEntity(name=name, type=etype, relevance=relevance)
 
 
 def _entity_read(name: str) -> EntityRead:
-    return EntityRead(id=uuid.uuid4(), name=name, type="role", created_at=datetime.now(tz=timezone.utc))
+    return EntityRead(
+        id=uuid.uuid4(),
+        name=name,
+        type="role",
+        created_at=datetime.now(tz=timezone.utc),
+    )
 
 
 class TestNormalizeEntityName:
@@ -35,27 +44,27 @@ class TestNormalizeEntityName:
 class TestDeduplicateEntities:
     def test_entity_persist_dedup_primary_wins_over_mentioned(self) -> None:
         entities = [
-            _entity("kyrkoherde", relevance=Relevance.MENTIONED),
-            _entity("kyrkoherde", relevance=Relevance.PRIMARY),
+            _entity("kyrkoherde", relevance=EntityRelevance.MENTIONED),
+            _entity("kyrkoherde", relevance=EntityRelevance.PRIMARY),
         ]
-        result = _deduplicate_entities(entities)
+        result = deduplicate_entities(entities)
         assert len(result) == 1
-        assert result[0].relevance == Relevance.PRIMARY
+        assert result[0].relevance == EntityRelevance.PRIMARY
 
     def test_entity_persist_dedup_keeps_distinct_types(self) -> None:
         entities = [
             _entity("kyrkoherde", EntityType.ROLE),
             _entity("kyrkoherde", EntityType.LEGAL_CONCEPT),
         ]
-        result = _deduplicate_entities(entities)
+        result = deduplicate_entities(entities)
         assert len(result) == 2
 
     def test_entity_persist_dedup_case_insensitive(self) -> None:
         entities = [
-            _entity("Kyrkoherde", relevance=Relevance.MENTIONED),
-            _entity("kyrkoherde", relevance=Relevance.PRIMARY),
+            _entity("Kyrkoherde", relevance=EntityRelevance.MENTIONED),
+            _entity("kyrkoherde", relevance=EntityRelevance.PRIMARY),
         ]
-        result = _deduplicate_entities(entities)
+        result = deduplicate_entities(entities)
         assert len(result) == 1
 
 
@@ -70,7 +79,7 @@ class TestPersistEntities:
         doc_id = uuid.uuid4()
         entities = [_entity("Kyrkoherde"), _entity("Stiftet", EntityType.PARISH)]
 
-        await persist_entities(entity_repo, doc_entity_repo, doc_id, entities)
+        await persist_entities(session, entity_repo, doc_entity_repo, doc_id, entities)
 
         assert entity_repo.upsert.call_count == 2
 
@@ -84,7 +93,7 @@ class TestPersistEntities:
         doc_id = uuid.uuid4()
         entities = [_entity("Kyrkoherde"), _entity("Stiftet", EntityType.PARISH)]
 
-        await persist_entities(entity_repo, doc_entity_repo, doc_id, entities)
+        await persist_entities(session, entity_repo, doc_entity_repo, doc_id, entities)
 
         assert doc_entity_repo.upsert.call_count == 2
 
@@ -95,9 +104,15 @@ class TestPersistEntities:
         doc_entity_repo = MagicMock()
         doc_entity_repo.upsert = AsyncMock()
 
-        await persist_entities(entity_repo, doc_entity_repo, uuid.uuid4(), [_entity("  KYRKOHERDE  ")])
+        await persist_entities(
+            session,
+            entity_repo,
+            doc_entity_repo,
+            uuid.uuid4(),
+            [_entity("  KYRKOHERDE  ")],
+        )
 
-        create_dto = entity_repo.upsert.call_args[0][0]
+        create_dto = entity_repo.upsert.call_args[0][1]
         assert create_dto.name == "kyrkoherde"
 
     async def test_entity_persist_deduplicates_within_batch(self) -> None:
@@ -108,13 +123,15 @@ class TestPersistEntities:
         doc_entity_repo.upsert = AsyncMock()
 
         entities = [
-            _entity("kyrkoherde", relevance=Relevance.MENTIONED),
-            _entity("kyrkoherde", relevance=Relevance.PRIMARY),
+            _entity("kyrkoherde", relevance=EntityRelevance.MENTIONED),
+            _entity("kyrkoherde", relevance=EntityRelevance.PRIMARY),
         ]
-        await persist_entities(entity_repo, doc_entity_repo, uuid.uuid4(), entities)
+        await persist_entities(
+            session, entity_repo, doc_entity_repo, uuid.uuid4(), entities
+        )
 
         assert entity_repo.upsert.call_count == 1
-        doc_create_dto = doc_entity_repo.upsert.call_args[0][0]
+        doc_create_dto = doc_entity_repo.upsert.call_args[0][1]
         assert doc_create_dto.relevance == "primary"
 
     async def test_entity_persist_empty_entities_does_nothing(self) -> None:
@@ -123,7 +140,7 @@ class TestPersistEntities:
         doc_entity_repo = MagicMock()
         doc_entity_repo.upsert = AsyncMock()
 
-        await persist_entities(entity_repo, doc_entity_repo, uuid.uuid4(), [])
+        await persist_entities(session, entity_repo, doc_entity_repo, uuid.uuid4(), [])
 
         entity_repo.upsert.assert_not_called()
         doc_entity_repo.upsert.assert_not_called()

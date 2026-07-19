@@ -17,7 +17,9 @@ class QueuePublisher(Protocol):
 
 @runtime_checkable
 class QueueSubscriber(Protocol):
-    def subscribe(self, topic: str, handler: Callable[[QueueMessage], None]) -> None: ...
+    def subscribe(
+        self, topic: str, handler: Callable[[QueueMessage], None]
+    ) -> None: ...
 
     def start(self) -> None: ...
 

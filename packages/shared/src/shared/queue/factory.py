@@ -1,4 +1,5 @@
 from shared.config import QueueBackendType, QueueSettings
+from shared.errors import BackendConfigError
 from shared.queue.base import QueuePublisher, QueueSubscriber
 
 _sync_broker: object = None
@@ -26,7 +27,7 @@ def create_queue_publisher(settings: QueueSettings) -> QueuePublisher:
 
             return PubSubQueuePublisher(settings.pubsub_project_id)  # type: ignore[arg-type]
         case _:
-            raise ValueError(f"Unknown queue backend: {settings.queue_backend}")
+            raise BackendConfigError(f"Unknown queue backend: {settings.queue_backend}")
 
 
 def create_queue_subscriber(settings: QueueSettings) -> QueueSubscriber:
@@ -42,4 +43,4 @@ def create_queue_subscriber(settings: QueueSettings) -> QueueSubscriber:
 
             return PubSubQueueSubscriber(settings.pubsub_project_id)  # type: ignore[arg-type]
         case _:
-            raise ValueError(f"Unknown queue backend: {settings.queue_backend}")
+            raise BackendConfigError(f"Unknown queue backend: {settings.queue_backend}")

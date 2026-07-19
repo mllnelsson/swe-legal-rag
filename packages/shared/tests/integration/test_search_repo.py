@@ -13,12 +13,6 @@ from shared.dtos.document_entity import DocumentEntityCreate
 from shared.dtos.document_reference import DocumentReferenceCreate
 from shared.dtos.entity import EntityCreate
 from shared.dtos.search import DocumentFilter
-from shared.repositories.chunk import ChunkRepository
-from shared.repositories.document import DocumentRepository
-from shared.repositories.document_entity import DocumentEntityRepository
-from shared.repositories.document_reference import DocumentReferenceRepository
-from shared.repositories.entity import EntityRepository
-from shared.repositories.search import SearchRepository
 from shared.search.rrf import rrf_fuse
 
 pytestmark = pytest.mark.integration
@@ -33,7 +27,7 @@ def _unit_vector(hot_index: int) -> list[float]:
 
 
 async def _seed_document(
-    document_repo: DocumentRepository,
+    document_repo,
     session: AsyncSession,
     *,
     source_url: str = "https://example.com/doc.pdf",
@@ -59,7 +53,7 @@ async def _seed_document(
 
 
 async def _seed_chunk(
-    chunk_repo: ChunkRepository,
+    chunk_repo,
     session: AsyncSession,
     document_id: uuid.UUID,
     chunk_text: str = _SWEDISH_TEXT,
@@ -68,14 +62,16 @@ async def _seed_chunk(
 ) -> uuid.UUID:
     if embedding is None:
         embedding = [0.1] * EMBEDDING_DIMENSION
-    chunk = await chunk_repo.bulk_create([
-        ChunkCreate(
-            document_id=document_id,
-            chunk_index=chunk_index,
-            chunk_text=chunk_text,
-            embedding=embedding,
-        )
-    ])
+    chunk = await chunk_repo.bulk_create(
+        [
+            ChunkCreate(
+                document_id=document_id,
+                chunk_index=chunk_index,
+                chunk_text=chunk_text,
+                embedding=embedding,
+            )
+        ]
+    )
     await session.commit()
     return chunk[0].id
 
@@ -83,12 +79,16 @@ async def _seed_chunk(
 class TestSearchRepositoryMetadataFiltering:
     async def test_empty_filter_returns_docs_with_raw_text(
         self,
-        document_repo: DocumentRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
-        doc1_id = await _seed_document(document_repo, session, source_url="https://a.com/1.pdf")
-        doc2_id = await _seed_document(document_repo, session, source_url="https://a.com/2.pdf")
+        doc1_id = await _seed_document(
+            document_repo, session, source_url="https://a.com/1.pdf"
+        )
+        doc2_id = await _seed_document(
+            document_repo, session, source_url="https://a.com/2.pdf"
+        )
 
         results = await search_repo.find_candidate_documents(DocumentFilter())
 
@@ -97,17 +97,19 @@ class TestSearchRepositoryMetadataFiltering:
 
     async def test_date_from_excludes_earlier_documents(
         self,
-        document_repo: DocumentRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
         old_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/old.pdf",
             decision_date=date(2020, 6, 1),
         )
         new_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/new.pdf",
             decision_date=date(2023, 6, 1),
         )
@@ -121,17 +123,19 @@ class TestSearchRepositoryMetadataFiltering:
 
     async def test_date_to_excludes_later_documents(
         self,
-        document_repo: DocumentRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
         old_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/old2.pdf",
             decision_date=date(2020, 6, 1),
         )
         new_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/new2.pdf",
             decision_date=date(2023, 6, 1),
         )
@@ -145,17 +149,19 @@ class TestSearchRepositoryMetadataFiltering:
 
     async def test_category_ilike_matches_partial_name(
         self,
-        document_repo: DocumentRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
         match_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/cat1.pdf",
             category="Kyrkogårdsförvaltning",
         )
         no_match_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/cat2.pdf",
             category="Ekonomi",
         )
@@ -171,10 +177,10 @@ class TestSearchRepositoryMetadataFiltering:
 class TestSearchRepositoryEntityFiltering:
     async def test_entity_name_filter_returns_matching_document(
         self,
-        document_repo: DocumentRepository,
-        entity_repo: EntityRepository,
-        doc_entity_repo: DocumentEntityRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        entity_repo,
+        doc_entity_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
         match_id = await _seed_document(
@@ -186,7 +192,9 @@ class TestSearchRepositoryEntityFiltering:
 
         entity = await entity_repo.upsert(EntityCreate(name="kyrkorådet", type="role"))
         await doc_entity_repo.upsert(
-            DocumentEntityCreate(document_id=match_id, entity_id=entity.id, relevance="primary")
+            DocumentEntityCreate(
+                document_id=match_id, entity_id=entity.id, relevance="primary"
+            )
         )
         await session.commit()
 
@@ -199,19 +207,23 @@ class TestSearchRepositoryEntityFiltering:
 
     async def test_entity_name_ilike_partial_match(
         self,
-        document_repo: DocumentRepository,
-        entity_repo: EntityRepository,
-        doc_entity_repo: DocumentEntityRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        entity_repo,
+        doc_entity_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
         match_id = await _seed_document(
             document_repo, session, source_url="https://a.com/ent3.pdf"
         )
 
-        entity = await entity_repo.upsert(EntityCreate(name="Skattkärrens församling", type="parish"))
+        entity = await entity_repo.upsert(
+            EntityCreate(name="Skattkärrens församling", type="parish")
+        )
         await doc_entity_repo.upsert(
-            DocumentEntityCreate(document_id=match_id, entity_id=entity.id, relevance="mentioned")
+            DocumentEntityCreate(
+                document_id=match_id, entity_id=entity.id, relevance="mentioned"
+            )
         )
         await session.commit()
 
@@ -225,24 +237,28 @@ class TestSearchRepositoryEntityFiltering:
 class TestSearchRepositoryReferenceTraversal:
     async def test_reference_traversal_returns_cited_document(
         self,
-        document_repo: DocumentRepository,
-        doc_ref_repo: DocumentReferenceRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        doc_ref_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
         # doc1 cites doc2 (source=doc1, target=doc2)
         doc1_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/ref1.pdf",
             case_number="2020/001",
         )
         doc2_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/ref2.pdf",
             case_number="2021/001",
         )
         await doc_ref_repo.upsert(
-            DocumentReferenceCreate(source_document_id=doc1_id, target_document_id=doc2_id)
+            DocumentReferenceCreate(
+                source_document_id=doc1_id, target_document_id=doc2_id
+            )
         )
         await session.commit()
 
@@ -255,24 +271,28 @@ class TestSearchRepositoryReferenceTraversal:
 
     async def test_reference_traversal_returns_citing_document(
         self,
-        document_repo: DocumentRepository,
-        doc_ref_repo: DocumentReferenceRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        doc_ref_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
         # doc1 cites doc2 (source=doc1, target=doc2)
         doc1_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/ref3.pdf",
             case_number="2020/002",
         )
         doc2_id = await _seed_document(
-            document_repo, session,
+            document_repo,
+            session,
             source_url="https://a.com/ref4.pdf",
             case_number="2021/002",
         )
         await doc_ref_repo.upsert(
-            DocumentReferenceCreate(source_document_id=doc1_id, target_document_id=doc2_id)
+            DocumentReferenceCreate(
+                source_document_id=doc1_id, target_document_id=doc2_id
+            )
         )
         await session.commit()
 
@@ -285,26 +305,39 @@ class TestSearchRepositoryReferenceTraversal:
 
     async def test_reference_traversal_both_directions(
         self,
-        document_repo: DocumentRepository,
-        doc_ref_repo: DocumentReferenceRepository,
-        search_repo: SearchRepository,
+        document_repo,
+        doc_ref_repo,
+        search_repo,
         session: AsyncSession,
     ) -> None:
         # doc1 cites pivot; pivot cites doc2
         doc1_id = await _seed_document(
-            document_repo, session, source_url="https://a.com/ref5.pdf", case_number="2019/001"
+            document_repo,
+            session,
+            source_url="https://a.com/ref5.pdf",
+            case_number="2019/001",
         )
         pivot_id = await _seed_document(
-            document_repo, session, source_url="https://a.com/ref6.pdf", case_number="2020/003"
+            document_repo,
+            session,
+            source_url="https://a.com/ref6.pdf",
+            case_number="2020/003",
         )
         doc2_id = await _seed_document(
-            document_repo, session, source_url="https://a.com/ref7.pdf", case_number="2021/003"
+            document_repo,
+            session,
+            source_url="https://a.com/ref7.pdf",
+            case_number="2021/003",
         )
         await doc_ref_repo.upsert(
-            DocumentReferenceCreate(source_document_id=doc1_id, target_document_id=pivot_id)
+            DocumentReferenceCreate(
+                source_document_id=doc1_id, target_document_id=pivot_id
+            )
         )
         await doc_ref_repo.upsert(
-            DocumentReferenceCreate(source_document_id=pivot_id, target_document_id=doc2_id)
+            DocumentReferenceCreate(
+                source_document_id=pivot_id, target_document_id=doc2_id
+            )
         )
         await session.commit()
 
@@ -320,8 +353,8 @@ class TestSearchRepositoryReferenceTraversal:
 class TestChunkRepositoryVectorSearch:
     async def test_vector_search_orders_by_cosine_distance(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
+        document_repo,
+        chunk_repo,
         session: AsyncSession,
     ) -> None:
         # chunk_a: unit vector in dim 0 — closest to query
@@ -343,7 +376,9 @@ class TestChunkRepositoryVectorSearch:
         )
 
         query_vec = _unit_vector(0)
-        results = await chunk_repo.vector_search(embedding=query_vec, document_ids=None, limit=10)
+        results = await chunk_repo.vector_search(
+            embedding=query_vec, document_ids=None, limit=10
+        )
 
         result_ids = [r.id for r in results]
         assert result_ids[0] == chunk_a_id
@@ -352,8 +387,8 @@ class TestChunkRepositoryVectorSearch:
 
     async def test_vector_search_filtered_to_document_ids(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
+        document_repo,
+        chunk_repo,
         session: AsyncSession,
     ) -> None:
         doc1_id = await _seed_document(
@@ -363,7 +398,9 @@ class TestChunkRepositoryVectorSearch:
             document_repo, session, source_url="https://a.com/vs3.pdf"
         )
         await _seed_chunk(chunk_repo, session, doc1_id, embedding=_unit_vector(0))
-        chunk2_id = await _seed_chunk(chunk_repo, session, doc2_id, embedding=_unit_vector(0))
+        chunk2_id = await _seed_chunk(
+            chunk_repo, session, doc2_id, embedding=_unit_vector(0)
+        )
 
         # Only search in doc2 — doc1 chunk should not appear
         results = await chunk_repo.vector_search(
@@ -380,8 +417,8 @@ class TestChunkRepositoryVectorSearch:
 class TestChunkRepositoryTextSearch:
     async def test_text_search_matches_swedish_stem(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
+        document_repo,
+        chunk_repo,
         session: AsyncSession,
     ) -> None:
         doc_id = await _seed_document(
@@ -389,20 +426,26 @@ class TestChunkRepositoryTextSearch:
         )
         # "beslutade" is the past tense of "besluta"; Swedish tsvector stems it to "beslut"
         await _seed_chunk(
-            chunk_repo, session, doc_id,
+            chunk_repo,
+            session,
+            doc_id,
             chunk_text="Kyrkorådet beslutade att bifalla överklagandet.",
         )
 
         # Querying with the stem — websearch_to_tsquery('swedish', 'beslut') should match
-        results = await chunk_repo.text_search(query="beslut", document_ids=None, limit=10)
+        results = await chunk_repo.text_search(
+            query="beslut", document_ids=None, limit=10
+        )
 
         assert len(results) >= 1
-        assert any("beslutade" in r.chunk_text or "beslut" in r.chunk_text for r in results)
+        assert any(
+            "beslutade" in r.chunk_text or "beslut" in r.chunk_text for r in results
+        )
 
     async def test_text_search_inflected_form_matches(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
+        document_repo,
+        chunk_repo,
         session: AsyncSession,
     ) -> None:
         doc_id = await _seed_document(
@@ -410,30 +453,38 @@ class TestChunkRepositoryTextSearch:
         )
         # "överklaganden" (plural) and "överklagandet" (definite) share the stem "överklag"
         await _seed_chunk(
-            chunk_repo, session, doc_id,
+            chunk_repo,
+            session,
+            doc_id,
             chunk_text="Nämnden avslår överklagandet från kyrkoherden.",
         )
 
         # Query with a different inflection of the same root
-        results = await chunk_repo.text_search(query="överklaganden", document_ids=None, limit=10)
+        results = await chunk_repo.text_search(
+            query="överklaganden", document_ids=None, limit=10
+        )
 
         assert len(results) >= 1
 
     async def test_text_search_no_match_returns_empty(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
+        document_repo,
+        chunk_repo,
         session: AsyncSession,
     ) -> None:
         doc_id = await _seed_document(
             document_repo, session, source_url="https://a.com/ts3.pdf"
         )
         await _seed_chunk(
-            chunk_repo, session, doc_id,
+            chunk_repo,
+            session,
+            doc_id,
             chunk_text="Kyrkorådet beslutade att bifalla överklagandet.",
         )
 
-        results = await chunk_repo.text_search(query="skattedeklaration", document_ids=None, limit=10)
+        results = await chunk_repo.text_search(
+            query="skattedeklaration", document_ids=None, limit=10
+        )
 
         assert results == []
 
@@ -441,8 +492,8 @@ class TestChunkRepositoryTextSearch:
 class TestRrfFuseOnRealSearchResults:
     async def test_rrf_fuse_promotes_chunk_in_both_lists(
         self,
-        document_repo: DocumentRepository,
-        chunk_repo: ChunkRepository,
+        document_repo,
+        chunk_repo,
         session: AsyncSession,
     ) -> None:
         doc_id = await _seed_document(
@@ -450,14 +501,18 @@ class TestRrfFuseOnRealSearchResults:
         )
         # chunk_a: matches both vector and text search
         chunk_a_id = await _seed_chunk(
-            chunk_repo, session, doc_id,
+            chunk_repo,
+            session,
+            doc_id,
             chunk_text="Kyrkorådet beslutade att bifalla överklagandet.",
             embedding=_unit_vector(0),
             chunk_index=0,
         )
         # chunk_b: only matches vector search
         chunk_b_id = await _seed_chunk(
-            chunk_repo, session, doc_id,
+            chunk_repo,
+            session,
+            doc_id,
             chunk_text="Inget relevant innehåll här.",
             embedding=_unit_vector(0),
             chunk_index=1,
@@ -471,10 +526,12 @@ class TestRrfFuseOnRealSearchResults:
             query="beslut", document_ids=None, limit=10
         )
 
-        fused = rrf_fuse([
-            [r.id for r in vector_results],
-            [r.id for r in text_results],
-        ])
+        fused = rrf_fuse(
+            [
+                [r.id for r in vector_results],
+                [r.id for r in text_results],
+            ]
+        )
 
         # chunk_a appears in both lists → higher RRF score → should rank first or equal
         assert chunk_a_id in fused

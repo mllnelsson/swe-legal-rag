@@ -54,31 +54,30 @@ from dotenv import load_dotenv
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from _fsstore import (
-    FsChunkRepository,
-    FsDocumentEntityRepository,
-    FsDocumentReferenceRepository,
-    FsDocumentRepository,
-    FsEntityRepository,
-    FsSession,
-    FsStore,
-    FsTaskRepository,
-    FsUnresolvedReferenceRepository,
-)
+import _fsrepos
+from _fsstore import FsSession, FsStore
 from shared.config import Settings, get_settings
 from shared.db import get_async_session
 from shared.dtos.document import DocumentCreate, DocumentUpdate
+from shared.enums import PipelineStep, TaskStatus
 from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
 from shared.repositories import (
-    ChunkRepository,
-    DocumentEntityRepository,
-    DocumentReferenceRepository,
-    DocumentRepository,
-    EntityRepository,
-    TaskRepository,
-    UnresolvedReferenceRepository,
+    ChunkRepo,
+    DocumentEntityRepo,
+    DocumentReferenceRepo,
+    DocumentRepo,
+    EntityRepo,
+    TaskRepo,
+    UnresolvedReferenceRepo,
+    chunk,
+    document,
+    document_entity,
+    document_reference,
+    entity,
+    task,
+    unresolved_reference,
 )
 from shared.storage import create_storage_backend
 
@@ -86,13 +85,13 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message
 logger = logging.getLogger("run_step")
 
 # Ingestion order. Value is the step each stage hands off to (None = terminal).
-PIPELINE: dict[str, str | None] = {
-    "download": "parse",
-    "parse": "metadata",
-    "metadata": "extract",
-    "extract": "chunk",
-    "chunk": "embed",
-    "embed": None,
+PIPELINE: dict[PipelineStep, PipelineStep | None] = {
+    PipelineStep.DOWNLOAD: PipelineStep.PARSE,
+    PipelineStep.PARSE: PipelineStep.METADATA,
+    PipelineStep.METADATA: PipelineStep.EXTRACT,
+    PipelineStep.EXTRACT: PipelineStep.CHUNK,
+    PipelineStep.CHUNK: PipelineStep.EMBED,
+    PipelineStep.EMBED: None,
 }
 
 
@@ -109,8 +108,8 @@ class NoopPublisher:
         )
 
 
-def _next_topic(step: str) -> str:
-    """Next step name for a non-terminal step (used as the publish topic)."""
+def _next_topic(step: PipelineStep) -> PipelineStep:
+    """Next step for a non-terminal step (used as the publish topic)."""
     next_step = PIPELINE[step]
     assert next_step is not None, f"{step!r} is terminal and has no next topic"
     return next_step
@@ -118,15 +117,16 @@ def _next_topic(step: str) -> str:
 
 @dataclass
 class Repos:
-    """The repositories services consume — real or file-backed behind the same types."""
+    """The repository namespaces services consume — real modules or file-backed doubles
+    behind the same injection Protocols."""
 
-    document: DocumentRepository
-    task: TaskRepository
-    chunk: ChunkRepository
-    entity: EntityRepository
-    doc_entity: DocumentEntityRepository
-    ref: DocumentReferenceRepository
-    unresolved: UnresolvedReferenceRepository
+    document: DocumentRepo
+    task: TaskRepo
+    chunk: ChunkRepo
+    entity: EntityRepo
+    doc_entity: DocumentEntityRepo
+    ref: DocumentReferenceRepo
+    unresolved: UnresolvedReferenceRepo
 
 
 class DbCtx:
@@ -135,23 +135,25 @@ class DbCtx:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repos = Repos(
-            document=DocumentRepository(session),
-            task=TaskRepository(session),
-            chunk=ChunkRepository(session),
-            entity=EntityRepository(session),
-            doc_entity=DocumentEntityRepository(session),
-            ref=DocumentReferenceRepository(session),
-            unresolved=UnresolvedReferenceRepository(session),
+            document=document,
+            task=task,
+            chunk=chunk,
+            entity=entity,
+            doc_entity=document_entity,
+            ref=document_reference,
+            unresolved=unresolved_reference,
         )
 
     async def document_exists(self, document_id: UUID) -> bool:
         return await self.session.get(Document, document_id) is not None
 
-    async def prepare_task(self, document_id: UUID, step: str) -> UUID:
+    async def prepare_task(self, document_id: UUID, step: PipelineStep) -> UUID:
         next_step = PIPELINE[step]
         if next_step is not None:
             await self.session.execute(
-                delete(Task).where(Task.document_id == document_id, Task.step == next_step)
+                delete(Task).where(
+                    Task.document_id == document_id, Task.step == next_step
+                )
             )
         task = (
             await self.session.execute(
@@ -159,10 +161,10 @@ class DbCtx:
             )
         ).scalar_one_or_none()
         if task is None:
-            task = Task(document_id=document_id, step=step, status="pending")
+            task = Task(document_id=document_id, step=step, status=TaskStatus.PENDING)
             self.session.add(task)
         else:
-            task.status = "pending"
+            task.status = TaskStatus.PENDING
             task.error_message = None
             task.started_at = None
             task.completed_at = None
@@ -171,16 +173,32 @@ class DbCtx:
 
     async def list_docs(self) -> list[tuple[str, str, bool, int, str]]:
         documents = (
-            await self.session.execute(select(Document).order_by(Document.created_at))
-        ).scalars().all()
+            (await self.session.execute(select(Document).order_by(Document.created_at)))
+            .scalars()
+            .all()
+        )
         out: list[tuple[str, str, bool, int, str]] = []
         for doc in documents:
             tasks = (
-                await self.session.execute(select(Task).where(Task.document_id == doc.id))
-            ).scalars().all()
-            steps = " ".join(f"{t.step}:{t.status}" for t in sorted(tasks, key=lambda t: t.step))
+                (
+                    await self.session.execute(
+                        select(Task).where(Task.document_id == doc.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            steps = " ".join(
+                f"{t.step}:{t.status}" for t in sorted(tasks, key=lambda t: t.step)
+            )
             out.append(
-                (str(doc.id), steps, doc.gcs_uri is not None, len(doc.raw_text or ""), doc.source_url)
+                (
+                    str(doc.id),
+                    steps,
+                    doc.gcs_uri is not None,
+                    len(doc.raw_text or ""),
+                    doc.source_url,
+                )
             )
         return out
 
@@ -191,33 +209,42 @@ class FsCtx:
     def __init__(self, store: FsStore) -> None:
         self.store = store
         self.session = cast(AsyncSession, FsSession(store))
-        self._task = FsTaskRepository(store)
         self.repos = Repos(
-            document=cast(DocumentRepository, FsDocumentRepository(store)),
-            task=cast(TaskRepository, self._task),
-            chunk=cast(ChunkRepository, FsChunkRepository(store)),
-            entity=cast(EntityRepository, FsEntityRepository(store)),
-            doc_entity=cast(DocumentEntityRepository, FsDocumentEntityRepository(store)),
-            ref=cast(DocumentReferenceRepository, FsDocumentReferenceRepository(store)),
-            unresolved=cast(UnresolvedReferenceRepository, FsUnresolvedReferenceRepository(store)),
+            document=_fsrepos.document,
+            task=_fsrepos.task,
+            chunk=_fsrepos.chunk,
+            entity=_fsrepos.entity,
+            doc_entity=_fsrepos.document_entity,
+            ref=_fsrepos.document_reference,
+            unresolved=_fsrepos.unresolved_reference,
         )
 
     async def document_exists(self, document_id: UUID) -> bool:
         return any(d.id == document_id for d in self.store.rows["documents"])
 
-    async def prepare_task(self, document_id: UUID, step: str) -> UUID:
+    async def prepare_task(self, document_id: UUID, step: PipelineStep) -> UUID:
         next_step = PIPELINE[step]
         if next_step is not None:
-            await self._task.delete_by_document_and_step(document_id, next_step)
-        return await self._task.reset_to_pending(document_id, step)
+            await _fsrepos.task.delete_by_document_and_step(
+                self.session, document_id, next_step
+            )
+        return await _fsrepos.task.reset_to_pending(self.session, document_id, step)
 
     async def list_docs(self) -> list[tuple[str, str, bool, int, str]]:
         out: list[tuple[str, str, bool, int, str]] = []
         for doc in self.store.rows["documents"]:
             tasks = [t for t in self.store.rows["tasks"] if t.document_id == doc.id]
-            steps = " ".join(f"{t.step}:{t.status}" for t in sorted(tasks, key=lambda t: t.step))
+            steps = " ".join(
+                f"{t.step}:{t.status}" for t in sorted(tasks, key=lambda t: t.step)
+            )
             out.append(
-                (str(doc.id), steps, doc.gcs_uri is not None, len(doc.raw_text or ""), doc.source_url)
+                (
+                    str(doc.id),
+                    steps,
+                    doc.gcs_uri is not None,
+                    len(doc.raw_text or ""),
+                    doc.source_url,
+                )
             )
         return out
 
@@ -234,127 +261,131 @@ async def open_ctx(args: argparse.Namespace) -> AsyncIterator[Ctx]:
             yield DbCtx(session)
 
 
-async def _run_step(ctx: Ctx, settings: Settings, step: str, document_id: UUID) -> str:
+async def _run_step(
+    ctx: Ctx, settings: Settings, step: PipelineStep, document_id: UUID
+) -> str:
     if not await ctx.document_exists(document_id):
-        raise SystemExit(f"Document {document_id} not found. Run `crawl` or `docs` first.")
+        raise SystemExit(
+            f"Document {document_id} not found. Run `crawl` or `docs` first."
+        )
     task_id = await ctx.prepare_task(document_id, step)
 
     publisher = NoopPublisher()
     repos = ctx.repos
     session = ctx.session
 
-    if step == "download":
-        from worker_download.config import get_download_settings
-        from worker_download.service import DownloadService
+    match step:
+        case PipelineStep.CRAWL:
+            raise SystemExit("Use the `crawl` command to run the crawl step.")
+        case PipelineStep.DOWNLOAD:
+            from worker_download.config import get_download_settings
+            from worker_download.service import process_download
 
-        ds = get_download_settings()
-        service = DownloadService(
-            session=session,
-            document_repo=repos.document,
-            task_repo=repos.task,
-            storage=create_storage_backend(settings.storage),
-            queue_publisher=publisher,
-            timeout=ds.download_request_timeout,
-            max_retries=ds.download_max_retries,
-            rate_limit_delay=ds.download_rate_limit_delay,
-            next_topic=ds.download_next_topic,
-        )
-        await service.handle_message(QueueMessage(task_id=task_id, document_id=document_id))
+            ds = get_download_settings()
+            await process_download(
+                QueueMessage(task_id=task_id, document_id=document_id),
+                session=session,
+                document_repo=repos.document,
+                task_repo=repos.task,
+                storage=create_storage_backend(settings.storage),
+                queue_publisher=publisher,
+                timeout=ds.download_request_timeout,
+                max_retries=ds.download_max_retries,
+                rate_limit_delay=ds.download_rate_limit_delay,
+                next_topic=ds.download_next_topic,
+            )
+        case PipelineStep.PARSE:
+            from worker_parse.parser import parse_pdf_with_pypdfium2
+            from worker_parse.service import process_parse
 
-    elif step == "parse":
-        from worker_parse.parser import parse_pdf_with_pypdfium2
-        from worker_parse.service import process_parse
+            await process_parse(
+                document_id=document_id,
+                task_id=task_id,
+                storage=create_storage_backend(settings.storage),
+                document_repo=repos.document,
+                task_repo=repos.task,
+                queue_publisher=publisher,
+                parser=parse_pdf_with_pypdfium2,
+                session=session,
+                next_topic=_next_topic(PipelineStep.PARSE),
+            )
+        case PipelineStep.METADATA:
+            from worker_metadata.__main__ import _llm_extractor
+            from worker_metadata.patterns import extract_metadata_rule_based
+            from worker_metadata.service import process_metadata
 
-        await process_parse(
-            document_id=document_id,
-            task_id=task_id,
-            storage=create_storage_backend(settings.storage),
-            document_repo=repos.document,
-            task_repo=repos.task,
-            queue_publisher=publisher,
-            parser=parse_pdf_with_pypdfium2,
-            session=session,
-            next_topic=_next_topic("parse"),
-        )
+            await process_metadata(
+                document_id=document_id,
+                task_id=task_id,
+                document_repo=repos.document,
+                task_repo=repos.task,
+                queue_publisher=publisher,
+                rule_extractor=extract_metadata_rule_based,
+                llm_extractor=_llm_extractor,
+                session=session,
+                next_topic=_next_topic(PipelineStep.METADATA),
+            )
+        case PipelineStep.EXTRACT:
+            from worker_extract.services.extraction_service import process_extraction
 
-    elif step == "metadata":
-        from worker_metadata.__main__ import _llm_extractor
-        from worker_metadata.patterns import extract_metadata_rule_based
-        from worker_metadata.service import process_metadata
+            await process_extraction(
+                document_id=document_id,
+                task_id=task_id,
+                document_repo=repos.document,
+                task_repo=repos.task,
+                entity_repo=repos.entity,
+                doc_entity_repo=repos.doc_entity,
+                ref_repo=repos.ref,
+                unresolved_repo=repos.unresolved,
+                queue_publisher=publisher,
+                session=session,
+                next_topic=_next_topic(PipelineStep.EXTRACT),
+            )
+        case PipelineStep.CHUNK:
+            from worker_chunk.service import process_chunking
 
-        await process_metadata(
-            document_id=document_id,
-            task_id=task_id,
-            document_repo=repos.document,
-            task_repo=repos.task,
-            queue_publisher=publisher,
-            rule_extractor=extract_metadata_rule_based,
-            llm_extractor=_llm_extractor,
-            session=session,
-            next_topic=_next_topic("metadata"),
-        )
+            await process_chunking(
+                document_id=document_id,
+                task_id=task_id,
+                document_repo=repos.document,
+                chunk_repo=repos.chunk,
+                task_repo=repos.task,
+                queue_publisher=publisher,
+                session=session,
+                next_topic=_next_topic(PipelineStep.CHUNK),
+            )
+        case PipelineStep.EMBED:
+            from ai import create_embedding_provider
+            from worker_embed.service import process_embedding
 
-    elif step == "extract":
-        from worker_extract.services.extraction_service import process_extraction
+            await process_embedding(
+                document_id=document_id,
+                task_id=task_id,
+                chunk_repo=repos.chunk,
+                task_repo=repos.task,
+                embedding_provider=create_embedding_provider(),
+                session=session,
+            )
 
-        await process_extraction(
-            document_id=document_id,
-            task_id=task_id,
-            document_repo=repos.document,
-            task_repo=repos.task,
-            entity_repo=repos.entity,
-            doc_entity_repo=repos.doc_entity,
-            ref_repo=repos.ref,
-            unresolved_repo=repos.unresolved,
-            queue_publisher=publisher,
-            session=session,
-            next_topic=_next_topic("extract"),
-        )
-
-    elif step == "chunk":
-        from worker_chunk.service import process_chunking
-
-        await process_chunking(
-            document_id=document_id,
-            task_id=task_id,
-            document_repo=repos.document,
-            chunk_repo=repos.chunk,
-            task_repo=repos.task,
-            queue_publisher=publisher,
-            session=session,
-            next_topic=_next_topic("chunk"),
-        )
-
-    elif step == "embed":
-        from ai import create_embedding_provider
-        from worker_embed.service import process_embedding
-
-        await process_embedding(
-            document_id=document_id,
-            task_id=task_id,
-            chunk_repo=repos.chunk,
-            task_repo=repos.task,
-            embedding_provider=create_embedding_provider(),
-            session=session,
-        )
-
-    final = await repos.task.get_by_id(task_id)
+    final = await repos.task.get_by_id(session, task_id)
     status = final.status if final else "unknown"
-    logger.info("Step %r finished for document %s -> task status=%s", step, document_id, status)
-    if final and final.status == "failed":
+    logger.info(
+        "Step %r finished for document %s -> task status=%s", step, document_id, status
+    )
+    if final and final.status == TaskStatus.FAILED:
         logger.error("Error: %s", final.error_message)
     return status
 
 
 async def _run_chain(
-    ctx: Ctx, settings: Settings, document_id: UUID, until: str | None
+    ctx: Ctx, settings: Settings, document_id: UUID, until: PipelineStep | None
 ) -> None:
     steps = list(PIPELINE)
     if until is not None:
         steps = steps[: steps.index(until) + 1]
     for step in steps:
         status = await _run_step(ctx, settings, step, document_id)
-        if status != "completed":
+        if status != TaskStatus.COMPLETED:
             logger.error("Chain stopped at %r (status=%s)", step, status)
             return
     logger.info("Chain complete for document %s through %r", document_id, steps[-1])
@@ -376,23 +407,29 @@ async def _seed(ctx: Ctx, json_path: str) -> None:
     updates = {k: v for k, v in data.items() if k in _DOC_UPDATE_FIELDS}
     ignored = set(data) - _DOC_UPDATE_FIELDS
     if ignored:
-        logger.warning("Ignoring non-document fields in seed JSON: %s", ", ".join(sorted(ignored)))
+        logger.warning(
+            "Ignoring non-document fields in seed JSON: %s", ", ".join(sorted(ignored))
+        )
 
-    doc = await ctx.repos.document.create(DocumentCreate(source_url=source_url))
+    doc = await ctx.repos.document.create(
+        ctx.session, DocumentCreate(source_url=source_url)
+    )
     if updates:
-        await ctx.repos.document.update(doc.id, DocumentUpdate(**updates))
+        await ctx.repos.document.update(ctx.session, doc.id, DocumentUpdate(**updates))
     await ctx.session.commit()
-    logger.info("Seeded document %s (set: %s)", doc.id, ", ".join(sorted(updates)) or "none")
+    logger.info(
+        "Seeded document %s (set: %s)", doc.id, ", ".join(sorted(updates)) or "none"
+    )
     print(doc.id)
 
 
 async def _run_crawl(ctx: Ctx) -> None:
     from worker_crawl.client import CrawlClient
     from worker_crawl.config import get_crawl_settings
-    from worker_crawl.service import CrawlService
+    from worker_crawl.service import process_crawl
 
     cs = get_crawl_settings()
-    service = CrawlService(
+    result = await process_crawl(
         session=ctx.session,
         document_repo=ctx.repos.document,
         task_repo=ctx.repos.task,
@@ -401,7 +438,6 @@ async def _run_crawl(ctx: Ctx) -> None:
         source_url=cs.crawl_source_url,
         topic=cs.crawl_topic,
     )
-    result = await service.run()
     logger.info(
         "Crawl complete: found=%d new=%d skipped=%d",
         result.total_found,
@@ -436,9 +472,12 @@ async def _dispatch(args: argparse.Namespace) -> None:
         elif args.command == "crawl":
             await _run_crawl(ctx)
         elif args.command == "chain":
-            await _run_chain(ctx, settings, UUID(args.document_id), args.until)
+            until = PipelineStep(args.until) if args.until is not None else None
+            await _run_chain(ctx, settings, UUID(args.document_id), until)
         else:
-            await _run_step(ctx, settings, args.command, UUID(args.document_id))
+            await _run_step(
+                ctx, settings, PipelineStep(args.command), UUID(args.document_id)
+            )
 
 
 def main() -> None:
@@ -459,16 +498,24 @@ def main() -> None:
     seed_parser = sub.add_parser(
         "seed", help="Create one document from a JSON file (to start mid-pipeline)."
     )
-    seed_parser.add_argument("json_file", help="Path to a JSON object of document fields.")
+    seed_parser.add_argument(
+        "json_file", help="Path to a JSON object of document fields."
+    )
     sub.add_parser("crawl", help="Discover documents and create download tasks.")
-    chain_parser = sub.add_parser("chain", help="Run all steps in order for one document.")
+    chain_parser = sub.add_parser(
+        "chain", help="Run all steps in order for one document."
+    )
     chain_parser.add_argument("document_id", help="Target document UUID (see `docs`).")
     chain_parser.add_argument(
         "--until", choices=tuple(PIPELINE), default=None, help="Stop after this step."
     )
     for step in PIPELINE:
-        step_parser = sub.add_parser(step, help=f"Run the {step} step for one document.")
-        step_parser.add_argument("document_id", help="Target document UUID (see `docs`).")
+        step_parser = sub.add_parser(
+            step, help=f"Run the {step} step for one document."
+        )
+        step_parser.add_argument(
+            "document_id", help="Target document UUID (see `docs`)."
+        )
     asyncio.run(_dispatch(parser.parse_args()))
 
 

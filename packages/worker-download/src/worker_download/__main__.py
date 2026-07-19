@@ -8,10 +8,10 @@ from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_publisher, create_queue_subscriber
 from shared.queue.base import QueueMessage
-from shared.repositories import DocumentRepository, TaskRepository
+from shared.repositories import document, task
 from shared.storage import create_storage_backend
 from worker_download.config import get_download_settings
-from worker_download.service import DownloadService
+from worker_download.service import process_download
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,12 +29,11 @@ def main() -> None:
     def handle_message(message: QueueMessage) -> None:
         async def _handle() -> None:
             async with get_async_session() as session:
-                doc_repo = DocumentRepository(session)
-                task_repo = TaskRepository(session)
-                service = DownloadService(
+                await process_download(
+                    message,
                     session=session,
-                    document_repo=doc_repo,
-                    task_repo=task_repo,
+                    document_repo=document,
+                    task_repo=task,
                     storage=storage,
                     queue_publisher=publisher,
                     timeout=download_settings.download_request_timeout,
@@ -42,7 +41,6 @@ def main() -> None:
                     rate_limit_delay=download_settings.download_rate_limit_delay,
                     next_topic=download_settings.download_next_topic,
                 )
-                await service.handle_message(message)
 
         asyncio.run(_handle())
 

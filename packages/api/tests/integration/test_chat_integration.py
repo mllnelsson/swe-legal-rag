@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from ai.dtos import DecomposeResult
 from api.main import create_app
-from api.routes.chat import get_db
-from shared.repositories.session import SessionRepository
+from api.routes.chat import _get_db
+from shared.repositories import session as session_repo
 
 _DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/overklagan"
@@ -31,9 +31,9 @@ def _parse_sse(text: str) -> list[dict[str, Any]]:
     current: dict[str, Any] = {}
     for line in text.split("\n"):
         if line.startswith("event: "):
-            current["event"] = line[len("event: "):]
+            current["event"] = line[len("event: ") :]
         elif line.startswith("data: "):
-            current["data"] = json.loads(line[len("data: "):])
+            current["data"] = json.loads(line[len("data: ") :])
         elif line == "" and current:
             events.append(current)
             current = {}
@@ -67,7 +67,7 @@ async def api_app(truncate_sessions) -> AsyncGenerator[Any, None]:
                 await s.rollback()
                 raise
 
-    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[_get_db] = _override_db
     yield app
     app.dependency_overrides.clear()
     await engine.dispose()
@@ -85,8 +85,7 @@ async def _load_session_from_db(session_id: uuid.UUID) -> Any:
     engine = create_async_engine(_async_url(_DATABASE_URL))
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as s:
-        repo = SessionRepository(s)
-        result = await repo.get_by_id(session_id)
+        result = await session_repo.get_by_id(s, session_id)
     await engine.dispose()
     return result
 
@@ -99,6 +98,7 @@ def _fake_decompose(semantic_query: str = "") -> Any:
             entity_refs=[],
             filters=None,
         )
+
     return _inner
 
 
@@ -106,6 +106,7 @@ def _fake_synthesize(tokens: list[str]) -> Any:
     async def _inner(request, *, provider=None) -> AsyncIterator[str]:
         for t in tokens:
             yield t
+
     return _inner
 
 
@@ -159,7 +160,9 @@ class TestNewSessionRoundTrip:
         ):
             events = await _stream_chat(http_client, {"message": "Vad gäller?"})
 
-        session_id = uuid.UUID(next(e for e in events if e["event"] == "done")["data"]["session_id"])
+        session_id = uuid.UUID(
+            next(e for e in events if e["event"] == "done")["data"]["session_id"]
+        )
         db_session = await _load_session_from_db(session_id)
 
         assert db_session is not None
@@ -170,10 +173,14 @@ class TestNewSessionRoundTrip:
 
 
 class TestFollowUpConversation:
-    async def test_prior_history_passed_to_decompose(self, http_client: httpx.AsyncClient):
+    async def test_prior_history_passed_to_decompose(
+        self, http_client: httpx.AsyncClient
+    ):
         captured_histories: list[list] = []
 
-        async def _capturing_decompose(question, history=None, *, provider=None) -> DecomposeResult:
+        async def _capturing_decompose(
+            question, history=None, *, provider=None
+        ) -> DecomposeResult:
             captured_histories.append(list(history or []))
             return DecomposeResult(
                 semantic_query=question,
@@ -188,9 +195,13 @@ class TestFollowUpConversation:
             patch(_FAKE_RETRIEVE, return_value=[]),
         ):
             first = await _stream_chat(http_client, {"message": "Vad gäller?"})
-            session_id = next(e for e in first if e["event"] == "done")["data"]["session_id"]
+            session_id = next(e for e in first if e["event"] == "done")["data"][
+                "session_id"
+            ]
 
-            await _stream_chat(http_client, {"message": "Berätta mer", "session_id": session_id})
+            await _stream_chat(
+                http_client, {"message": "Berätta mer", "session_id": session_id}
+            )
 
         assert len(captured_histories) == 2
         first_call_history = captured_histories[0]
@@ -204,7 +215,9 @@ class TestFollowUpConversation:
 
 
 class TestMidStreamFailure:
-    async def _failing_synthesize(self, request, *, provider=None) -> AsyncIterator[str]:
+    async def _failing_synthesize(
+        self, request, *, provider=None
+    ) -> AsyncIterator[str]:
         yield "Partial "
         raise RuntimeError("LLM provider failed")
 
@@ -230,7 +243,9 @@ class TestMidStreamFailure:
 
         assert not any(e["event"] == "done" for e in events)
 
-    async def test_history_not_persisted_on_failure(self, http_client: httpx.AsyncClient):
+    async def test_history_not_persisted_on_failure(
+        self, http_client: httpx.AsyncClient
+    ):
         with (
             patch(_FAKE_DECOMPOSE, side_effect=_fake_decompose()),
             patch(_FAKE_SYNTHESIZE, self._failing_synthesize),
@@ -246,6 +261,7 @@ class TestMidStreamFailure:
         async with factory() as s:
             from sqlalchemy import select
             from shared.models.session import Session as SessionModel
+
             result = await s.execute(select(SessionModel))
             sessions = result.scalars().all()
         await engine.dispose()

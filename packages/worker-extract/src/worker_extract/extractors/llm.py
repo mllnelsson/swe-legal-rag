@@ -4,31 +4,32 @@ from ai import extract_entities as ai_extract_entities
 from ai.dtos import EntityResult
 
 from worker_extract.models import (
-    EntityType,
     ExtractionResult,
     ExtractedEntity,
     ExtractedReference,
-    Relevance,
 )
-
-_VALID_TYPES = {e.value for e in EntityType}
-_VALID_RELEVANCES = {r.value for r in Relevance}
 
 
 def _map_entity_result(result: EntityResult) -> ExtractionResult:
+    # ai.dtos already types type/relevance as the shared enums, so the LLM's
+    # structured output is validated to the vocabulary at parse time — no extra
+    # filtering or coercion is needed here.
     entities = [
-        ExtractedEntity(name=e.name, type=EntityType(e.type), relevance=Relevance(e.relevance))
+        ExtractedEntity(name=e.name, type=e.type, relevance=e.relevance)
         for e in result.entities
-        if e.type in _VALID_TYPES and e.relevance in _VALID_RELEVANCES
     ]
     references = [
-        ExtractedReference(case_number=r.case_number, reference_context=r.reference_context)
+        ExtractedReference(
+            case_number=r.case_number, reference_context=r.reference_context
+        )
         for r in result.references
     ]
     return ExtractionResult(entities=entities, references=references)
 
 
 class LLMStrategy:
-    async def extract(self, document_text: str, case_number: str | None = None) -> ExtractionResult:
+    async def extract(
+        self, document_text: str, case_number: str | None = None
+    ) -> ExtractionResult:
         result = await ai_extract_entities(document_text, case_number)
         return _map_entity_result(result)
