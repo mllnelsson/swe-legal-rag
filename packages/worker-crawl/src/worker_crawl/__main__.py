@@ -1,5 +1,8 @@
+import argparse
 import asyncio
 import logging
+import sys
+from datetime import date
 
 from dotenv import load_dotenv
 
@@ -7,20 +10,39 @@ from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_publisher
 from shared.repositories import document, task
-from worker_crawl.client import CrawlClient
-from worker_crawl.config import get_crawl_settings
+from worker_crawl import odata
+from worker_crawl.config import get_crawl_settings, to_odata_config
+from worker_crawl.errors import CrawlError
 from worker_crawl.service import process_crawl
+from worker_crawl.years import resolve_years
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def _run() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="worker_crawl",
+        description="Crawl Överklagandenämnden decisions from the Svenska kyrkan API.",
+    )
+    parser.add_argument(
+        "--years",
+        default=None,
+        help=(
+            "Which decision years to crawl: 'current' (default), 'all', '2019', "
+            "'2019-2021', or a comma-separated mix. Overrides CRAWL_YEARS. "
+            "'all' additionally includes the year-less decision tag."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+async def _run(year_spec: str) -> None:
     settings = get_settings()
     crawl_settings = get_crawl_settings()
 
+    selection = resolve_years(year_spec, date.today())
     publisher = create_queue_publisher(settings.queue)
-    client = CrawlClient(timeout=crawl_settings.crawl_request_timeout)
 
     async with get_async_session() as session:
         result = await process_crawl(
@@ -28,13 +50,16 @@ async def _run() -> None:
             document_repo=document,
             task_repo=task,
             queue_publisher=publisher,
-            client=client,
-            source_url=crawl_settings.crawl_source_url,
+            source=odata,
+            odata_config=to_odata_config(crawl_settings),
+            selection=selection,
             topic=crawl_settings.crawl_topic,
         )
 
     logger.info(
-        "Crawl complete: found=%d new=%d skipped=%d",
+        "Crawl complete: years=%s tags=%d found=%d new=%d skipped=%d",
+        ",".join(str(year) for year in result.years_crawled) or "none",
+        result.tags_used,
         result.total_found,
         result.new_documents,
         result.skipped,
@@ -43,7 +68,15 @@ async def _run() -> None:
 
 def main() -> None:
     load_dotenv()
-    asyncio.run(_run())
+    args = _parse_args()
+    year_spec = args.years or get_crawl_settings().crawl_years
+    try:
+        asyncio.run(_run(year_spec))
+    except CrawlError as error:
+        # Crawl failures are configuration or upstream-API problems, not bugs: report
+        # them as a clean non-zero exit rather than a traceback.
+        logger.error("%s", error)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

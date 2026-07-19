@@ -20,6 +20,7 @@ Usage (run from repo root, .env configured):
     uv run python scripts/run_step.py [--store fs] docs              # list documents + task state
     uv run python scripts/run_step.py [--store fs] seed input.json   # create a doc to start mid-pipeline
     uv run python scripts/run_step.py [--store fs] crawl             # discover docs, create download tasks
+    uv run python scripts/run_step.py [--store fs] crawl --years all # backfill the full decision history
     uv run python scripts/run_step.py [--store fs] download <doc_id> # fetch + store the PDF
     uv run python scripts/run_step.py [--store fs] parse    <doc_id> # PDF -> documents.raw_text
     uv run python scripts/run_step.py [--store fs] metadata <doc_id> # raw_text -> structured fields
@@ -423,10 +424,13 @@ async def _seed(ctx: Ctx, json_path: str) -> None:
     print(doc.id)
 
 
-async def _run_crawl(ctx: Ctx) -> None:
-    from worker_crawl.client import CrawlClient
-    from worker_crawl.config import get_crawl_settings
+async def _run_crawl(ctx: Ctx, year_spec: str | None = None) -> None:
+    from datetime import date
+
+    from worker_crawl import odata
+    from worker_crawl.config import get_crawl_settings, to_odata_config
     from worker_crawl.service import process_crawl
+    from worker_crawl.years import resolve_years
 
     cs = get_crawl_settings()
     result = await process_crawl(
@@ -434,12 +438,15 @@ async def _run_crawl(ctx: Ctx) -> None:
         document_repo=ctx.repos.document,
         task_repo=ctx.repos.task,
         queue_publisher=NoopPublisher(),
-        client=CrawlClient(timeout=cs.crawl_request_timeout),
-        source_url=cs.crawl_source_url,
+        source=odata,
+        odata_config=to_odata_config(cs),
+        selection=resolve_years(year_spec or cs.crawl_years, date.today()),
         topic=cs.crawl_topic,
     )
     logger.info(
-        "Crawl complete: found=%d new=%d skipped=%d",
+        "Crawl complete: years=%s tags=%d found=%d new=%d skipped=%d",
+        ",".join(str(year) for year in result.years_crawled) or "none",
+        result.tags_used,
         result.total_found,
         result.new_documents,
         result.skipped,
@@ -470,7 +477,7 @@ async def _dispatch(args: argparse.Namespace) -> None:
         elif args.command == "seed":
             await _seed(ctx, args.json_file)
         elif args.command == "crawl":
-            await _run_crawl(ctx)
+            await _run_crawl(ctx, args.years)
         elif args.command == "chain":
             until = PipelineStep(args.until) if args.until is not None else None
             await _run_chain(ctx, settings, UUID(args.document_id), until)
@@ -501,7 +508,17 @@ def main() -> None:
     seed_parser.add_argument(
         "json_file", help="Path to a JSON object of document fields."
     )
-    sub.add_parser("crawl", help="Discover documents and create download tasks.")
+    crawl_parser = sub.add_parser(
+        "crawl", help="Discover documents and create download tasks."
+    )
+    crawl_parser.add_argument(
+        "--years",
+        default=None,
+        help=(
+            "Decision years to crawl: 'current' (default), 'all', '2019', '2019-2021', "
+            "or a comma-separated mix. Overrides CRAWL_YEARS."
+        ),
+    )
     chain_parser = sub.add_parser(
         "chain", help="Run all steps in order for one document."
     )

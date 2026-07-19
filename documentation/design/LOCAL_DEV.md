@@ -75,8 +75,15 @@ REDIS_URL=redis://localhost:6379
 
 | Variable | Default | Notes |
 |---|---|---|
-| `CRAWL_SOURCE_URL` | *(required)* | URL of the HTML page listing PDFs |
-| `CRAWL_REQUEST_TIMEOUT` | `30` | HTTP timeout (seconds) for the crawl page fetch |
+| `CRAWL_API_KEY` | *(required)* | API key for the Svenska kyrkan OData endpoint. Not defaulted in code — see [CRAWL_SOURCE.md](CRAWL_SOURCE.md) |
+| `CRAWL_YEARS` | `current` | Decision years to crawl: `current`, `all`, `2019`, `2019-2021`, or a comma-separated mix. `--years` overrides it |
+| `CRAWL_API_BASE` | `https://www.svenskakyrkan.se/webapi/api-v3/odata/` | OData v4 service root |
+| `CRAWL_DOCUMENT_URL_TEMPLATE` | `https://www.svenskakyrkan.se/default.aspx?id={document_id}&ptid=` | Template for the canonical PDF URL stored as `documents.source_url` |
+| `CRAWL_WEB_ID` | `1374643` | Svenska kyrkan web whose documents are listed |
+| `CRAWL_PAGE_SIZE` | `100` | Rows per `$top`/`$skip` page |
+| `CRAWL_RATE_LIMIT_DELAY` | `0.5` | Seconds to sleep between listing pages |
+| `CRAWL_MAX_RETRIES` | `3` | Retry attempts for 5xx / connect / timeout errors |
+| `CRAWL_REQUEST_TIMEOUT` | `30` | HTTP timeout (seconds) for listing requests |
 | `CRAWL_TOPIC` | `download` | Queue topic crawl publishes to |
 | `DOWNLOAD_REQUEST_TIMEOUT` | `60` | HTTP timeout (seconds) for PDF downloads |
 | `DOWNLOAD_MAX_RETRIES` | `3` | Max retry attempts for transient errors |

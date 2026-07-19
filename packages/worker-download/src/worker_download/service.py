@@ -23,17 +23,42 @@ HTTP_SERVER_ERROR = 500
 BACKOFF_BASE_SECONDS = 2
 # Always make at least one attempt, even if max_retries is misconfigured to <1.
 MIN_ATTEMPTS = 1
+# Content type the decision endpoint must answer with once redirects are followed.
+PDF_CONTENT_TYPE = "application/pdf"
+
+
+def _verified_pdf(response: httpx.Response, url: str) -> bytes:
+    """Reject non-PDF payloads instead of storing them as if they were decisions.
+
+    A CMS that answers an unknown id with an HTML error page still returns 200, so status
+    alone is not evidence that a PDF came back.
+    """
+    content_type = (
+        response.headers.get("content-type", "").split(";")[0].strip().lower()
+    )
+    if content_type and content_type != PDF_CONTENT_TYPE:
+        raise DownloadError(
+            f"Expected {PDF_CONTENT_TYPE} from {url}, got {content_type}"
+        )
+    return response.content
 
 
 def _download_pdf(url: str, timeout: int, max_retries: int) -> bytes:
     last_error: Exception = DownloadError(f"No attempts made for {url}")
     headers = {"User-Agent": _USER_AGENT}
-    with httpx.Client(timeout=timeout, headers=headers) as client:
+    # follow_redirects is required: crawl stores the canonical default.aspx?id=... URL,
+    # which 302-redirects to the real /filer/....pdf path. httpx defaults this to False,
+    # and raise_for_status() treats an unfollowed redirect as an error -- so every
+    # download would fail with a 302 HTTPStatusError, which is below HTTP_SERVER_ERROR
+    # and therefore re-raised without a retry.
+    with httpx.Client(
+        timeout=timeout, headers=headers, follow_redirects=True
+    ) as client:
         for attempt in range(max(MIN_ATTEMPTS, max_retries)):
             try:
                 response = client.get(url)
                 response.raise_for_status()
-                return response.content
+                return _verified_pdf(response, url)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code < HTTP_SERVER_ERROR:
                     raise

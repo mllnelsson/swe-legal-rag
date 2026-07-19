@@ -17,6 +17,9 @@ async def create(session: AsyncSession, dto: DocumentCreate) -> DocumentRead:
     doc = DocumentRead(
         id=uuid4(),
         source_url=dto.source_url,
+        source_document_id=dto.source_document_id,
+        source_headline=dto.source_headline,
+        source_published_at=dto.source_published_at,
         gcs_uri=None,
         raw_text=None,
         summary=None,

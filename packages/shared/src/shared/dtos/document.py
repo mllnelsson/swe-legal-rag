@@ -6,6 +6,9 @@ from pydantic import BaseModel, ConfigDict
 
 class DocumentCreate(BaseModel):
     source_url: str
+    source_document_id: int | None = None
+    source_headline: str | None = None
+    source_published_at: datetime | None = None
 
 
 class DocumentUpdate(BaseModel):
@@ -23,6 +26,9 @@ class DocumentRead(BaseModel):
 
     id: uuid.UUID
     source_url: str
+    source_document_id: int | None
+    source_headline: str | None
+    source_published_at: datetime | None
     gcs_uri: str | None
     raw_text: str | None
     summary: str | None

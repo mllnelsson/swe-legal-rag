@@ -9,7 +9,10 @@ The registry. One row per PDF. Tracks both identity and ingestion progress.
 | Column | Type | Notes |
 |---|---|---|
 | id | UUID | PK |
-| source_url | TEXT | Original URL from public API. Unique constraint — dedup key. |
+| source_url | TEXT | Canonical PDF URL, keyed on the CMS document id (`default.aspx?id=...`). Unique constraint — dedup key. |
+| source_document_id | INTEGER | Nullable. CMS `documentId` from the OData listing. Unique constraint — second dedup backstop. Null for rows predating the OData crawler. |
+| source_headline | TEXT | Nullable. Headline from the OData listing, set at crawl time |
+| source_published_at | TIMESTAMPTZ | Nullable. Publish date from the OData listing, set at crawl time |
 | gcs_uri | TEXT | Nullable. Set after download step |
 | raw_text | TEXT | Nullable. Set after parse step |
 | summary | TEXT | Nullable. Set after chunking step (document-level summary) |
@@ -123,6 +126,7 @@ Conversation history for follow-up support. Can live in-memory or Redis instead 
 | tasks | btree | (document_id, step) | Unique constraint + lookup by document |
 | tasks | btree | (step, status) | Query for retryable/pending tasks per step |
 | documents | btree | source_url | Unique constraint — dedup on crawl |
+| documents | btree | source_document_id | Unique constraint — dedup on the CMS document id |
 | entities | btree | (name, type) | Unique constraint + lookup by entity |
 | entities | btree | type | Filter entities by type |
 | document_entities | btree | entity_id | Find all documents for a given entity |
@@ -147,5 +151,7 @@ Conversation history for follow-up support. Can live in-memory or Redis instead 
 - **Chunk sizing rationale:** ~500 tokens per chunk balances retrieval granularity with context preservation. Sentence-aware boundaries prevent mid-sentence splits. 50-token overlap preserves cross-boundary context for embedding.
 - **No soft deletes.** If a document needs reprocessing, wipe its chunks, reset its tasks. Keep it simple at this scale.
 - **Task-queue alignment:** When a pipeline step publishes to the next Pub/Sub topic, it also inserts a `pending` task row for the next step. The consuming worker updates that row through its lifecycle.
+- **Listing metadata is persisted at crawl time (migration 003):** the Svenska kyrkan OData listing supplies `documentId`, `headline` and `publishDate` for free, so they are stored rather than discarded. `source_document_id` gives a stable numeric identity that survives file renames and backs a second unique constraint; `source_headline` and `source_published_at` let the metadata step cross-check the case number and date it extracts from the PDF text. All three are nullable so rows created by the earlier HTML scraper survive the migration — Postgres allows repeated NULLs under a UNIQUE constraint, so those legacy rows do not collide. See [CRAWL_SOURCE.md](../design/CRAWL_SOURCE.md).
+
 - **Graph-in-Postgres:** The `entities`, `document_entities`, and `document_references` tables capture GraphRAG concepts without a graph database. The agent uses these for entity-based pre-filtering (e.g. "find all documents where entity X is primary → semantic search within that set") and relationship traversal ("what other decisions cite this one?"). Standard SQL joins replace graph queries at this scale.
 - **Unresolved references:** Cross-references where the target is not yet in the corpus are stored in `unresolved_references` rather than dropped. Reconciliation happens automatically when the target document is ingested (worker-extract's `reconcile_references()`). This keeps `document_references.target_document_id` as a non-nullable FK without loss of reference data.

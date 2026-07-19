@@ -22,6 +22,9 @@ def _doc_read(case_number: str | None = "ÖN 2021-0001") -> DocumentRead:
     return DocumentRead(
         id=uuid.uuid4(),
         source_url="https://example.com/doc.pdf",
+        source_document_id=None,
+        source_headline=None,
+        source_published_at=None,
         gcs_uri=None,
         raw_text="text",
         summary=None,

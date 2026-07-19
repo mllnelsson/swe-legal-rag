@@ -1,38 +1,69 @@
-from shared.enums import PipelineStep
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.enums import PipelineStep
 from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.sync import SyncQueuePublisher
-from worker_crawl.service import CrawlResult, process_crawl
+from worker_crawl.odata import DecisionListing, ODataConfig
+from worker_crawl.service import process_crawl
+from worker_crawl.tags import DecisionTag
+from worker_crawl.years import YearSelection
 
-_FAKE_URLS = [
-    "https://example.com/doc1.pdf",
-    "https://example.com/doc2.pdf",
-    "https://example.com/doc3.pdf",
+DOCUMENT_URL_TEMPLATE = "https://example.com/default.aspx?id={document_id}&ptid="
+
+ODATA_CONFIG = ODataConfig(
+    base_url="https://example.com/odata/",
+    api_key="test-key",
+    web_id=1374643,
+    document_url_template=DOCUMENT_URL_TEMPLATE,
+    page_size=10,
+    request_timeout=5,
+    rate_limit_delay=0.0,
+    max_retries=1,
+)
+
+TAGS = [DecisionTag(database_id=100104828, name="Överklagandenämndens beslut 2025")]
+
+LISTINGS = [
+    DecisionListing(
+        document_id=document_id,
+        headline=f"Beslut 2025-{index:02d}",
+        published_at=datetime(2025, 3, index + 1, tzinfo=timezone.utc),
+    )
+    for index, document_id in enumerate([2953158, 2953155, 2953153], start=1)
 ]
+
+EXPECTED_URLS = {
+    DOCUMENT_URL_TEMPLATE.format(document_id=listing.document_id)
+    for listing in LISTINGS
+}
 
 
 def _make_kwargs(
-    urls: list[str],
     session: AsyncSession,
     document_repo,
     task_repo,
     publisher: SyncQueuePublisher,
 ) -> dict:
-    client = MagicMock()
-    client.fetch_pdf_urls.return_value = urls
+    source = MagicMock()
+    source.fetch_decision_tags.return_value = TAGS
+    source.fetch_decisions.return_value = LISTINGS
+    source.decision_source_url = lambda _config, document_id: (
+        DOCUMENT_URL_TEMPLATE.format(document_id=document_id)
+    )
     return dict(
         session=session,
         document_repo=document_repo,
         task_repo=task_repo,
         queue_publisher=publisher,
-        client=client,
-        source_url="https://example.com/decisions",
+        source=source,
+        odata_config=ODATA_CONFIG,
+        selection=YearSelection(years=(2025,)),
         topic=PipelineStep.DOWNLOAD,
     )
 
@@ -45,15 +76,17 @@ async def test_full_crawl_creates_documents_and_tasks(
     sync_publisher: SyncQueuePublisher,
     published_messages: list,
 ) -> None:
-    kwargs = _make_kwargs(_FAKE_URLS, session, document_repo, task_repo, sync_publisher)
-    result = await process_crawl(**kwargs)
+    result = await process_crawl(
+        **_make_kwargs(session, document_repo, task_repo, sync_publisher)
+    )
 
-    assert result == CrawlResult(total_found=3, new_documents=3, skipped=0)
+    assert (result.total_found, result.new_documents, result.skipped) == (3, 3, 0)
+    assert result.years_crawled == (2025,)
     assert len(published_messages) == 3
 
     docs = (await session.execute(select(Document))).scalars().all()
     assert len(docs) == 3
-    assert {d.source_url for d in docs} == set(_FAKE_URLS)
+    assert {doc.source_url for doc in docs} == EXPECTED_URLS
 
     crawl_tasks = (
         (
@@ -79,6 +112,31 @@ async def test_full_crawl_creates_documents_and_tasks(
 
 
 @pytest.mark.integration
+async def test_crawl_persists_listing_metadata(
+    session: AsyncSession,
+    document_repo,
+    task_repo,
+    sync_publisher: SyncQueuePublisher,
+) -> None:
+    await process_crawl(
+        **_make_kwargs(session, document_repo, task_repo, sync_publisher)
+    )
+
+    doc = (
+        (
+            await session.execute(
+                select(Document).where(Document.source_document_id == 2953158)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert doc.source_headline == "Beslut 2025-01"
+    assert doc.source_published_at is not None
+    assert doc.source_url == DOCUMENT_URL_TEMPLATE.format(document_id=2953158)
+
+
+@pytest.mark.integration
 async def test_crawl_idempotent_rerun(
     session: AsyncSession,
     document_repo,
@@ -86,15 +144,15 @@ async def test_crawl_idempotent_rerun(
     sync_publisher: SyncQueuePublisher,
     published_messages: list,
 ) -> None:
-    kwargs = _make_kwargs(_FAKE_URLS, session, document_repo, task_repo, sync_publisher)
+    kwargs = _make_kwargs(session, document_repo, task_repo, sync_publisher)
 
-    first_result = await process_crawl(**kwargs)
-    assert first_result == CrawlResult(total_found=3, new_documents=3, skipped=0)
+    first = await process_crawl(**kwargs)
+    assert (first.total_found, first.new_documents, first.skipped) == (3, 3, 0)
 
-    second_result = await process_crawl(**kwargs)
-    assert second_result == CrawlResult(total_found=3, new_documents=0, skipped=3)
+    second = await process_crawl(**kwargs)
+    assert (second.total_found, second.new_documents, second.skipped) == (3, 0, 3)
 
     docs = (await session.execute(select(Document))).scalars().all()
     assert len(docs) == 3
-    # Second run should publish no new messages (only 3 from first run)
+    # The second run must publish nothing new (only the 3 from the first run).
     assert len(published_messages) == 3

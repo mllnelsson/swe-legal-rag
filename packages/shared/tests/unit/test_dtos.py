@@ -37,6 +37,9 @@ class TestDocumentDTOs:
         obj = SimpleNamespace(
             id=uuid.uuid4(),
             source_url="https://example.com",
+            source_document_id=None,
+            source_headline=None,
+            source_published_at=None,
             gcs_uri=None,
             raw_text=None,
             summary=None,

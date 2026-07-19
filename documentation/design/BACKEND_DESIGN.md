@@ -268,20 +268,38 @@ Pub/Sub is an optional dependency: `uv add 'shared[pubsub]'`. Both GCS and Pub/S
 
 ## Crawl Worker (`packages/worker-crawl/`)
 
-One-shot pipeline entry point. Scrapes an HTML page for PDF links, deduplicates against the documents table, and enqueues download tasks.
+One-shot pipeline entry point. Queries the Svenska kyrkan **OData v4 API** for decision listings, deduplicates against the documents table, and enqueues download tasks.
+
+Full source contract, tag mapping and rationale: **[CRAWL_SOURCE.md](CRAWL_SOURCE.md)**.
+
+### Why OData rather than HTML scraping
+
+The decision page is now a JS-driven search UI, so the served HTML contains no PDF anchors and the previous `BeautifulSoup` scraper found nothing. The worker calls the same OData endpoint the page's own JavaScript uses.
+
+**Design decision — the tag filter is mandatory.** Listings are scoped by tag (one per decision year). Without `tags/any(t: t/databaseId in (...))` the query returns 5039 rows covering every binary file on the web (posters, ad creatives, protocols, annual reports); with the decision tags it returns the real corpus of ~1073. A date filter cannot substitute — it cannot distinguish a decision from a poster published the same week.
 
 ### Module layout
 
+I/O sits at the edges; year and tag selection are pure functions, unit-tested without HTTP.
+
 | Module | Role |
 |---|---|
-| `config.py` | `CrawlSettings(BaseSettings)` — reads `CRAWL_SOURCE_URL` (required), `CRAWL_REQUEST_TIMEOUT` (default 30s), `CRAWL_TOPIC` (default `"download"`). `get_crawl_settings()` is `@lru_cache`. |
-| `client.py` | `CrawlClient` — synchronous HTTP scraper. `fetch_pdf_urls(source_url) -> list[str]` GETs the page with `httpx.Client`, parses HTML with `BeautifulSoup`, extracts `<a href="*.pdf">` links, resolves to absolute URLs, and deduplicates order-preservingly with `dict.fromkeys()`. |
-| `service.py` | `process_crawl(*, session, document_repo, task_repo, queue_publisher, client, source_url, topic)` async function + `CrawlResult` DTO — orchestration. Processes each URL, creates `Document` + two `Task` rows (crawl:completed, download:pending), commits, then publishes. No class — dependencies are keyword parameters. |
-| `__main__.py` | Entry point. Loads `.env`, wires all dependencies, runs `asyncio.run(_run())`, logs `CrawlResult`. |
+| `config.py` | `CrawlSettings(BaseSettings)` — `CRAWL_API_KEY` (required, no default), `CRAWL_YEARS` (default `current`), `CRAWL_API_BASE`, `CRAWL_WEB_ID`, `CRAWL_PAGE_SIZE`, `CRAWL_RATE_LIMIT_DELAY`, `CRAWL_MAX_RETRIES`, `CRAWL_REQUEST_TIMEOUT`, `CRAWL_TOPIC`. `get_crawl_settings()` is `@lru_cache`; `to_odata_config()` maps settings to the `ODataConfig` data object. |
+| `odata.py` | HTTP only. `fetch_decision_tags(config)`, `fetch_decisions(config, tag_ids)` (paged via `$skip`/`$top` until `@odata.count`, de-duplicated by document id, retrying 5xx/connect/timeout with exponential backoff), `decision_source_url(config, document_id)`. Module of functions, no client class. |
+| `tags.py` | Pure. `parse_tag_index()` groups tags by trailing year; `select_tag_ids()` picks ids for a `YearSelection` and reports unmatched years instead of logging. |
+| `years.py` | Pure. `resolve_years(spec, today)` parses `current` / `all` / `2019` / `2019-2021` / comma-separated mixes. `today` is injected so `current` is testable. |
+| `service.py` | `process_crawl(*, session, document_repo, task_repo, queue_publisher, source, odata_config, selection, topic)` + `CrawlResult` — orchestration. Creates `Document` + two `Task` rows (crawl:completed, download:pending), commits, then publishes. |
+| `_protocols.py` | `DecisionSource` Protocol so the `odata` *module* is injected structurally, mirroring the repo-namespace convention. |
+| `errors.py` | `CrawlError` and subclasses (`ODataRequestError`, `ODataResponseError`, `YearSpecError`, `UnknownYearError`). |
+| `__main__.py` | Entry point with `--years` (overrides `CRAWL_YEARS`). Exits non-zero with a clean message on `CrawlError`. |
+
+### Year selection
+
+Tags are resolved **live** each run, so new decision years work with no code change. `--years all` additionally pulls the year-less `Överklagandenämndens beslut` tag (125 documents); a default current-year run never does, keeping incremental crawls clean. A requested year with no tag at all raises `UnknownYearError` rather than silently reporting an empty crawl.
 
 ### Deduplication and idempotency
 
-`get_by_source_url()` is checked before creating a document. If the row exists, the URL is skipped. On race conditions (concurrent crawl runs), `IntegrityError` on `documents.source_url` unique constraint is caught per-URL — the session is rolled back and the URL is counted as skipped.
+`get_by_source_url()` is checked before creating a document; `source_url` is the document-id-keyed `default.aspx?id=...` URL, which is stable across renames. On race conditions, `IntegrityError` is caught per-document — the session is rolled back and the document counted as skipped. Since the OData listing supplies a stable `documentId`, `documents.source_document_id` carries a second unique constraint as a backstop.
 
 ### Transaction ordering (sync queue)
 
@@ -289,7 +307,7 @@ One-shot pipeline entry point. Scrapes an HTML page for PDF links, deduplicates 
 
 ### Error handling
 
-Per-URL errors (HTTP failures, unexpected DB errors) are caught, logged as warnings, and the session is rolled back so the next URL can proceed. The crawl never aborts early on a single bad URL.
+Per-document errors (unexpected DB errors, malformed rows) are caught, logged as warnings, and the session is rolled back so the next document can proceed — the crawl never aborts early on a single bad document. Listing-level failures (bad API key, unreachable API, unknown year) raise a `CrawlError` and exit non-zero, because they mean the run produced no meaningful result.
 
 ## Download Worker (`packages/worker-download/`)
 
@@ -706,7 +724,7 @@ The runner:
 
 `reraise` preserves each worker's original propagation behaviour: `chunk` and `embed` re-raise (so the message can be redelivered), the others swallow. `chunk`'s historical split (validation swallowed, work errors re-raised) falls out of the `StepInputError`-vs-generic distinction for free.
 
-**Crawl is not a pipeline step** — it loops over many URLs producing many documents/tasks, so it does not use `run_pipeline_step`; it keeps its own per-URL loop.
+**Crawl is not a pipeline step** — it loops over many listings producing many documents/tasks, so it does not use `run_pipeline_step`; it keeps its own per-document loop.
 
 ### Session-per-message pattern
 

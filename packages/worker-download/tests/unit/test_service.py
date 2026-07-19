@@ -20,6 +20,9 @@ def _make_doc_read(
     return DocumentRead(
         id=uuid.uuid4(),
         source_url=source_url,
+        source_document_id=None,
+        source_headline=None,
+        source_published_at=None,
         gcs_uri=gcs_uri,
         raw_text=None,
         summary=None,
@@ -265,3 +268,57 @@ async def test_download_retries_on_5xx(mock_sleep) -> None:
     publisher.publish.assert_called_once()
 
     mock_sleep.assert_called()
+
+
+@respx.mock
+async def test_download_follows_redirect_to_pdf() -> None:
+    """The crawler stores default.aspx?id=... URLs, which 302 to the real PDF path.
+
+    httpx does not follow redirects by default, and raise_for_status() rejects an
+    unfollowed redirect -- so without follow_redirects every download fails on a 302.
+    """
+    doc = _make_doc_read(source_url="https://example.com/default.aspx?id=2953158&ptid=")
+    task = _make_task_read(doc.id)
+    kwargs, _session, task_repo, _doc_repo, storage, publisher = _make_deps(
+        task, doc, storage_uri=f"gs://bucket/documents/{doc.id}/original.pdf"
+    )
+
+    final_url = "https://example.com/filer/1374643/Beslut%202025-21.pdf"
+    respx.get(doc.source_url).mock(
+        return_value=httpx.Response(302, headers={"Location": final_url})
+    )
+    respx.get(final_url).mock(
+        return_value=httpx.Response(
+            200,
+            content=b"%PDF-1.6 real bytes",
+            headers={"content-type": "application/pdf"},
+        )
+    )
+
+    await process_download(_make_message(task.id, doc.id), **kwargs)
+
+    assert storage.store.call_args[0][1] == b"%PDF-1.6 real bytes"
+    assert task_repo.update_status.call_args_list[-1][0][2].status == "completed"
+    publisher.publish.assert_called_once()
+
+
+@respx.mock
+async def test_download_rejects_non_pdf_content_type() -> None:
+    """A CMS error page still returns 200; status alone does not prove it is a PDF."""
+    doc = _make_doc_read()
+    task = _make_task_read(doc.id)
+    kwargs, _session, task_repo, _doc_repo, storage, publisher = _make_deps(task, doc)
+
+    respx.get(doc.source_url).mock(
+        return_value=httpx.Response(
+            200,
+            content=b"<html>not found</html>",
+            headers={"content-type": "text/html"},
+        )
+    )
+
+    await process_download(_make_message(task.id, doc.id), **kwargs)
+
+    storage.store.assert_not_called()
+    publisher.publish.assert_not_called()
+    assert task_repo.update_status.call_args_list[-1][0][2].status == "failed"

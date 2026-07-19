@@ -40,6 +40,9 @@ def _doc(doc_id: uuid.UUID) -> DocumentRead:
     return DocumentRead(
         id=doc_id,
         source_url="http://example.com/doc.pdf",
+        source_document_id=None,
+        source_headline=None,
+        source_published_at=None,
         gcs_uri=None,
         raw_text="text",
         summary=None,

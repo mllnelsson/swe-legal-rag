@@ -10,7 +10,7 @@ DEFAULT_PAGE_SIZE = 100
 
 
 async def create(session: AsyncSession, dto: DocumentCreate) -> DocumentRead:
-    doc = Document(source_url=dto.source_url)
+    doc = Document(**dto.model_dump())
     session.add(doc)
     await session.flush()
     await session.refresh(doc)

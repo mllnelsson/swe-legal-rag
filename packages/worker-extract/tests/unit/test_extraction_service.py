@@ -24,6 +24,9 @@ def _make_doc(
     return DocumentRead(
         id=document_id or uuid.uuid4(),
         source_url="https://example.com/doc.pdf",
+        source_document_id=None,
+        source_headline=None,
+        source_published_at=None,
         gcs_uri=None,
         raw_text=raw_text,
         summary=None,

@@ -19,6 +19,9 @@ def _make_document(raw_text: str | None = "Swedish legal text.") -> DocumentRead
     return DocumentRead(
         id=uuid.uuid4(),
         source_url="https://example.com/doc.pdf",
+        source_document_id=None,
+        source_headline=None,
+        source_published_at=None,
         gcs_uri=None,
         raw_text=raw_text,
         summary=None,

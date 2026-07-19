@@ -14,8 +14,13 @@ How to run the system locally end-to-end for manual testing and verification.
 Edit `.env` before running. Minimum required for a full pipeline run:
 
 ```bash
-# Must set — no default
-CRAWL_SOURCE_URL=https://www.svenskakyrkan.se/beslut-fran-overklagandenamnden
+# Must set — no default. Client-side key used by the public decision search on
+# svenskakyrkan.se; read it from the site's own network requests.
+# See documentation/design/CRAWL_SOURCE.md
+CRAWL_API_KEY=<api-key>
+
+# Which decision years to crawl: current (default) | all | 2019 | 2019-2021
+CRAWL_YEARS=current
 
 # Must set — needed by metadata worker LLM fallback
 GEMINI_API_KEY=<your-key>
@@ -49,11 +54,18 @@ With `QUEUE_BACKEND=sync`, each worker dispatches to the next inline — you can
 With `QUEUE_BACKEND=sync`, the crawl worker triggers download inline, which triggers parse, which triggers metadata. Run from the project root:
 
 ```bash
+# Current year (default)
 uv run --package worker-crawl python -m worker_crawl
+
+# Backfill the full history (~1073 documents across 2000-2026 plus the year-less tag)
+uv run --package worker-crawl python -m worker_crawl --years all
+
+# A specific year or range
+uv run --package worker-crawl python -m worker_crawl --years 2019-2021
 ```
 
 This will:
-1. Crawl the source URL for PDF links
+1. Query the OData API for the current year's decisions
 2. Download new PDFs to `./data/pdfs/`
 3. Parse each PDF to extract raw text
 4. Extract metadata (rule-based, with LLM fallback)
@@ -63,8 +75,8 @@ This will:
 Run each worker as a separate process. Useful when `QUEUE_BACKEND` is not `sync` or to isolate a single step:
 
 ```bash
-# Crawl — discovers PDF links, publishes to 'download' topic
-uv run --package worker-crawl python -m worker_crawl
+# Crawl — discovers decisions via the OData API, publishes to 'download' topic
+uv run --package worker-crawl python -m worker_crawl [--years all]
 
 # Download — listens on 'download', saves PDFs, publishes to 'parse'
 uv run --package worker-download python -m worker_download
@@ -96,7 +108,7 @@ cleared first (avoids the `uq_tasks_document_id_step` unique violation).
 
 ```bash
 # Discover documents, then list them with their per-step task status
-uv run python scripts/run_step.py crawl
+uv run python scripts/run_step.py crawl            # add --years all to backfill
 uv run python scripts/run_step.py docs
 
 # Run a single step for one document (UUID from `docs`)
@@ -205,7 +217,7 @@ ls -la ./data/pdfs/
 
 All workers log to stdout. Key things to look for:
 
-- `Crawl complete: found=X new=Y skipped=Z` — crawl worker summary
+- `Crawl complete: years=... tags=N found=X new=Y skipped=Z` — crawl worker summary
 - `Downloaded <url>` — successful PDF download
 - `Parsed document <id>: <N> chars` — successful text extraction
 - `Metadata extracted for <id>` — metadata step complete
@@ -245,7 +257,9 @@ uv run pytest packages/worker-metadata/tests/
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ValidationError: crawl_source_url` | `CRAWL_SOURCE_URL` not set in `.env` | Add the URL to your `.env` |
+| `ValidationError: crawl_api_key` | `CRAWL_API_KEY` not set in `.env` | Add the key to your `.env` — see [CRAWL_SOURCE.md](CRAWL_SOURCE.md) |
+| `UnknownYearError: No decision tags found for ...` | Requested a year with no tag upstream | Check the available range in the message; use `--years all` to backfill everything |
+| Downloads all fail on a `302` | `follow_redirects` disabled in the download client | Decision URLs redirect to `/filer/...pdf`; the client must follow redirects |
 | `Connection refused` on port 5432 | Postgres not running | `docker compose up -d` |
 | `relation "documents" does not exist` | Migrations not applied | `uv run alembic upgrade head` |
 | `gemini_api_key is required` | `GEMINI_API_KEY` not set | Add key to `.env` (needed for metadata LLM fallback) |
