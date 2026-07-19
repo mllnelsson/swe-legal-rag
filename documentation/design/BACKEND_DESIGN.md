@@ -904,6 +904,13 @@ These record the reasoning behind the function-based data layer and the enum voc
 
 **How the `--store fs` seam is preserved.** Workers are handed repo **namespaces** (modules) typed by the injection Protocols in `shared/repositories/_protocols.py`. In production the real `shared.repositories.<name>` modules are injected; `scripts/run_step.py --store fs` injects the file-backed doubles in `scripts/_fsrepos/*` instead (same function surface, backed by JSON via `FsStore`/`FsSession`). Because the Protocols describe a structural surface both satisfy, no worker code changes between DB and fs modes. The Protocol members are declared as `@property`-returning-`Callable` so a module of functions satisfies them under both pyright and ty (a method-style member's `self` is not stripped for a module under ty). Integration/`api` tests that call repos directly use `shared.testing.bind_repo(module, session)` to get a session-bound namespace.
 
+**Tradeoff — why `process_*` takes repos as parameters at all (do not "clean this up").** Because repositories are now plain function modules, a worker *could* simply `import shared.repositories.document as document_repo` at module top and call it directly — no repo parameter needed. Threading each repo namespace through as a `process_*` argument is therefore **not** incidental; it is the entire injection seam, and it buys exactly two things:
+
+1. **The `--store fs` playground.** Swapping `shared.repositories.*` for `scripts/_fsrepos/*` happens purely at the call site (`__main__.py` injects the real modules; `run_step.py --store fs` injects the doubles). A direct top-level import would hard-wire every worker to Postgres and delete the DB-free playground.
+2. **The unit-test seam.** Tests pass a `MagicMock()` namespace of `AsyncMock`s as the repo argument — no import monkeypatching. (This is also why mock call-args are offset by one: `session` is always the first positional arg — see [TESTING.md](TESTING.md).)
+
+So the repo parameters are load-bearing. A future agent tempted to "simplify" by importing the repo modules directly would silently break both the `--store fs` chain and the mock-injection test strategy. If the playground and the mock seam were ever genuinely dropped, *then* the honest simplification would be to remove the parameters and import directly — but only then, and as a deliberate decision, not a cleanup.
+
 <a id="strenum-vocabularies"></a>
 ### StrEnum vocabularies need no migration; DTO fields stay `str`
 
