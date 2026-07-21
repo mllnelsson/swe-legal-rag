@@ -33,8 +33,8 @@ QUEUE_BACKEND=sync
 LLM_PROVIDER=gemini
 LLM_MODEL=gemini-2.0-flash
 EMBEDDING_PROVIDER=local
-EMBEDDING_MODEL=e5-multilingual
-EMBEDDING_DIMENSION=768
+EMBEDDING_MODEL=intfloat/multilingual-e5-large
+EMBEDDING_DIMENSION=1024
 ```
 
 ## Pipeline Overview

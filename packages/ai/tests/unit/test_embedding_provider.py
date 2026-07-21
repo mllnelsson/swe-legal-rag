@@ -12,7 +12,7 @@ from ai.providers.local_embeddings import LocalEmbeddingProvider
 
 
 def _make_provider(
-    model: str = "intfloat/multilingual-e5-base",
+    model: str = "intfloat/multilingual-e5-large",
 ) -> LocalEmbeddingProvider:
     config = EmbeddingConfig(EMBEDDING_MODEL=model, EMBEDDING_PROVIDER="local")
     return LocalEmbeddingProvider(config)
@@ -76,7 +76,7 @@ async def test_empty_input() -> None:
 
 def test_protocol_compliance() -> None:
     config = EmbeddingConfig(
-        EMBEDDING_MODEL="intfloat/multilingual-e5-base", EMBEDDING_PROVIDER="local"
+        EMBEDDING_MODEL="intfloat/multilingual-e5-large", EMBEDDING_PROVIDER="local"
     )
     provider = LocalEmbeddingProvider(config)
     assert isinstance(provider, EmbeddingProvider)

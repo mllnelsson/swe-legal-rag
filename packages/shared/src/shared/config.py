@@ -6,7 +6,13 @@ from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-EMBEDDING_DIMENSION: int = int(os.environ.get("EMBEDDING_DIMENSION", "768"))
+# Matches `ai.embedding.DEFAULT_EMBEDDING_MODEL` (intfloat/multilingual-e5-large).
+# Changing this requires a migration recreating `chunks.embedding` at the new width.
+DEFAULT_EMBEDDING_DIMENSION = 1024
+
+EMBEDDING_DIMENSION: int = int(
+    os.environ.get("EMBEDDING_DIMENSION", DEFAULT_EMBEDDING_DIMENSION)
+)
 
 
 class StorageBackendType(StrEnum):

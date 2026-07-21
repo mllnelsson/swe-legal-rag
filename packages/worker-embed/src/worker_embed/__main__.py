@@ -6,7 +6,7 @@ import signal
 
 from dotenv import load_dotenv
 
-from ai import create_embedding_provider
+from ai import create_embedding_provider, verify_embedding_dimension
 from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_subscriber
@@ -25,6 +25,12 @@ def main() -> None:
     embed_settings = get_embed_settings()
 
     embedding_provider = create_embedding_provider()
+
+    # Fail before consuming the queue rather than once per document. Also warms the
+    # model, so the first message is not charged for loading it.
+    dimension = asyncio.run(verify_embedding_dimension(embedding_provider))
+    logger.info("Embedding dimension verified: %d", dimension)
+
     subscriber = create_queue_subscriber(settings.queue)
 
     def handle_message(message: QueueMessage) -> None:

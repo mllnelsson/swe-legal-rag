@@ -16,7 +16,13 @@ from ai.dtos import (
     SummarizeResult,
     SynthesizeRequest,
 )
-from ai.embedding import EmbeddingConfig, EmbeddingProvider, create_embedding_provider
+from ai.embedding import (
+    EmbeddingConfig,
+    EmbeddingProvider,
+    create_embedding_provider,
+    verify_embedding_dimension,
+)
+from ai.errors import AiError, EmbeddingDimensionMismatchError
 from ai.services import (
     decompose_query,
     extract_entities,
@@ -36,6 +42,10 @@ __all__ = [
     "EmbeddingProvider",
     "EmbeddingConfig",
     "create_embedding_provider",
+    "verify_embedding_dimension",
+    # Errors
+    "AiError",
+    "EmbeddingDimensionMismatchError",
     # DTOs
     "DateFilter",
     "DecomposeRequest",

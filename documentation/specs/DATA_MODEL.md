@@ -50,7 +50,7 @@ The retrieval layer. Each chunk is a unit of search and retrieval.
 | chunk_index | INTEGER | Position within document (ordering) |
 | chunk_text | TEXT | Raw chunk content. Displayed in citations. |
 | contextual_text | TEXT | Summary + chunk text. Used for embedding. Never shown to end users. |
-| embedding | VECTOR(dims) | pgvector. Dimension TBD by model choice (e.g. 768 for e5-multilingual, 1024 for Cohere) |
+| embedding | VECTOR(1024) | pgvector. Width is set by the embedding model — see [Embedding dimension](#implementation-decisions) |
 | tsv | TSVECTOR | Generated from chunk_text using Swedish text search config. For BM25-style search. |
 | created_at | TIMESTAMPTZ | Row creation |
 
@@ -137,7 +137,23 @@ Conversation history for follow-up support. Can live in-memory or Redis instead 
 
 ## Implementation Decisions
 
-- **Embedding dimension**: Locked at `VECTOR(768)` for `intfloat/multilingual-e5-base` (e5-multilingual). Configurable via `EMBEDDING_DIMENSION` environment variable, default `768`. Change to `1024` for Cohere — requires both env var update and a new migration recreating the `chunks.embedding` column. Value is read at application startup from `shared/config.py` and applied to both the SQLAlchemy model and the Alembic migration.
+- **Embedding dimension**: `VECTOR(1024)` for `intfloat/multilingual-e5-large`, selected for Swedish retrieval quality — see [ARCHITECTURE.md §7](ARCHITECTURE.md#7-embedding-model). Configurable via `EMBEDDING_DIMENSION`, default `1024`.
+
+  **`EMBEDDING_MODEL` and `EMBEDDING_DIMENSION` must always change together**, plus a migration recreating the `chunks.embedding` column at the new width. Vectors are not portable across models: e5-base (768) and e5-large (1024) occupy different vector spaces, so a model change invalidates every stored embedding and requires a full re-embed of the corpus.
+
+  **Known hazard — the value is defined in three places and nothing cross-checks them:**
+
+  | Location | When it is read |
+  |---|---|
+  | `shared/config.py` (`DEFAULT_EMBEDDING_DIMENSION`) | Python import time — configures the `Chunk` model |
+  | `alembic/versions/001_initial_schema.py` | `alembic upgrade` time — baked into the DDL |
+  | `ai/embedding.py` (`DEFAULT_EMBEDDING_MODEL`) | Implicitly, via the model's actual output width |
+
+  `EMBEDDING_DIMENSION` is read with a bare `os.environ.get` rather than a pydantic setting, so nothing validates these against each other by construction. Setting `EMBEDDING_MODEL` without setting `EMBEDDING_DIMENSION` is the most likely way to break them apart.
+
+  **Guarded by a startup check.** `ai.verify_embedding_dimension(provider)` embeds one throwaway string and compares the observed width against `EMBEDDING_DIMENSION`, raising `EmbeddingDimensionMismatchError` if they disagree. It runs in `worker-embed`'s `__main__` before the queue subscription starts, and in the API's lifespan before it serves traffic. Without it a mismatch surfaced only at the embed step as `EmbeddingDimensionError` (`worker_embed/service.py`) — after crawl, download, parse, metadata, extract and chunk had already run.
+
+  The check is written against the `EmbeddingProvider` Protocol, not the local provider, so a future HTTP-backed provider is covered unchanged. Because it performs a real embed call, it also forces the local model to load eagerly — see the note in [EMBEDDING_HOSTING.md](../design/EMBEDDING_HOSTING.md).
 - **tsvector column**: `chunks.tsv` is a `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` column. PostgreSQL computes and stores it automatically at INSERT time when `chunk_text` is written (during the chunk step). The embed worker does not touch it — attempting to UPDATE a `GENERATED ALWAYS STORED` column fails with a PostgreSQL error.
 - **Async repositories**: The repositories are **modules of async functions** (one per entity), each taking a SQLAlchemy `AsyncSession` as its first argument — not classes. Application code accesses the database exclusively through the async path. See [BACKEND_DESIGN.md → Function-based data layer](../design/BACKEND_DESIGN.md#function-based-data-layer).
 - **Finite-set columns stay `str`, values come from `StrEnum`**: `tasks.step`/`status`, `entities.type`, and `document_entities.relevance` are `VARCHAR`/`Mapped[str]`; their values are the `shared.enums` StrEnum members (`PipelineStep`, `TaskStatus`, `EntityType`, `EntityRelevance`). Because a `StrEnum` member is the exact stored text, adopting the enums needed **no migration**.

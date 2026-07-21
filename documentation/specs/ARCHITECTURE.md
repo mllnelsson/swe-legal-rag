@@ -135,9 +135,18 @@ The embedding model is needed in two places: **ingestion** (worker-embed, batch)
 
 | Option | Monthly cost | Cold start | Model control | Notes |
 |---|---|---|---|---|
-| Cloud Run `min-instances: 1` | ~$15-30 | None | Full | **Selected.** Simplest. API server always warm with model loaded. No external dependency. |
+| Cloud Run `min-instances: 1` | ~$15-30 | None | Full | Simplest. API server always warm with model loaded. No external dependency. Spends most of the NFR2 idle budget. |
 | HuggingFace Inference Endpoints | ~$5-15 | ~30-60s from zero | Full | Scale-to-zero available. Cheaper but adds external dependency and cold start. Good fallback option. |
 | Vertex AI Embedding API | <$1 | None | Google models only | Cheapest. But locked to Google's model, no local dev parity, loses benchmark-validated quality. |
+
+> **Open question — `min-instances` is not settled.** This section previously marked
+> `min-instances: 1` as selected while [EMBEDDING_HOSTING.md](../design/EMBEDDING_HOSTING.md#decision)
+> marked `min-instances: 0` as selected for launch. Both cannot hold, and the choice is a
+> direct NFR1/NFR2 tradeoff: `0` protects the <$30/mo idle budget but makes the first query
+> after scale-to-zero take 30-60s against a <5s target; `1` meets NFR1 but consumes
+> $15-30/mo of that budget before Cloud SQL is counted. **EMBEDDING_HOSTING.md is the
+> authoritative doc for this decision** — resolve it there, not here. Deferred to Story 12
+> (GCP Deployment), where the real idle cost becomes measurable.
 | Vertex AI custom endpoint (GPU) | ~$800 | None | Full | Massive overkill at this scale. |
 
 **Decision: Cloud Run with `min-instances: 0`** (scale-to-zero) on the API service initially. Cold starts (~30-60s for model load) are accepted at launch given low query volume. Upgrade to `min-instances: 1` (~$15-30/mo) when usage justifies always-on cost. The ingestion worker (worker-embed) always scales to zero since batch latency is not user-facing.

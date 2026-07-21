@@ -306,7 +306,14 @@ class TestChatEndpointErrorHandling:
 class TestHealthz:
     def test_healthz_returns_200(self):
         app = create_app()
-        with TestClient(app) as client:
+        # Entering TestClient runs lifespan, which verifies the embedding dimension.
+        # Stubbed out here: the real check loads the ~2.2 GB model, which this test
+        # has no use for. Coverage for the check itself lives in the ai package.
+        with (
+            patch("ai.create_embedding_provider", return_value=MagicMock()),
+            patch("ai.verify_embedding_dimension", new=AsyncMock(return_value=1024)),
+            TestClient(app) as client,
+        ):
             response = client.get("/healthz")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}

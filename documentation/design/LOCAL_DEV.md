@@ -61,10 +61,11 @@ PUBSUB_PROJECT_ID=              # required when QUEUE_BACKEND=pubsub
 LLM_PROVIDER=gemini
 LLM_MODEL=gemini-2.0-flash
 EMBEDDING_PROVIDER=local
-EMBEDDING_MODEL=e5-multilingual
+# Passed verbatim to SentenceTransformer() — must be a resolvable HuggingFace id
+EMBEDDING_MODEL=intfloat/multilingual-e5-large
 
-# Embedding dimension (768=e5-multilingual, 1024=Cohere)
-EMBEDDING_DIMENSION=768
+# Must match the model's output width (e5-large=1024, e5-base=768)
+EMBEDDING_DIMENSION=1024
 
 # Optional services
 MINIO_ENDPOINT=http://localhost:9000
@@ -120,8 +121,8 @@ uv run --package worker-embed python -m worker_embed
 - Requires `GEMINI_API_KEY` in `.env` — summary generation calls Gemini Flash via the `ai` package.
 
 **worker-embed notes:**
-- Default `EMBEDDING_PROVIDER=local` with `EMBEDDING_MODEL=e5-multilingual` runs embedding via `sentence-transformers` locally — no API key required.
-- First run downloads `intfloat/multilingual-e5-base` (~1.1 GB one-time to the HuggingFace cache). Subsequent runs use the cached model.
+- Default `EMBEDDING_PROVIDER=local` with `EMBEDDING_MODEL=intfloat/multilingual-e5-large` runs embedding via `sentence-transformers` locally — no API key required. The model is ~2.2 GB and is downloaded on first use, so the first embed (and the first API query) is slow.
+- First run downloads `intfloat/multilingual-e5-large` (~2.2 GB one-time to the HuggingFace cache). Subsequent runs use the cached model.
 
 ## Interface Mapping
 
@@ -133,7 +134,7 @@ uv run --package worker-embed python -m worker_embed
 | Queue | `QUEUE_BACKEND` | `sync` (in-process) | `pubsub` |
 | Queue project | `PUBSUB_PROJECT_ID` | *(not needed)* | GCP project ID |
 | Secrets | — | `.env` file | Secret Manager |
-| Embedding dim | `EMBEDDING_DIMENSION` | `768` | model-dependent |
+| Embedding dim | `EMBEDDING_DIMENSION` | `1024` | `1024` — must match `EMBEDDING_MODEL` in both environments |
 
 Development defaults: `STORAGE_BACKEND=local` and `QUEUE_BACKEND=sync`. No GCS or Pub/Sub credentials required for local development.
 

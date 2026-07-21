@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from shared.config import EMBEDDING_DIMENSION
 from shared.dtos.chunk import ChunkRead
 from shared.dtos.task import TaskRead
 from worker_embed.errors import (
@@ -16,7 +17,8 @@ from worker_embed.errors import (
 from worker_embed.service import process_embedding
 
 _NOW = datetime.now(tz=timezone.utc)
-_EMBEDDING_DIM = 768
+# Derived from config so the suite follows a model/dimension change automatically.
+_EMBEDDING_DIM = EMBEDDING_DIMENSION
 
 
 def _make_chunk(

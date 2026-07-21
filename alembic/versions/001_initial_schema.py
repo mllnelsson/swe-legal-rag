@@ -18,7 +18,10 @@ down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-EMBEDDING_DIMENSION = int(os.environ.get("EMBEDDING_DIMENSION", "768"))
+# Must match `shared.config.DEFAULT_EMBEDDING_DIMENSION` — this migration bakes the
+# value into DDL at upgrade time, while the Chunk model resolves it at import time.
+# If the two disagree the mismatch only surfaces at embed time (EmbeddingDimensionError).
+EMBEDDING_DIMENSION = int(os.environ.get("EMBEDDING_DIMENSION", 1024))
 
 
 def upgrade() -> None:

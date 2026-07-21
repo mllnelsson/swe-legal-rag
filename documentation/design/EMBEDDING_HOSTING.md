@@ -126,9 +126,45 @@ Deploy `e5-large` as a custom prediction endpoint on Vertex AI with dedicated GP
 3. **Clear upgrade path** — flip `min-instances` to `1` when cold starts become a problem (~$15-30/mo).
 4. **Fallback path** — if a different approach is needed, Option 2 (HF Endpoints) is a straightforward migration via the existing `EmbeddingProvider` abstraction.
 
+> **Unresolved: `min-instances` 0 vs 1.** ARCHITECTURE.md previously asserted
+> `min-instances: 1` was selected while this document asserted `0`. This doc is
+> authoritative; the value is now treated as **open until Story 12 (GCP Deployment)**,
+> where measured idle cost can settle it. The tension is structural, not editorial:
+>
+> | Setting | NFR1 (<5s query) | NFR2 (<$30/mo idle) |
+> |---|---|---|
+> | `min-instances: 0` | ❌ 30-60s on first query from cold | ✅ zero idle cost |
+> | `min-instances: 1` | ✅ always warm | ⚠️ $15-30/mo, most of the budget |
+>
+> Note that e5-base would **not** have resolved this — at ~1.1 GB it roughly halves the
+> cold start, which is still far outside a 5s target. Any in-process model needs a warm
+> path to satisfy NFR1.
+
+## Considered: consolidating embedding onto the API service
+
+Embedding currently runs in **two** processes: the API server loads it at query time
+(`api/main.py` → `create_embedding_provider()`, used by `retriever.py`) and `worker-embed`
+loads its own copy for batch ingestion. With e5-large that is ~2.2 GB of weights resident
+in each.
+
+A proposed alternative is to make the API the single host for the model and have
+`worker-embed` call it rather than loading its own instance.
+
+| | Argument |
+|---|---|
+| **For** | One model instance instead of two; the API is already warm if `min-instances: 1`, so ingestion reuses warmth it is already paying for; worker containers get small and cheap to start. |
+| **Against** | Couples batch ingestion to the API's availability and request path; a bulk backfill would drive heavy sustained load through a latency-sensitive service; needs batching/timeout handling that the in-process call does not; loses the "same code path everywhere" property that motivated Option 1. |
+
+**Not decided.** Recorded here so the option is not rediscovered from scratch. The
+`EmbeddingProvider` Protocol is the seam that makes this a swap rather than a rewrite —
+an HTTP-backed provider would satisfy the same interface, exactly as Option 2 (HF
+Endpoints) would. Evaluate alongside the `min-instances` decision in Story 12, since the
+two interact: consolidation is most attractive precisely when the API is already always-on.
+
 ## Re-evaluation Triggers
 
 Revisit this decision if:
 - Query volume increases enough to require multiple always-on instances (cost scales linearly).
 - The model is upgraded to something larger that doesn't fit in Cloud Run's memory limits (8 GB max).
 - Budget constraints require eliminating the always-on cost entirely.
+- Ingestion backfills become frequent enough that loading the model twice is a material cost.

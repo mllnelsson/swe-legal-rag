@@ -117,6 +117,17 @@ Pydantic v2 DTOs for every LLM use case. All models are `frozen=True`.
 
 **Dimension constraint:** The default model `intfloat/multilingual-e5-large` produces 1024-dim vectors, which matches `shared.config.EMBEDDING_DIMENSION` (default `1024`) and the `chunks.embedding` column size baked into migrations. `EMBEDDING_MODEL` and `EMBEDDING_DIMENSION` must always change together: update both env vars and provide a new migration that recreates the `chunks.embedding` column at the new dimension. See ARCHITECTURE.md §7 for model choice rationale and hosting strategy.
 
+`async verify_embedding_dimension(provider) -> int` enforces that constraint at startup. It embeds one throwaway string via the `EmbeddingProvider` Protocol and raises `EmbeddingDimensionMismatchError` (from `ai/errors.py`) when the observed width disagrees with `EMBEDDING_DIMENSION`.
+
+**Design decision — verify at startup, not per document.** The dimension is declared in three uncoordinated places (`shared/config.py`, `alembic/versions/001_initial_schema.py`, and implicitly the configured model), and they have drifted before. Callers invoke the check once per process:
+
+| Caller | Where | Consequence |
+|---|---|---|
+| `worker-embed` | `__main__.main()`, before `subscriber.start()` | Fails before consuming the queue instead of once per document; warms the model so the first message is not charged for loading it |
+| `api` | `_lifespan`, before yielding | Refuses to serve on a mismatch rather than failing every query; moves the model load off the first user query onto container start |
+
+The API consequence is deliberate but not free — it makes container start slower by the model load time (~2.2 GB for e5-large), which interacts with the unresolved `min-instances` decision in [EMBEDDING_HOSTING.md](EMBEDDING_HOSTING.md#decision). Tests that enter the API lifespan must stub `ai.verify_embedding_dimension`, or they will load the real model.
+
 ## Shared Package Module Layout
 
 The `packages/shared/src/shared/` package is the single source of truth for data and database access.
