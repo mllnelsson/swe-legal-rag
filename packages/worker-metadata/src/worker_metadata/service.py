@@ -37,7 +37,6 @@ async def process_metadata(
             raise StepInputError(f"Document {document_id} has no raw text")
 
         result = rule_extractor(document.raw_text)
-
         if not is_complete(result):
             missing = [f for f in _METADATA_FIELDS if getattr(result, f) is None]
             logger.info(

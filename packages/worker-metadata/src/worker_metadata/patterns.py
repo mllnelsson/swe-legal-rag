@@ -31,10 +31,7 @@ _SWEDISH_MONTHS: dict[str, int] = {
 }
 
 _CASE_NUMBER_PATTERNS: list[str] = [
-    r"(?:Dnr|dnr)\s+([\d]{4}-[\d]+)",
-    r"Diarienummer\s+([\d]{4}-[\d]+)",
-    r"ÖN\s+([\d]{4}-[\d]+)",
-    r"(?:Beslut\s+)?([\d]{4}-[\d]{3,})",
+    r"Ärendenummer: ÖN\s+(\d{4}-\d+)",
 ]
 
 _OUTCOME_KEYWORDS: list[str] = [
@@ -48,7 +45,6 @@ _CATEGORY_PATTERNS: list[str] = [
     r"Ämne:\s*(.+?)(?:\n|$)",
     r"Kategori:\s*(.+?)(?:\n|$)",
 ]
-
 # The decision outcome ("avslår", "bifaller", ...) sits near the end of a ruling,
 # so only the tail of the text is scanned.
 SUMMARY_TAIL_CHARS = 2000
@@ -71,44 +67,35 @@ def extract_case_number(text: str) -> str | None:
 
 
 def extract_decision_date(text: str) -> datetime.date | None:
-    m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
+    m = re.search(r"Meddelat (\d{4}-\d{2}-\d{2})", text[:2000])
     if m:
         try:
-            return datetime.date.fromisoformat(m.group(1))
+            return datetime.datetime.strptime(m.group(1), "%Y-%m-%d").date()
         except ValueError:
             pass
-
-    textual = (
-        r"(?:den\s+)?(\d{1,2})\s+"
-        r"(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)"
-        r"\s+(\d{4})"
-    )
-    m = re.search(textual, text, re.IGNORECASE)
-    if m:
-        month = _SWEDISH_MONTHS.get(m.group(2).lower())
-        if month:
-            try:
-                return datetime.date(int(m.group(3)), month, int(m.group(1)))
-            except ValueError:
-                pass
-
-    abbreviated = (
-        r"(\d{1,2})\s+(jan|feb|mar|apr|maj|jun|jul|aug|sep|okt|nov|dec)\.?\s+(\d{4})"
-    )
-    m = re.search(abbreviated, text, re.IGNORECASE)
-    if m:
-        month = _SWEDISH_MONTHS.get(m.group(2).lower())
-        if month:
-            try:
-                return datetime.date(int(m.group(3)), month, int(m.group(1)))
-            except ValueError:
-                pass
-
     return None
 
 
 def extract_decision_outcome(text: str) -> str | None:
-    search_text = text[-SUMMARY_TAIL_CHARS:] if len(text) > SUMMARY_TAIL_CHARS else text
+    m = re.search(r"^Bilaga\s+(?:\d+|[A-ZÅÄÖ])\b", text, re.MULTILINE)
+    pre_apendix_text = text[: m.start()] if m else text
+    m = re.search(r"^Överklagandenämndens beslut:\s*", pre_apendix_text, re.MULTILINE)
+    # Include all the text between the two anchors
+    if m:
+        after_descison = pre_apendix_text[m.end() :]
+        end_anchor = re.search(r"^Sökord: ", after_descison, re.MULTILINE)
+        if end_anchor:
+            return (
+                after_descison[: end_anchor.start()]
+                .strip()
+                .replace("\r\n", " ")
+                .replace("\n", " ")
+            )
+    search_text = (
+        pre_apendix_text[-SUMMARY_TAIL_CHARS:]
+        if len(pre_apendix_text) > SUMMARY_TAIL_CHARS
+        else pre_apendix_text
+    )
     for keyword in _OUTCOME_KEYWORDS:
         m = re.search(
             r"[^.!?\n]*" + keyword + r"[^.!?\n]*[.!?]?", search_text, re.IGNORECASE
@@ -119,10 +106,11 @@ def extract_decision_outcome(text: str) -> str | None:
 
 
 def extract_category(text: str) -> str | None:
-    for pattern in _CATEGORY_PATTERNS:
-        m = re.search(pattern, text, re.IGNORECASE)
-        if m:
-            return m.group(1).strip()
+    # Utilize the descison sampling has the category as the third line
+    first_lines = text.splitlines()[:10]
+    for i, line in enumerate(first_lines[:-3]):
+        if "Svenska kyrkans överklagandenämnd" in line:
+            return first_lines[i + 2]
     return None
 
 

@@ -51,12 +51,12 @@ from pathlib import Path
 from typing import cast
 from uuid import UUID
 
+import _fsrepos
+from _fsstore import FsSession, FsStore
 from dotenv import load_dotenv
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import _fsrepos
-from _fsstore import FsSession, FsStore
 from shared.config import Settings, get_settings
 from shared.db import get_async_session
 from shared.dtos.document import DocumentCreate, DocumentUpdate
@@ -311,7 +311,7 @@ async def _run_step(
                 next_topic=_next_topic(PipelineStep.PARSE),
             )
         case PipelineStep.METADATA:
-            from worker_metadata.__main__ import _llm_extractor
+            from worker_metadata.__main__ import _llm_extractor, _no_llm_extractor
             from worker_metadata.patterns import extract_metadata_rule_based
             from worker_metadata.service import process_metadata
 
@@ -322,7 +322,7 @@ async def _run_step(
                 task_repo=repos.task,
                 queue_publisher=publisher,
                 rule_extractor=extract_metadata_rule_based,
-                llm_extractor=_llm_extractor,
+                llm_extractor=_no_llm_extractor,
                 session=session,
                 next_topic=_next_topic(PipelineStep.METADATA),
             )

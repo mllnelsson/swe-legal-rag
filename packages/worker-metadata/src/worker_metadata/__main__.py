@@ -37,6 +37,11 @@ async def _llm_extractor(raw_text: str, missing_fields: list[str]) -> MetadataRe
     )
 
 
+async def _no_llm_extractor(raw_text: str, missing_fields: list[str]) -> MetadataResult:
+    logger.info("No LLM Configured, returning empty Metdata values")
+    return MetadataResult()
+
+
 def main() -> None:
     load_dotenv()
     settings = get_settings()
