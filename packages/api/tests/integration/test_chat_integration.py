@@ -17,6 +17,8 @@ from api.main import create_app
 from api.routes.chat import _get_db
 from shared.repositories import session as session_repo
 
+pytestmark = pytest.mark.integration
+
 _DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/overklagan"
 )
