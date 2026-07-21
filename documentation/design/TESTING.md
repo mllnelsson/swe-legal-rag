@@ -39,7 +39,7 @@ Every package gets unit tests. Mock at the interface boundary — the abstractio
 - Endpoint layer: test request validation, HTTP status codes, error response shapes. Thin layer, thin tests.
 - AI package: test prompt rendering via the `render(template, context)` function, response parsing, retry/fallback logic. Mock the provider HTTP calls.
 
-> **Run unit tests per package** (`uv run pytest packages/<pkg>/tests/unit`). The aggregate glob `packages/*/tests/unit` silently shadows duplicate test-file basenames (`test_service.py`, `test_config.py`) under `--import-mode=importlib` — not every file is collected, so a per-package run is the reliable one.
+> **`tests/` directories have no `__init__.py`.** With `--import-mode=importlib`, an `__init__.py` in `tests/unit/` or `tests/integration/` makes pytest derive the module's dotted name from that package chain (e.g. `tests.integration.conftest`) — identical across every package, since none of them share a common parent package. That caused two failure modes: conftest.py collisions ("Plugin already registered under a different name") when running the full testpaths glob, and silent shadowing of duplicate test-file basenames (`test_service.py`, `test_config.py`) where only one of several identically-named files got collected. Without `__init__.py`, pytest falls back to a full-path-derived unique module name, so the aggregate run (`uv run pytest` from repo root, or `uv run pytest -m "not integration"` to skip the DB-backed tests) collects every file correctly. Don't add `__init__.py` back to these directories.
 
 ## Integration Tests
 
@@ -93,10 +93,10 @@ packages/
 
 ```bash
 # All unit tests (fast, no infra needed)
-uv run pytest packages/*/tests/unit/
+uv run pytest -m "not integration"
 
-# All integration tests (requires Docker Postgres running)
-uv run pytest packages/*/tests/integration/
+# Everything, including integration tests (requires Docker Postgres running)
+uv run pytest
 
 # Single package
 uv run pytest packages/api/tests/
