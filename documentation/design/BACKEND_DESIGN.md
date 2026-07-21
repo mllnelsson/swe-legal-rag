@@ -407,10 +407,11 @@ Long-running subscriber. Consumes metadata tasks from the metadata topic, extrac
 Two-stage extraction with rule-based first, LLM fallback only for missing fields:
 
 1. **Rule-based (`patterns.py`):** Per-field pure functions using `re` patterns for Swedish legal document formats.
-   - `extract_case_number`: Matches `Dnr`, `Diarienummer`, `ÖN`, or bare `YYYY-NNN` patterns.
-   - `extract_decision_date`: Tries ISO (`2023-01-15`), Swedish textual (`den 15 januari 2023`), Swedish abbreviated (`15 jan 2023`). Maps Swedish month names to month numbers.
+   - `extract_case_number`: Matches `Ärendenummer: ÖN <YYYY-NNN>`.
+   - `extract_decision_date`: Matches `Meddelat <YYYY-MM-DD>` within the first 2000 characters.
    - `extract_decision_outcome`: Searches near document end for `bifaller/avslår/avvisar överklagandet` and returns the surrounding sentence.
-   - `extract_category`: Matches `Ärende:`, `Ämne:`, or `Kategori:` header lines.
+   - `extract_category`: Looks for a `Svenska kyrkans överklagandenämnd` heading line in the first 10 lines and returns the line two positions after it.
+   - A broader pattern set (`Dnr`/`Diarienummer` case numbers, Swedish textual/abbreviated date parsing via a month-name lookup, `Ärende:`/`Ämne:`/`Kategori:` headers) was implemented and then deprecated in favor of this narrower, verified set. Documents that don't match these exact formats fall through to the LLM fallback below.
 2. **LLM fallback (via `ai` package):** Only invoked when rule-based extraction leaves fields `None`. The `_llm_extractor` closure in `__main__.py` calls `ai.services.extract_metadata(raw_text)`, which renders the `METADATA_EXTRACTION` template and calls `llm_core.generate_structured()` returning `ai.dtos.MetadataResult`. The closure converts `decision_date` from ISO string to `datetime.date` before returning `worker_metadata.patterns.MetadataResult`.
 3. **Merge:** Rule-based values always win. LLM values only fill fields that remain `None` after rule-based extraction.
 

@@ -4,32 +4,6 @@ import dataclasses
 import datetime
 import re
 
-_SWEDISH_MONTHS: dict[str, int] = {
-    "januari": 1,
-    "februari": 2,
-    "mars": 3,
-    "april": 4,
-    "maj": 5,
-    "juni": 6,
-    "juli": 7,
-    "augusti": 8,
-    "september": 9,
-    "oktober": 10,
-    "november": 11,
-    "december": 12,
-    "jan": 1,
-    "feb": 2,
-    "mar": 3,
-    "apr": 4,
-    "jun": 6,
-    "jul": 7,
-    "aug": 8,
-    "sep": 9,
-    "okt": 10,
-    "nov": 11,
-    "dec": 12,
-}
-
 _CASE_NUMBER_PATTERNS: list[str] = [
     r"Ärendenummer: ÖN\s+(\d{4}-\d+)",
 ]
@@ -40,11 +14,6 @@ _OUTCOME_KEYWORDS: list[str] = [
     r"avvisar\s+överklagandet",
 ]
 
-_CATEGORY_PATTERNS: list[str] = [
-    r"Ärende:\s*(.+?)(?:\n|$)",
-    r"Ämne:\s*(.+?)(?:\n|$)",
-    r"Kategori:\s*(.+?)(?:\n|$)",
-]
 # The decision outcome ("avslår", "bifaller", ...) sits near the end of a ruling,
 # so only the tail of the text is scanned.
 SUMMARY_TAIL_CHARS = 2000
