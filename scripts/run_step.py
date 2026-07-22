@@ -311,7 +311,7 @@ async def _run_step(
                 next_topic=_next_topic(PipelineStep.PARSE),
             )
         case PipelineStep.METADATA:
-            from worker_metadata.__main__ import _llm_extractor, _no_llm_extractor
+            from worker_metadata.__main__ import _no_llm_extractor
             from worker_metadata.patterns import extract_metadata_rule_based
             from worker_metadata.service import process_metadata
 

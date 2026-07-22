@@ -6,6 +6,7 @@ import signal
 
 from dotenv import load_dotenv
 
+from ai.providers.roles import create_summarize_llm_provider
 from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_publisher, create_queue_subscriber
@@ -22,6 +23,7 @@ def main() -> None:
     load_dotenv()
     settings = get_settings()
     chunk_settings = get_chunk_settings()
+    llm_provider = create_summarize_llm_provider()
 
     publisher = create_queue_publisher(settings.queue)
     subscriber = create_queue_subscriber(settings.queue)
@@ -38,6 +40,7 @@ def main() -> None:
                     queue_publisher=publisher,
                     session=session,
                     next_topic=chunk_settings.chunk_next_topic,
+                    llm_provider=llm_provider,
                 )
 
         asyncio.run(_handle())

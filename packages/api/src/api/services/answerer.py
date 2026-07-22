@@ -88,15 +88,17 @@ async def answer_query(
     embedding_provider,
     settings: RetrievalSettings,
     storage: StorageBackend | None = None,
-    llm_provider=None,
+    structured_llm_provider=None,
+    chat_llm_provider=None,
     chat_session_id: uuid.UUID | None = None,
 ) -> AsyncIterator[AnswerEvent]:
-    the_plan = await plan_query(question, history, llm_provider=llm_provider)
+    the_plan = await plan_query(question, history, llm_provider=structured_llm_provider)
     chunks = await retrieve(
         the_plan,
         session,
         embedding_provider=embedding_provider,
         settings=settings,
+        llm_provider=structured_llm_provider,
     )
 
     chunk_contexts = [
@@ -117,7 +119,7 @@ async def answer_query(
     )
 
     accumulated: list[str] = []
-    async for token in ai.synthesize_answer(request, provider=llm_provider):
+    async for token in ai.synthesize_answer(request, provider=chat_llm_provider):
         accumulated.append(token)
         yield TokenEvent(text=token)
 

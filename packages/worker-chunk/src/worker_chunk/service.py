@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import summarize_document
+from llm_core import LLMProvider
 from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentUpdate
 from shared.enums import PipelineStep
@@ -31,6 +32,7 @@ async def process_chunking(
     queue_publisher: QueuePublisher,
     session: AsyncSession,
     next_topic: PipelineStep = PipelineStep.EMBED,
+    llm_provider: LLMProvider | None = None,
 ) -> None:
     async def body() -> None:
         document = await document_repo.get_by_id(session, document_id)
@@ -39,7 +41,7 @@ async def process_chunking(
         if document.raw_text is None:
             raise StepInputError(f"Document {document_id} has no raw text")
 
-        result = await summarize_document(document.raw_text)
+        result = await summarize_document(document.raw_text, provider=llm_provider)
         summary = result.summary
 
         await document_repo.update(

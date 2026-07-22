@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai.embedding import EmbeddingProvider
 from api.config import RetrievalSettings
 from api.services.query_planner import QueryPlan
-from llm_core import Message, Role, generate_structured
+from llm_core import LLMProvider, Message, Role, generate_structured
 from shared.dtos.document import DocumentRead
 from shared.dtos.search import ChunkSearchResult, DocumentFilter
 from shared.repositories import chunk as chunk_repo
@@ -76,7 +76,10 @@ class _RerankResult(BaseModel):
 
 
 async def _rerank(
-    question: str, chunks: list[ChunkSearchResult]
+    question: str,
+    chunks: list[ChunkSearchResult],
+    *,
+    provider: LLMProvider | None = None,
 ) -> list[ChunkSearchResult]:
     snippets = "\n".join(
         f"[{i}] {chunk.chunk_text[:SNIPPET_CHARS]}" for i, chunk in enumerate(chunks)
@@ -93,7 +96,7 @@ async def _rerank(
         )
     ]
     try:
-        result = await generate_structured(messages, _RerankResult)
+        result = await generate_structured(messages, _RerankResult, provider=provider)
         assert isinstance(result, _RerankResult)
         valid = [i for i in result.ranked_indices if 0 <= i < len(chunks)]
         missing = [i for i in range(len(chunks)) if i not in set(valid)]
@@ -109,6 +112,7 @@ async def retrieve(
     *,
     embedding_provider: EmbeddingProvider,
     settings: RetrievalSettings,
+    llm_provider: LLMProvider | None = None,
 ) -> list[RetrievedChunk]:
     candidate_ids: list[uuid.UUID] | None
     if _filter_is_empty(plan.filter):
@@ -153,7 +157,9 @@ async def retrieve(
     top_chunks = [chunk_map[cid] for cid in fused_ids if cid in chunk_map]
 
     if settings.retrieval_rerank_enabled and top_chunks:
-        top_chunks = await _rerank(plan.semantic_query, top_chunks)
+        top_chunks = await _rerank(
+            plan.semantic_query, top_chunks, provider=llm_provider
+        )
 
     doc_ids = list(dict.fromkeys(c.document_id for c in top_chunks))
     doc_reads = await asyncio.gather(

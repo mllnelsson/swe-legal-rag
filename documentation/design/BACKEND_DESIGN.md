@@ -39,7 +39,7 @@ Each worker is its own deployable unit (Cloud Run service), own `pyproject.toml`
 
 ```
 shared          ← depended on by everything
-llm-core        ← standalone, zero dependency on shared; depends only on pydantic, pydantic-settings, google-genai
+llm-core        ← standalone, zero dependency on shared; depends only on pydantic, pydantic-settings, google-genai, openai
 ai              ← depends on shared + llm-core; depended on by api + relevant workers
 api             ← depends on shared, ai
 worker-*        ← depends on shared, some depend on ai
@@ -65,8 +65,9 @@ Standalone, project-agnostic LLM abstraction. Zero dependency on `shared` — fu
 - **`_types.py`:** Frozen dataclasses: `Message`, `ToolCall`, `ToolDefinition`, `LLMResponse`, `StreamChunk`, `Role` (StrEnum).
 - **`_exceptions.py`:** `LLMError` base, `ProviderError`, `ToolExecutionError`, `MaxIterationsError`.
 - **`_protocol.py`:** `LLMProvider` Protocol (`@runtime_checkable`) with `generate()` and `generate_stream()`. Providers do one round-trip; tool-call loop is in the service layer.
-- **`_config.py`:** `LLMConfig(BaseSettings)` reading `LLM_PROVIDER`, `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `GEMINI_API_KEY`. `create_provider()` factory with lazy-import dispatch.
-- **`providers/gemini.py`:** Gemini implementation using `google-genai` SDK (the new unified SDK, not deprecated `google-generativeai`).
+- **`_config.py`:** `LLMConfig(BaseSettings)` reading `LLM_PROVIDER` (default `"berget"`), `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `GEMINI_API_KEY`, `BERGET_API_KEY`, `LLM_BASE_URL`. `create_provider()` factory with lazy-import dispatch on `provider`: `"gemini"` → `GeminiProvider`, `"berget"` → `OpenAiCompatibleProvider`.
+- **`providers/_gemini.py`:** Gemini implementation using `google-genai` SDK (the new unified SDK, not deprecated `google-generativeai`). Fully supported and selectable via `LLM_PROVIDER=gemini` — not removed by the Berget addition below.
+- **`providers/_openai_compatible.py`:** `OpenAiCompatibleProvider` — a generic client for any OpenAI-chat-completions-compatible API, using the `openai` SDK (`AsyncOpenAI`). [Berget.ai](https://docs.berget.ai) is the first and default configured host (`LLM_PROVIDER=berget`, base URL `https://api.berget.ai/v1`, an EU-hosted, GDPR-compliant, OpenAI-API-compatible open-weight model provider) — chosen to keep embedding and LLM costs low with scale-to-zero billing, while Gemini remains available as an alternative. The class itself is not Berget-specific: `LLM_BASE_URL` overrides the default base URL, so a future second OpenAI-compatible host needs a config value, not a new provider class. Maps `Message`/`ToolDefinition`/`response_schema` to OpenAI's chat-completions shape (tool calls, `response_format={"type": "json_schema", ...}` for structured output), and wraps SDK exceptions in `ProviderError` the same way `_gemini.py` does.
 - **`_service.py`:** Higher-level API: `generate()`, `generate_structured()`, `generate_stream()`, `tool_loop()` with optional callbacks.
 
 ## AI Package (`packages/ai/`)
@@ -111,9 +112,12 @@ Pydantic v2 DTOs for every LLM use case. All models are `frozen=True`.
 
 `EmbeddingProvider` is a `@runtime_checkable` Protocol with one method: `async embed(texts) -> list[list[float]]`.
 
-`EmbeddingConfig(BaseSettings)` reads `EMBEDDING_PROVIDER` (default `"local"`) and `EMBEDDING_MODEL` (default `"intfloat/multilingual-e5-large"`).
+`EmbeddingConfig(BaseSettings)` reads `EMBEDDING_PROVIDER` (default `"berget"`), `EMBEDDING_MODEL` (default `"intfloat/multilingual-e5-large"`), `BERGET_API_KEY`, and `LLM_BASE_URL` (same env vars as `llm_core.LLMConfig` — one Berget account/key covers both LLM and embedding calls).
 
-`create_embedding_provider(config=None) -> EmbeddingProvider` is the factory. It lazy-imports the concrete provider class so the heavy ML library (sentence-transformers) is only loaded when the local provider is actually requested.
+`create_embedding_provider(config=None) -> EmbeddingProvider` is the factory. It lazy-imports the concrete provider class so the heavy ML library (sentence-transformers) is only loaded when the local provider is actually requested, and `openai` is only imported when the Berget provider is requested.
+
+- **`providers/berget_embeddings.py`:** `BergetEmbeddingProvider` — calls Berget's hosted `intfloat/multilingual-e5-large` via `openai.AsyncOpenAI.embeddings.create()` (same OpenAI-compatible API as the LLM provider). This is the default (`EMBEDDING_PROVIDER=berget`) — no self-hosting, no model load, scale-to-zero cost. Same model and dimension as the local provider, so switching between them is a config change only. See [EMBEDDING_HOSTING.md](EMBEDDING_HOSTING.md) for the hosting decision.
+- **`providers/local_embeddings.py`:** `LocalEmbeddingProvider` using `sentence-transformers`, in-process. Kept as the offline dev/test fallback (`EMBEDDING_PROVIDER=local`) — no API key or network access required.
 
 **Dimension constraint:** The default model `intfloat/multilingual-e5-large` produces 1024-dim vectors, which matches `shared.config.EMBEDDING_DIMENSION` (default `1024`) and the `chunks.embedding` column size baked into migrations. `EMBEDDING_MODEL` and `EMBEDDING_DIMENSION` must always change together: update both env vars and provide a new migration that recreates the `chunks.embedding` column at the new dimension. See ARCHITECTURE.md §7 for model choice rationale and hosting strategy.
 
@@ -412,7 +416,7 @@ Two-stage extraction with rule-based first, LLM fallback only for missing fields
    - `extract_decision_outcome`: Searches near document end for `bifaller/avslår/avvisar överklagandet` and returns the surrounding sentence.
    - `extract_category`: Looks for a `Svenska kyrkans överklagandenämnd` heading line in the first 10 lines and returns the line two positions after it.
    - A broader pattern set (`Dnr`/`Diarienummer` case numbers, Swedish textual/abbreviated date parsing via a month-name lookup, `Ärende:`/`Ämne:`/`Kategori:` headers) was implemented and then deprecated in favor of this narrower, verified set. Documents that don't match these exact formats fall through to the LLM fallback below.
-2. **LLM fallback (via `ai` package):** Only invoked when rule-based extraction leaves fields `None`. The `_llm_extractor` closure in `__main__.py` calls `ai.services.extract_metadata(raw_text)`, which renders the `METADATA_EXTRACTION` template and calls `llm_core.generate_structured()` returning `ai.dtos.MetadataResult`. The closure converts `decision_date` from ISO string to `datetime.date` before returning `worker_metadata.patterns.MetadataResult`.
+2. **LLM fallback (via `ai` package):** Only invoked when rule-based extraction leaves fields `None`. `_make_llm_extractor(provider)` in `__main__.py` builds the `_llm_extractor` closure around a structured-role provider (`ai.providers.roles.create_structured_llm_provider()`, constructed once in `main()`); the closure calls `ai.services.extract_metadata(raw_text, provider=provider)`, which renders the `METADATA_EXTRACTION` template and calls `llm_core.generate_structured()` returning `ai.dtos.MetadataResult`. The closure converts `decision_date` from ISO string to `datetime.date` before returning `worker_metadata.patterns.MetadataResult`.
 3. **Merge:** Rule-based values always win. LLM values only fill fields that remain `None` after rule-based extraction.
 
 All metadata fields are freeform `VARCHAR` — no enum constraints. Missing metadata (all fields `None`) is a valid outcome; the task still completes.
@@ -424,7 +428,9 @@ All metadata fields are freeform `VARCHAR` — no enum constraints. Missing meta
 | `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
 | `services.py` | Five async service functions (see table below) |
 | `embedding.py` | `EmbeddingProvider` Protocol, `EmbeddingConfig`, `create_embedding_provider` factory |
-| `providers/local_embeddings.py` | `LocalEmbeddingProvider` using `sentence-transformers` |
+| `providers/berget_embeddings.py` | `BergetEmbeddingProvider` calling Berget's hosted embedding API (default) |
+| `providers/local_embeddings.py` | `LocalEmbeddingProvider` using `sentence-transformers` (offline dev/test fallback) |
+| `providers/roles.py` | `LLMRoleConfig` + `create_structured_llm_provider()` / `create_summarize_llm_provider()` / `create_chat_llm_provider()` — per-task model assignment, see below |
 | `prompts/_renderer.py` | `PromptTemplate` frozen dataclass |
 | `prompts/_templates.py` | Five template constants (see Prompt Templates section above) |
 | `__init__.py` | Public API — exports all service functions, embedding types, and DTOs |
@@ -440,6 +446,22 @@ All metadata fields are freeform `VARCHAR` — no enum constraints. Missing meta
 | `synthesize_answer` | `async (request: SynthesizeRequest, *, provider=None) -> AsyncIterator[str]` | `generate_stream` |
 
 `synthesize_answer` is an async generator (SSE critical path): formats chunks with `[Mål {case_number}]` prefixes, renders `ANSWER_SYNTHESIS`, and yields tokens directly without buffering.
+
+### Per-task Model Selection (`ai/providers/roles.py`)
+
+`llm_core.LLMConfig` carries a single `model` field — one model per provider instance. This project needs three different models for three different cost/quality profiles instead of one model for everything, since extraction/decomposition/rerank run once per document at ingestion scale while chat synthesis runs a handful of times per day:
+
+| Role | Used by | Env var | Default (Berget model) |
+|---|---|---|---|
+| `structured` | `decompose_query`, `extract_metadata`, `extract_entities`, `api.services.retriever._rerank` | `LLM_MODEL_STRUCTURED` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
+| `summarize` | `summarize_document` | `LLM_MODEL_SUMMARIZE` | `mistralai/Mistral-Medium-3.5-128B` |
+| `chat` | `synthesize_answer` | `LLM_MODEL_CHAT` | `zai-org/GLM-5.2` |
+
+`LLMRoleConfig(BaseSettings)` reads these three env vars. `create_structured_llm_provider()`, `create_summarize_llm_provider()`, and `create_chat_llm_provider()` each build an `llm_core.LLMConfig(model=<role model>)` — only the `model` field is overridden; `provider`/`BERGET_API_KEY`/`LLM_BASE_URL`/temperature still resolve from the environment normally — and pass it to `llm_core.create_provider()`.
+
+Each composition root (`api/main.py`'s `_lifespan`, `worker-metadata/__main__.py`, `worker-extract/extractors/factory.py`, `worker-chunk/__main__.py`) constructs the role-appropriate provider(s) once at startup and threads them explicitly into the call sites above via the `provider=`/`llm_provider=` keyword each already accepts — none of these functions fall back to a hidden global default in production.
+
+**Gemini fallback caveat.** The three `LLM_MODEL_*` defaults above are Berget model IDs. Switching `LLM_PROVIDER=gemini` also requires overriding all three `LLM_MODEL_*` env vars to a valid Gemini model name (e.g. `gemini-2.0-flash`) — they will not resolve against Gemini's API otherwise.
 
 ### DTO Contracts (`ai/dtos.py`)
 
@@ -460,13 +482,18 @@ All DTOs are `frozen=True` Pydantic v2 models. Consumers depend on these — do 
 
 | Var | Default | Used by |
 |---|---|---|
-| `EMBEDDING_PROVIDER` | `"local"` | `EmbeddingConfig` — selects the provider class |
-| `EMBEDDING_MODEL` | `"intfloat/multilingual-e5-large"` | `EmbeddingConfig` — passed to `LocalEmbeddingProvider` |
-| `LLM_PROVIDER` | (see llm-core) | `LLMConfig` in `llm-core` |
+| `EMBEDDING_PROVIDER` | `"berget"` | `EmbeddingConfig` — selects the provider class (`"local"` for offline dev/tests) |
+| `EMBEDDING_MODEL` | `"intfloat/multilingual-e5-large"` | `EmbeddingConfig` — passed to `BergetEmbeddingProvider`/`LocalEmbeddingProvider` |
+| `LLM_PROVIDER` | `"berget"` (see llm-core) | `LLMConfig` in `llm-core` — `"gemini"` remains fully supported |
 | `LLM_MODEL` | (see llm-core) | `LLMConfig` in `llm-core` |
 | `LLM_TEMPERATURE` | (see llm-core) | `LLMConfig` in `llm-core` |
 | `LLM_MAX_TOKENS` | (see llm-core) | `LLMConfig` in `llm-core` |
-| `GEMINI_API_KEY` | (required for Gemini) | `LLMConfig` in `llm-core` |
+| `GEMINI_API_KEY` | (required for `LLM_PROVIDER=gemini`) | `LLMConfig` in `llm-core` |
+| `BERGET_API_KEY` | (required for `LLM_PROVIDER=berget` / `EMBEDDING_PROVIDER=berget`) | `LLMConfig` in `llm-core`, `EmbeddingConfig` in `ai` |
+| `LLM_BASE_URL` | (unset — defaults to `https://api.berget.ai/v1` for the berget provider) | `LLMConfig` in `llm-core`, `EmbeddingConfig` in `ai` — override hook for other OpenAI-compatible hosts |
+| `LLM_MODEL_STRUCTURED` | `"mistralai/Mistral-Small-3.2-24B-Instruct-2506"` | `LLMRoleConfig` in `ai/providers/roles.py` |
+| `LLM_MODEL_SUMMARIZE` | `"mistralai/Mistral-Medium-3.5-128B"` | `LLMRoleConfig` in `ai/providers/roles.py` |
+| `LLM_MODEL_CHAT` | `"zai-org/GLM-5.2"` | `LLMRoleConfig` in `ai/providers/roles.py` |
 
 ### llm-core / ai Package Boundary
 
@@ -520,8 +547,8 @@ Long-running subscriber. Consumes extract tasks from the extract topic, extracts
 | `parsing.py` | `parse_llm_response(raw_json) -> ExtractionResult` — parses raw LLM JSON, validates types/relevance, normalizes names, deduplicates via `entities.deduplicate_entities` keeping highest relevance |
 | `extractors/base.py` | `ExtractionStrategy` Protocol: `async extract(document_text, case_number=None) -> ExtractionResult` |
 | `extractors/rule_based.py` | Pure functions + `RuleBasedStrategy` — regex-based extraction; handles Swedish inflections |
-| `extractors/llm.py` | `LLMStrategy` — delegates to `ai.extract_entities()`, maps `ai.dtos.EntityResult` to `ExtractionResult` (no re-validation needed: `ai.dtos` is enum-typed) |
-| `extractors/factory.py` | `ExtractStrategyMode` StrEnum; `get_extraction_strategy()` factory; `_FallbackStrategy` and merge logic |
+| `extractors/llm.py` | `LLMStrategy` — takes a constructor-injected `LLMProvider \| None`, delegates to `ai.extract_entities(..., provider=self._provider)`, maps `ai.dtos.EntityResult` to `ExtractionResult` (no re-validation needed: `ai.dtos` is enum-typed) |
+| `extractors/factory.py` | `ExtractStrategyMode` StrEnum; `get_extraction_strategy()` factory (constructs `LLMStrategy` with `ai.providers.roles.create_structured_llm_provider()`); `_FallbackStrategy` and merge logic |
 | `services/entity_service.py` | `persist_entities()` — deduplicates (via `entities.py`) and upserts entities to `entities`+`document_entities` |
 | `services/reference_service.py` | `process_references()`, `reconcile_references()` — routes references to `document_references` or `unresolved_references`; reconciles lazy-unresolved refs |
 | `services/extraction_service.py` | `process_extraction()` — validates doc + runs strategy + persists inside a `body()` wrapped by `shared.pipeline.run_pipeline_step` (publishes to chunk topic on success) |
@@ -637,10 +664,10 @@ Long-running subscriber. Consumes chunk tasks from the chunk topic, generates a 
 
 ### `process_chunking()` (functional DI)
 
-`process_chunking(document_id, task_id, document_repo, chunk_repo, task_repo, queue_publisher, session, next_topic)` defines a `body()`:
+`process_chunking(document_id, task_id, document_repo, chunk_repo, task_repo, queue_publisher, session, next_topic, llm_provider=None)` defines a `body()`. `llm_provider` is constructed once in `__main__.py` via `ai.providers.roles.create_summarize_llm_provider()`:
 
 1. Validates document exists and has `raw_text` — raises `StepInputError` if not
-2. Calls `ai.summarize_document(raw_text)` — Swedish legal summary in 2–3 sentences
+2. Calls `ai.summarize_document(raw_text, provider=llm_provider)` — Swedish legal summary in 2–3 sentences
 3. Stores summary: `document_repo.update(session, document_id, DocumentUpdate(summary=summary))`
 4. Splits raw text into chunks via `split_into_chunks()`
 5. Deletes existing chunks (`chunk_repo.delete_by_document_id`) for idempotency

@@ -50,6 +50,8 @@ async def chat_endpoint(
     session_settings: SessionSettings = Depends(get_session_settings),
 ) -> StreamingResponse:
     embedding_provider = request.app.state.embedding_provider
+    structured_llm_provider = request.app.state.structured_llm_provider
+    chat_llm_provider = request.app.state.chat_llm_provider
     storage = getattr(request.app.state, "storage", None)
 
     chat_session = await get_or_create_session(body.session_id, db)
@@ -65,6 +67,8 @@ async def chat_endpoint(
                 embedding_provider=embedding_provider,
                 settings=retrieval_settings,
                 storage=storage,
+                structured_llm_provider=structured_llm_provider,
+                chat_llm_provider=chat_llm_provider,
                 chat_session_id=chat_session.id,
             ):
                 match event:

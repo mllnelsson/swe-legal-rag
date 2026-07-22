@@ -36,8 +36,10 @@ class EmbeddingProvider(Protocol):
 class EmbeddingConfig(BaseSettings):
     model_config = SettingsConfigDict(populate_by_name=True)
 
-    provider: str = Field(default="local", alias="EMBEDDING_PROVIDER")
+    provider: str = Field(default="berget", alias="EMBEDDING_PROVIDER")
     model: str = Field(default=DEFAULT_EMBEDDING_MODEL, alias="EMBEDDING_MODEL")
+    berget_api_key: str | None = Field(default=None, alias="BERGET_API_KEY")
+    base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
 
 
 def create_embedding_provider(
@@ -51,6 +53,12 @@ def create_embedding_provider(
             from ai.providers.local_embeddings import LocalEmbeddingProvider
 
             return LocalEmbeddingProvider(config)
+        case "berget":
+            from ai.providers.berget_embeddings import BergetEmbeddingProvider
+
+            return BergetEmbeddingProvider(
+                config, default_base_url="https://api.berget.ai/v1"
+            )
         case _:
             raise ValueError(f"Unknown embedding provider: {config.provider!r}")
 

@@ -58,10 +58,24 @@ QUEUE_BACKEND=sync
 PUBSUB_PROJECT_ID=              # required when QUEUE_BACKEND=pubsub
 
 # AI — provider keys, model selection
-LLM_PROVIDER=gemini
-LLM_MODEL=gemini-2.0-flash
-EMBEDDING_PROVIDER=local
-# Passed verbatim to SentenceTransformer() — must be a resolvable HuggingFace id
+# "berget" is the default LLM provider (OpenAI-compatible, https://api.berget.ai/v1).
+# "gemini" remains fully supported — set LLM_PROVIDER=gemini and GEMINI_API_KEY,
+# and also override the three LLM_MODEL_* vars below to valid Gemini model names.
+LLM_PROVIDER=berget
+BERGET_API_KEY=                # required for LLM_PROVIDER=berget and/or EMBEDDING_PROVIDER=berget
+LLM_BASE_URL=                   # optional override; defaults to https://api.berget.ai/v1
+GEMINI_API_KEY=                 # required only if LLM_PROVIDER=gemini
+
+# Per-task model assignment (see BACKEND_DESIGN.md — Per-task Model Selection).
+# Defaults are Berget model IDs; override all three if switching LLM_PROVIDER=gemini.
+LLM_MODEL_STRUCTURED=mistralai/Mistral-Small-3.2-24B-Instruct-2506
+LLM_MODEL_SUMMARIZE=mistralai/Mistral-Medium-3.5-128B
+LLM_MODEL_CHAT=zai-org/GLM-5.2
+
+# "berget" is the default embedding provider (Berget-hosted, same model as "local").
+# "local" runs sentence-transformers in-process — no API key, no network access.
+EMBEDDING_PROVIDER=berget
+# Passed verbatim to the provider (Berget model id, or SentenceTransformer() for "local")
 EMBEDDING_MODEL=intfloat/multilingual-e5-large
 
 # Must match the model's output width (e5-large=1024, e5-base=768)
@@ -118,11 +132,11 @@ uv run --package worker-embed python -m worker_embed
 ```
 
 **worker-chunk notes:**
-- Requires `GEMINI_API_KEY` in `.env` — summary generation calls Gemini Flash via the `ai` package.
+- Requires `BERGET_API_KEY` in `.env` by default — summary generation calls the `summarize`-role model (Mistral Medium 3.5 by default) via Berget, through the `ai` package. If `LLM_PROVIDER=gemini`, requires `GEMINI_API_KEY` and a valid Gemini model in `LLM_MODEL_SUMMARIZE` instead.
 
 **worker-embed notes:**
-- Default `EMBEDDING_PROVIDER=local` with `EMBEDDING_MODEL=intfloat/multilingual-e5-large` runs embedding via `sentence-transformers` locally — no API key required. The model is ~2.2 GB and is downloaded on first use, so the first embed (and the first API query) is slow.
-- First run downloads `intfloat/multilingual-e5-large` (~2.2 GB one-time to the HuggingFace cache). Subsequent runs use the cached model.
+- Default `EMBEDDING_PROVIDER=berget` calls Berget's hosted `intfloat/multilingual-e5-large` over HTTP — requires `BERGET_API_KEY`, no local model download, no cold start.
+- Set `EMBEDDING_PROVIDER=local` to run `sentence-transformers` in-process instead — no API key required, but the ~2.2 GB model is downloaded to the HuggingFace cache on first use, so the first embed (and the first API query, if the API is also configured for `local`) is slow. Subsequent runs use the cached model.
 
 ## Interface Mapping
 
@@ -135,6 +149,8 @@ uv run --package worker-embed python -m worker_embed
 | Queue project | `PUBSUB_PROJECT_ID` | *(not needed)* | GCP project ID |
 | Secrets | — | `.env` file | Secret Manager |
 | Embedding dim | `EMBEDDING_DIMENSION` | `1024` | `1024` — must match `EMBEDDING_MODEL` in both environments |
+| LLM provider | `LLM_PROVIDER` | `berget` (default) or `gemini` | Same — no local/GCP distinction, just a config choice |
+| Embedding provider | `EMBEDDING_PROVIDER` | `berget` (default) or `local` | Same — `local` is an offline dev/test fallback, not a GCP-vs-local split |
 
 Development defaults: `STORAGE_BACKEND=local` and `QUEUE_BACKEND=sync`. No GCS or Pub/Sub credentials required for local development.
 
@@ -177,6 +193,8 @@ Only the images listed below are approved for use in this project. Pin to the ta
 | Python | `python` | `3.12-slim` | Application base image |
 
 When adding a new infrastructure service, add its image here before using it in `docker-compose.yml`.
+
+**Berget.ai (LLM + embedding provider) needs no entry here.** It's an external HTTP API called from existing application processes (`api`, workers) — not a service this project runs, so it never touches `docker-compose.yml` or this table.
 
 ## Docker Compose Profiles
 

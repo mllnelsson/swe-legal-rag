@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ai import extract_entities as ai_extract_entities
 from ai.dtos import EntityResult
+from llm_core import LLMProvider
 
 from worker_extract.models import (
     ExtractionResult,
@@ -28,8 +29,13 @@ def _map_entity_result(result: EntityResult) -> ExtractionResult:
 
 
 class LLMStrategy:
+    def __init__(self, provider: LLMProvider | None = None) -> None:
+        self._provider = provider
+
     async def extract(
         self, document_text: str, case_number: str | None = None
     ) -> ExtractionResult:
-        result = await ai_extract_entities(document_text, case_number)
+        result = await ai_extract_entities(
+            document_text, case_number, provider=self._provider
+        )
         return _map_entity_result(result)

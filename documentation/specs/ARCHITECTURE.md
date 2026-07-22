@@ -22,17 +22,17 @@ Queue-driven (Pub/Sub), each step is a Cloud Run worker consuming from a topic a
 
 **Step 4 — Metadata Extraction:** Rule-based first, LLM fallback for missing fields only. Checkpoint: metadata record persisted.
 
-*Implementation:* Subscriber worker (`worker-metadata`). Extraction strategy: per-field pure functions in `patterns.py` run regex patterns on the raw text first. LLM fallback (Gemini Flash or Haiku via `ai` package) is called only when `is_complete()` returns `False` (i.e., fields remain `None` after rule-based extraction). Rule-based results are never overwritten by LLM values. Regex patterns target: `Ärendenummer: ÖN <case number>` for case numbers, `Meddelat <YYYY-MM-DD>` for decision dates, decision language (`bifaller`/`avslår`/`avvisar överklagandet`) for outcomes, and the line two positions after a `Svenska kyrkans överklagandenämnd` heading for category. A broader pattern set (`Dnr`/`Diarienummer` case numbers, Swedish textual/abbreviated dates, `Ärende:`/`Ämne:`/`Kategori:` header lines) was implemented and then deprecated in favor of this narrower, verified set — the LLM fallback covers documents that don't match these exact formats. Metadata fields are freeform VARCHAR — no enum constraints. Missing metadata (all fields `None`) is a valid outcome, not a failure. Publishes to the `extract` topic.
+*Implementation:* Subscriber worker (`worker-metadata`). Extraction strategy: per-field pure functions in `patterns.py` run regex patterns on the raw text first. LLM fallback (Mistral Small 3.2 via Berget by default, or Gemini Flash/Haiku if `LLM_PROVIDER=gemini` — see [BACKEND_DESIGN.md](../design/BACKEND_DESIGN.md#per-task-model-selection-aiprovidersrolespy)) is called only when `is_complete()` returns `False` (i.e., fields remain `None` after rule-based extraction). Rule-based results are never overwritten by LLM values. Regex patterns target: `Ärendenummer: ÖN <case number>` for case numbers, `Meddelat <YYYY-MM-DD>` for decision dates, decision language (`bifaller`/`avslår`/`avvisar överklagandet`) for outcomes, and the line two positions after a `Svenska kyrkans överklagandenämnd` heading for category. A broader pattern set (`Dnr`/`Diarienummer` case numbers, Swedish textual/abbreviated dates, `Ärende:`/`Ämne:`/`Kategori:` header lines) was implemented and then deprecated in favor of this narrower, verified set — the LLM fallback covers documents that don't match these exact formats. Metadata fields are freeform VARCHAR — no enum constraints. Missing metadata (all fields `None`) is a valid outcome, not a failure. Publishes to the `extract` topic.
 
 **Step 5 — Entity & Reference Extraction:** Extract entities (legal concepts, roles, parishes, regulations) and cross-references to other decisions. LLM-assisted (cheap model) — one-time ingestion cost. Populates the graph-in-Postgres layer: `entities`, `document_entities`, `document_references`. Gives the retrieval agent entity-based pre-filtering and relationship traversal without a graph database. Checkpoint: entities and references persisted.
 
-**Step 6 — Contextual Chunking:** Generate a document-level summary first (Gemini Flash via `ai.summarize_document()`), then chunk the document. Each chunk gets the summary prepended before embedding — the contextual retrieval trick. Gives every chunk awareness of the whole document's context. Checkpoint: chunks stored with parent doc reference.
+**Step 6 — Contextual Chunking:** Generate a document-level summary first (Mistral Medium 3.5 via Berget by default via `ai.summarize_document()` — see per-task model selection in [BACKEND_DESIGN.md](../design/BACKEND_DESIGN.md#per-task-model-selection-aiprovidersrolespy)), then chunk the document. Each chunk gets the summary prepended before embedding — the contextual retrieval trick. Gives every chunk awareness of the whole document's context. Checkpoint: chunks stored with parent doc reference.
 
 *Implementation:* Subscriber worker (`worker-chunk`). Token-based chunking: ~500 tokens per chunk, ~50 token overlap, tiktoken `cl100k_base` encoding. Sentence-aware boundaries: splits on sentence-ending punctuation (`[.!?]` followed by whitespace) or blank lines, never mid-sentence. Overlap is implemented by rewinding — trailing sentences totalling ≤ 50 tokens are retained as the start of the next chunk. Contextual retrieval pattern: `summary\n\n---\n\nchunk_text` stored in `contextual_text`. The `chunk_text` column retains the raw text for user-facing citations. Idempotency: existing chunks are deleted before re-inserting. Publishes to the embed topic.
 
 **Step 7 — Embed & Index:** Embed chunks using `intfloat/multilingual-e5-large` (1024 dimensions). Store as pgvector `VECTOR(1024)`. Swedish full-text index via `tsvector` column. Terminal pipeline step — no downstream queue. Checkpoint: embeddings stored.
 
-*Implementation:* Subscriber worker (`worker-embed`). Embeds `contextual_text` (falls back to `chunk_text` if None) in a single batch call via the `ai.EmbeddingProvider` abstraction. Local provider (`sentence-transformers`) used by default — no API key required. Updates the `embedding` column via bulk UPDATE. The `tsv` (tsvector) column is `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` — PostgreSQL populates it automatically at chunk INSERT time; the embed worker does not touch it. HNSW index for ANN vector search, GIN index for full-text search, both functional after embed completes.
+*Implementation:* Subscriber worker (`worker-embed`). Embeds `contextual_text` (falls back to `chunk_text` if None) in a single batch call via the `ai.EmbeddingProvider` abstraction. Berget-hosted embedding (`EMBEDDING_PROVIDER=berget`, calling the identical `intfloat/multilingual-e5-large` model via an OpenAI-compatible API) is used by default — see [EMBEDDING_HOSTING.md](../design/EMBEDDING_HOSTING.md). The self-hosted `sentence-transformers` provider (`EMBEDDING_PROVIDER=local`, no API key required) remains available for offline dev/tests. Updates the `embedding` column via bulk UPDATE. The `tsv` (tsvector) column is `GENERATED ALWAYS AS (to_tsvector('swedish', chunk_text)) STORED` — PostgreSQL populates it automatically at chunk INSERT time; the embed worker does not touch it. HNSW index for ANN vector search, GIN index for full-text search, both functional after embed completes.
 
 *Query-time embedding:* The same model is used at query time — the API server embeds the user's question via the same `EmbeddingProvider` abstraction before running vector similarity search. Ingestion and query embeddings **must** come from the same model; mismatched models produce incompatible vector spaces.
 
@@ -65,11 +65,11 @@ Why single Postgres? At 1000 docs this is not a scale problem. pgvector handles 
 
 **Step 4 — Rerank:** Optional but cheap — a cross-encoder or even another LLM call to rerank the top-k results for relevance. At this scale it's fast.
 
-*Implementation:* `_rerank()` in `api/services/retriever.py`. Gated behind `RETRIEVAL_RERANK_ENABLED` (default `False`) to satisfy NFR1 (<5s response). Uses `llm_core.generate_structured()` to return a ranked index list; any failure falls back to RRF order — rerank never breaks retrieval. The `llm_core` import is lazy (inside the function body) to avoid adding it to `api/pyproject.toml` as an explicit dependency.
+*Implementation:* `_rerank()` in `api/services/retriever.py`. Gated behind `RETRIEVAL_RERANK_ENABLED` (default `False`) to satisfy NFR1 (<5s response). Uses `llm_core.generate_structured()` (with the structured-role provider, Mistral Small 3.2 via Berget by default — see [BACKEND_DESIGN.md](../design/BACKEND_DESIGN.md#per-task-model-selection-aiprovidersrolespy)) to return a ranked index list; any failure falls back to RRF order — rerank never breaks retrieval. The `llm_core` import is lazy (inside the function body) to avoid adding it to `api/pyproject.toml` as an explicit dependency.
 
 **Step 5 — Synthesis:** Feed top chunks + metadata to LLM. Generate Swedish answer with citations (case numbers, dates). Return source references so frontend can link to PDFs.
 
-*Implementation:* `api/services/answerer.py`. Streams tokens via `ai.synthesize_answer()` → yields `TokenEvent` per token, then a single `SourcesEvent` with deduplicated sources (one `SourceReference` per document, first-seen chunk in RRF order wins the excerpt, truncated to 200 chars), then `DoneEvent`. PDF URLs are generated via `storage.get_url("documents/{doc_id}/original.pdf")`, returning `None` on error. The event ordering `token* → sources → done` is guaranteed — sources are only emitted after synthesis completes.
+*Implementation:* `api/services/answerer.py`. Streams tokens via `ai.synthesize_answer()` (chat-role provider, GLM 5.2 via Berget by default — see [BACKEND_DESIGN.md](../design/BACKEND_DESIGN.md#per-task-model-selection-aiprovidersrolespy)) → yields `TokenEvent` per token, then a single `SourcesEvent` with deduplicated sources (one `SourceReference` per document, first-seen chunk in RRF order wins the excerpt, truncated to 200 chars), then `DoneEvent`. PDF URLs are generated via `storage.get_url("documents/{doc_id}/original.pdf")`, returning `None` on error. The event ordering `token* → sources → done` is guaranteed — sources are only emitted after synthesis completes.
 
 **Session context:** Keep conversation history in memory (or lightweight session store) so the agent can handle follow-ups like "what about after 2021?" without the user re-explaining.
 
@@ -81,7 +81,7 @@ Why single Postgres? At 1000 docs this is not a scale problem. pgvector handles 
 - **Pub/Sub** — pipeline orchestration between steps
 - **Cloud SQL (Postgres + pgvector)** — single small instance, the main standing cost
 - **GCS** — PDF storage
-- **Secret Manager** — API keys for LLM providers
+- **Secret Manager** — API keys for LLM providers (`BERGET_API_KEY` for the default Berget.ai provider, `GEMINI_API_KEY` if `LLM_PROVIDER=gemini`)
 
 ## 5. Local Development Replacements
 
@@ -103,9 +103,9 @@ The architecture is designed so every GCP service has a local equivalent for fre
 - Cloud Run: ~$0 at idle (scale to zero)
 - Pub/Sub: pennies at this volume
 - GCS: pennies for ~1000 PDFs
-- LLM API (query time): depends on usage, but a handful of queries/day on a cheap model is <$5/mo
-- Embedding model hosting: $0 at idle (scale-to-zero); ~$15-30/mo if upgraded to `min-instances: 1`
-- **Total idle: ~$10-15/mo** (scale-to-zero) or **~$25-45/mo** (always-warm)
+- LLM API (query time): Berget.ai per-task model pricing (Mistral Small/Medium, GLM 5.2) — a handful of queries/day plus per-document ingestion calls is <$5/mo at this scale; Gemini remains an alternative if `LLM_PROVIDER=gemini`
+- Embedding model hosting: Berget-hosted `intfloat/multilingual-e5-large` (€0.03/M tokens) — effectively $0 at this scale, no self-hosting, no `min-instances` decision (see [EMBEDDING_HOSTING.md](../design/EMBEDDING_HOSTING.md))
+- **Total idle: ~$7-15/mo** (Cloud SQL + Cloud Run + Pub/Sub + GCS; LLM/embedding cost is usage-based, not idle)
 
 Scaling to 5000 docs: Cloud SQL stays the same, embedding cost scales linearly but is one-time, query costs unchanged.
 
@@ -129,29 +129,29 @@ Chosen based on the [Scandinavian Embedding Benchmark (SEB)](https://github.com/
 
 The embedding model is needed in two places: **ingestion** (worker-embed, batch) and **query time** (API server, latency-sensitive). Both use the same model via the `EmbeddingProvider` abstraction.
 
-`e5-large` is ~2.2 GB. Running it in-process on a scale-to-zero Cloud Run service causes 30-60s cold starts on the query path — unacceptable for live user queries.
+`e5-large` is ~2.2 GB. Running it in-process on a scale-to-zero Cloud Run service causes 30-60s cold starts on the query path — unacceptable for live user queries. **This entire tradeoff is now avoided**: the default (`EMBEDDING_PROVIDER=berget`) calls Berget.ai's hosted `intfloat/multilingual-e5-large` over an OpenAI-compatible API instead of self-hosting the model anywhere. See [EMBEDDING_HOSTING.md](../design/EMBEDDING_HOSTING.md) — Option 5 — for the full evaluation and decision.
 
-**Evaluated hosting options:**
+**Previously evaluated self-hosting options** (preserved for context; superseded by the Berget default):
 
 | Option | Monthly cost | Cold start | Model control | Notes |
 |---|---|---|---|---|
 | Cloud Run `min-instances: 1` | ~$15-30 | None | Full | Simplest. API server always warm with model loaded. No external dependency. Spends most of the NFR2 idle budget. |
-| HuggingFace Inference Endpoints | ~$5-15 | ~30-60s from zero | Full | Scale-to-zero available. Cheaper but adds external dependency and cold start. Good fallback option. |
-| Vertex AI Embedding API | <$1 | None | Google models only | Cheapest. But locked to Google's model, no local dev parity, loses benchmark-validated quality. |
-
-> **Open question — `min-instances` is not settled.** This section previously marked
-> `min-instances: 1` as selected while [EMBEDDING_HOSTING.md](../design/EMBEDDING_HOSTING.md#decision)
-> marked `min-instances: 0` as selected for launch. Both cannot hold, and the choice is a
-> direct NFR1/NFR2 tradeoff: `0` protects the <$30/mo idle budget but makes the first query
-> after scale-to-zero take 30-60s against a <5s target; `1` meets NFR1 but consumes
-> $15-30/mo of that budget before Cloud SQL is counted. **EMBEDDING_HOSTING.md is the
-> authoritative doc for this decision** — resolve it there, not here. Deferred to Story 12
-> (GCP Deployment), where the real idle cost becomes measurable.
+| HuggingFace Inference Endpoints | ~$5-15 | ~30-60s from zero | Full | Scale-to-zero available. Cheaper but adds external dependency and cold start. |
+| Vertex AI Embedding API | <$1 | None | Google models only | Cheapest self-hosted-API alternative. But locked to Google's model, no local dev parity, loses benchmark-validated quality. |
 | Vertex AI custom endpoint (GPU) | ~$800 | None | Full | Massive overkill at this scale. |
 
-**Decision: Cloud Run with `min-instances: 0`** (scale-to-zero) on the API service initially. Cold starts (~30-60s for model load) are accepted at launch given low query volume. Upgrade to `min-instances: 1` (~$15-30/mo) when usage justifies always-on cost. The ingestion worker (worker-embed) always scales to zero since batch latency is not user-facing.
+> **Resolved — the `min-instances` question is moot for the current default.**
+> This section previously debated `min-instances: 0` vs `1` for self-hosting `e5-large`
+> on Cloud Run — a direct NFR1 (<5s query)/NFR2 (<$30/mo idle) tradeoff, since a cold
+> in-process model load takes 30-60s. With embeddings now hosted by Berget.ai, there is
+> no in-process model to warm up on either the API server or `worker-embed`, so the
+> tradeoff no longer applies. See [EMBEDDING_HOSTING.md](../design/EMBEDDING_HOSTING.md#decision)
+> for the full decision record, including the historical `min-instances` debate preserved
+> for context in case the project ever reverts to self-hosting.
 
-*Local development:* `sentence-transformers` loads the model in-process. Same as production — no API stub needed.
+**Decision: `EMBEDDING_PROVIDER=berget`** (Berget.ai hosted `intfloat/multilingual-e5-large`) is the default. `EMBEDDING_PROVIDER=local` (`sentence-transformers`, in-process) remains fully implemented as the offline dev/test fallback — no API key or network access required for that path.
+
+*Local development:* Either provider works. `EMBEDDING_PROVIDER=berget` requires `BERGET_API_KEY`; `EMBEDDING_PROVIDER=local` loads `sentence-transformers` in-process with no API key needed.
 
 ### Token Counting (Chunking)
 

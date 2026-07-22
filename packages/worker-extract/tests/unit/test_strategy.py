@@ -80,4 +80,4 @@ class TestStrategyExtract:
             AsyncMock(return_value=empty_result),
         ) as mock:
             await strategy.extract("Document text", case_number="2023-0042")
-        mock.assert_called_once_with("Document text", "2023-0042")
+        mock.assert_called_once_with("Document text", "2023-0042", provider=None)

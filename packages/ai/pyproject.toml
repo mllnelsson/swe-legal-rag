@@ -7,6 +7,7 @@ dependencies = [
     "llm-core",
     "pydantic-settings>=2.0",
     "sentence-transformers>=3.0",
+    "openai>=1.0",
 ]
 
 [tool.uv.sources]

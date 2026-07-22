@@ -30,6 +30,8 @@ def _make_client():
     app = create_app()
 
     app.state.embedding_provider = MagicMock()
+    app.state.structured_llm_provider = MagicMock()
+    app.state.chat_llm_provider = MagicMock()
     app.state.storage = MagicMock()
 
     mock_db = AsyncMock(spec=AsyncSession)

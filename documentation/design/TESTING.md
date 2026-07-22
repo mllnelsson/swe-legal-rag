@@ -27,6 +27,8 @@ Every package gets unit tests. Mock at the interface boundary — the abstractio
 - GCS/storage → mock the storage interface
 - Pub/Sub/queue → mock the queue interface
 
+**LLM/embedding provider unit tests never make live calls.** `GeminiProvider` tests mock the `google-genai` SDK client (`test_gemini_mapping.py`); `OpenAiCompatibleProvider` and `BergetEmbeddingProvider` tests mock `openai.AsyncOpenAI` the same way (`test_openai_compatible_mapping.py`, `test_berget_embedding_provider.py`) — construct the provider, replace `provider._client` (or patch `openai.AsyncOpenAI` before construction), and assert on the mapped request/response shape. Real API calls to Berget or Gemini never happen in unit tests. Composition roots that construct real providers at startup (`api/main.py`'s `_lifespan`, worker `__main__.py`/factory functions) need a dummy `BERGET_API_KEY` in the test environment for construction to succeed — see the `_berget_api_key` autouse fixture in `packages/api/tests/unit/conftest.py` and `packages/worker-extract/tests/unit/conftest.py`. Constructing an `AsyncOpenAI` client makes no network calls by itself; only an actual `.generate()`/`.embed()` call would, and those call sites are the ones under test/mocked.
+
 **What to assert:**
 - Your service logic given known inputs from mocks
 - Correct arguments passed to mocked dependencies
