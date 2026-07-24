@@ -3,11 +3,11 @@ from __future__ import annotations
 import re
 
 from worker_extract.models import (
+    EntityRelevance,
     EntityType,
-    ExtractionResult,
     ExtractedEntity,
     ExtractedReference,
-    EntityRelevance,
+    ExtractionResult,
 )
 
 _CASE_REF_RE = re.compile(
@@ -37,6 +37,7 @@ _KNOWN_ROLES = frozenset(
         "kontraktsprost",
         "domprost",
         "stiftsstyrelse",
+        "präst",
     }
 )
 
@@ -182,9 +183,13 @@ def extract_entities_rule_based(text: str) -> list[ExtractedEntity]:
 
 
 def extract_rule_based(text: str) -> ExtractionResult:
+    # TODO: Make sure there is no self references.
+    entities = extract_entities_rule_based(text)
+    references = extract_references(text)
+    breakpoint()
     return ExtractionResult(
-        entities=extract_entities_rule_based(text),
-        references=extract_references(text),
+        entities=entities,
+        references=references,
     )
 
 
