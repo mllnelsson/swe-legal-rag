@@ -221,3 +221,6 @@ __marimo__/
 
 # Local Data
 data/
+
+# Mac
+.DS_Store
