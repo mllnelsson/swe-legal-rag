@@ -1,0 +1,79 @@
+---
+type: Concept
+title: Query / Retrieval Agent
+description: The five-step query agent — decompose, pre-filter, hybrid retrieve (RRF), optional rerank, synthesize — plus session context.
+tags: [retrieval, agent, rrf, hybrid-search, synthesis]
+timestamp: 2026-07-24T00:00:00Z
+---
+
+# Query / Retrieval Agent
+
+The retrieval pipeline behind the [chat endpoint](/api/chat-endpoint.md), implemented in
+the [api package](/packages/api.md) service layer.
+
+## Step 1 — Query decomposition
+
+A cheap LLM analyzes the user's Swedish question and extracts implicit date filters,
+topic/category, decision type, entity references, and the core semantic question,
+producing a structured query plan.
+
+*Implementation:* `api/services/query_planner.py`. `plan_query()` calls
+`ai.decompose_query()` → maps `DecomposeResult` onto `DocumentFilter`: `DateFilter.start/
+end` → `date_from/date_to`; `categories[0]` → `category`; `entity_refs` →
+`entity_names`. Returns `QueryPlan(semantic_query, filter)`. The mapping lives in `api` —
+`shared` must not import from `ai`.
+
+## Step 2 — Structured + entity pre-filter
+
+Narrows the candidate set using metadata filters (SQL WHERE on date, category, outcome)
+and entity-based filtering (join through [document_entities](/data-model/document-entities.md)),
+and traverses [document_references](/data-model/document-references.md) when the query
+implies precedent chains. The key trick: semantic search runs over ~50–100 filtered docs,
+not the whole corpus.
+
+*Implementation:* `search.find_candidate_documents(session, filter)` (a
+[repository](/data-model/repositories.md) module function). Empty filter → the DB call is
+skipped and `candidate_ids=None` (unfiltered) is used directly; a non-empty filter with
+zero results also falls back to `None` (graceful degradation with a warning). Reference
+traversal queries `document_references` in both directions.
+
+## Step 3 — Hybrid retrieval
+
+On the filtered subset, vector similarity search (pgvector) and full-text search (Swedish
+tsvector) run in parallel, then scores combine with reciprocal rank fusion (RRF).
+
+*Implementation:* `api/services/retriever.py`. `asyncio.gather(vector_search,
+text_search)` both capped at `RETRIEVAL_SEARCH_LIMIT`. The question is embedded with the
+`"query: "` prefix (e5 convention — symmetric with the `"passage: "` prefix used at index
+time by the [embed worker](/pipeline/embed.md)). RRF fusion via
+`shared.search.rrf.rrf_fuse(k=60)` then takes `[:RETRIEVAL_TOP_K]`. Document metadata is
+hydrated concurrently.
+
+## Step 4 — Rerank (optional)
+
+`_rerank()` in `retriever.py`, gated behind `RETRIEVAL_RERANK_ENABLED` (default `False`)
+to satisfy [NFR1 (<5s)](/prd.md). Uses `llm_core.generate_structured()` with the
+structured-role provider to return a ranked index list; any failure falls back to RRF
+order — rerank never breaks retrieval.
+
+## Step 5 — Synthesis
+
+Feeds top chunks + metadata to the chat-role LLM (GLM 5.2 via Berget by default) to
+generate a Swedish answer citing case numbers and dates.
+
+*Implementation:* `api/services/answerer.py` streams tokens via `ai.synthesize_answer()`
+→ yields a `TokenEvent` per token, then a single `SourcesEvent` (deduplicated, one
+`SourceReference` per document, first-seen chunk in RRF order wins the excerpt, truncated
+to 200 chars), then `DoneEvent`. PDF URLs come from
+`storage.get_url("documents/{doc_id}/original.pdf")`. The ordering `token* → sources →
+done` is guaranteed.
+
+## Session context
+
+Conversation history lets the agent handle follow-ups like "what about after 2021?"
+without re-explanation. Each `POST /api/chat` creates or loads a
+[session](/data-model/sessions.md) by `session_id`; the `done` event returns it and
+subsequent requests send it back. `history_for_llm()` truncates to the last
+`SESSION_MAX_HISTORY_TURNS` turn-pairs before sending to the LLM. Stale or missing session
+IDs silently create a new session. The `api` service layer owns session logic; the
+`session` repo module owns DB access.

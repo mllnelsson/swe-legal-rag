@@ -1,8 +1,18 @@
+---
+type: Playbook
+title: Local Development Environment
+description: How to run the whole system locally by swapping GCP dependencies for local equivalents via environment variables.
+tags: [local-dev, docker, environment, workflow]
+timestamp: 2026-07-24T00:00:00Z
+---
+
 # Local Development Environment
 
 ## Principle
 
-Every GCP dependency has a local equivalent. Swapping between local and GCP is a config change via environment variables — no code changes. Docker Compose manages the infrastructure services; application code runs directly on the host via `uv`.
+Every GCP dependency has a local equivalent. Swapping between local and GCP is a config
+change via environment variables — no code changes. Docker Compose manages the
+infrastructure services; application code runs directly on the host via `uv`.
 
 ## Docker Compose Services
 
@@ -15,11 +25,14 @@ The only required service. Runs the same SQL interface as Cloud SQL.
 - Persistent volume for data across restarts
 - Initialized with pgvector extension enabled
 - Swedish text search config available out of the box (built into Postgres)
-- Application code connects via `asyncpg` (async driver); Alembic migrations use the sync `psycopg` driver. Both are configured automatically by `shared/db.py` — the `DATABASE_URL` env var may use any `postgresql://` scheme.
+- Application code connects via `asyncpg` (async driver); Alembic migrations use the
+  sync `psycopg` driver. Both are configured automatically by `shared/db.py` — the
+  `DATABASE_URL` env var may use any `postgresql://` scheme.
 
 ### MinIO (optional)
 
-S3-compatible object storage. Only needed if you want GCS API parity. For most development, local filesystem storage is simpler and sufficient.
+S3-compatible object storage. Only needed if you want GCS API parity. For most
+development, local filesystem storage is simpler and sufficient.
 
 - Image: `minio/minio`
 - Ports: `9000` (API), `9001` (console)
@@ -27,22 +40,26 @@ S3-compatible object storage. Only needed if you want GCS API parity. For most d
 
 ### Redis (optional)
 
-Only needed if testing async queue behavior. For most development, the in-process synchronous queue implementation is faster to work with and easier to debug.
+Only needed if testing async queue behavior. For most development, the in-process
+synchronous queue implementation is faster to work with and easier to debug.
 
 - Image: `redis:7-alpine`
 - Port: `6379`
 
 ## What Runs Outside Compose
 
-Application code runs on the host, not in containers. This keeps iteration fast — no rebuilds, no container restarts.
+Application code runs on the host, not in containers. This keeps iteration fast — no
+rebuilds, no container restarts.
 
 - **API server:** `uv run` the FastAPI app directly with hot reload
-- **Workers:** `uv run` each worker as a standalone process, or invoke the service layer directly from a script/REPL
+- **Workers:** `uv run` each worker as a standalone process, or invoke the service layer
+  directly from a script/REPL
 - **Migrations:** `uv run alembic upgrade head` against the Docker Postgres instance
 
 ## Environment Config
 
-A root `.env` file provides all configuration. Each interface reads from environment variables to select the local implementation.
+A root `.env` file provides all configuration. Each interface reads from environment
+variables to select the local implementation.
 
 ```
 # Database
@@ -66,7 +83,7 @@ BERGET_API_KEY=                # required for LLM_PROVIDER=berget and/or EMBEDDI
 LLM_BASE_URL=                   # optional override; defaults to https://api.berget.ai/v1
 GEMINI_API_KEY=                 # required only if LLM_PROVIDER=gemini
 
-# Per-task model assignment (see BACKEND_DESIGN.md — Per-task Model Selection).
+# Per-task model assignment (see /packages/ai.md — per-task model selection).
 # Defaults are Berget model IDs; override all three if switching LLM_PROVIDER=gemini.
 LLM_MODEL_STRUCTURED=mistralai/Mistral-Small-3.2-24B-Instruct-2506
 LLM_MODEL_SUMMARIZE=mistralai/Mistral-Medium-3.5-128B
@@ -90,7 +107,7 @@ REDIS_URL=redis://localhost:6379
 
 | Variable | Default | Notes |
 |---|---|---|
-| `CRAWL_API_KEY` | *(required)* | API key for the Svenska kyrkan OData endpoint. Not defaulted in code — see [CRAWL_SOURCE.md](CRAWL_SOURCE.md) |
+| `CRAWL_API_KEY` | *(required)* | API key for the Svenska kyrkan OData endpoint. Not defaulted in code — see [crawl source](/reference/crawl-source.md) |
 | `CRAWL_YEARS` | `current` | Decision years to crawl: `current`, `all`, `2019`, `2019-2021`, or a comma-separated mix. `--years` overrides it |
 | `CRAWL_API_BASE` | `https://www.svenskakyrkan.se/webapi/api-v3/odata/` | OData v4 service root |
 | `CRAWL_DOCUMENT_URL_TEMPLATE` | `https://www.svenskakyrkan.se/default.aspx?id={document_id}&ptid=` | Template for the canonical PDF URL stored as `documents.source_url` |
@@ -115,7 +132,8 @@ REDIS_URL=redis://localhost:6379
 
 ## Running the Pipeline Locally
 
-With `QUEUE_BACKEND=sync`, publishing a message from the crawl worker dispatches it inline to the download worker in the same process:
+With `QUEUE_BACKEND=sync`, publishing a message from the crawl worker dispatches it
+inline to the download worker in the same process:
 
 ```bash
 # Full pipeline in one invocation (sync queue):
@@ -132,11 +150,19 @@ uv run --package worker-embed python -m worker_embed
 ```
 
 **worker-chunk notes:**
-- Requires `BERGET_API_KEY` in `.env` by default — summary generation calls the `summarize`-role model (Mistral Medium 3.5 by default) via Berget, through the `ai` package. If `LLM_PROVIDER=gemini`, requires `GEMINI_API_KEY` and a valid Gemini model in `LLM_MODEL_SUMMARIZE` instead.
+- Requires `BERGET_API_KEY` in `.env` by default — summary generation calls the
+  `summarize`-role model (Mistral Medium 3.5 by default) via Berget, through the
+  [ai package](/packages/ai.md). If `LLM_PROVIDER=gemini`, requires `GEMINI_API_KEY` and
+  a valid Gemini model in `LLM_MODEL_SUMMARIZE` instead.
 
 **worker-embed notes:**
-- Default `EMBEDDING_PROVIDER=berget` calls Berget's hosted `intfloat/multilingual-e5-large` over HTTP — requires `BERGET_API_KEY`, no local model download, no cold start.
-- Set `EMBEDDING_PROVIDER=local` to run `sentence-transformers` in-process instead — no API key required, but the ~2.2 GB model is downloaded to the HuggingFace cache on first use, so the first embed (and the first API query, if the API is also configured for `local`) is slow. Subsequent runs use the cached model.
+- Default `EMBEDDING_PROVIDER=berget` calls Berget's hosted
+  `intfloat/multilingual-e5-large` over HTTP — requires `BERGET_API_KEY`, no local model
+  download, no cold start (see [embedding hosting](/decisions/embedding-hosting.md)).
+- Set `EMBEDDING_PROVIDER=local` to run `sentence-transformers` in-process instead — no
+  API key required, but the ~2.2 GB model is downloaded to the HuggingFace cache on first
+  use, so the first embed (and the first API query, if the API is also configured for
+  `local`) is slow. Subsequent runs use the cached model.
 
 ## Interface Mapping
 
@@ -152,13 +178,19 @@ uv run --package worker-embed python -m worker_embed
 | LLM provider | `LLM_PROVIDER` | `berget` (default) or `gemini` | Same — no local/GCP distinction, just a config choice |
 | Embedding provider | `EMBEDDING_PROVIDER` | `berget` (default) or `local` | Same — `local` is an offline dev/test fallback, not a GCP-vs-local split |
 
-Development defaults: `STORAGE_BACKEND=local` and `QUEUE_BACKEND=sync`. No GCS or Pub/Sub credentials required for local development.
+Development defaults: `STORAGE_BACKEND=local` and `QUEUE_BACKEND=sync`. No GCS or Pub/Sub
+credentials required for local development. The full local↔GCP mapping and the
+abstraction principle behind it are described in the
+[GCP layout](/reference/gcp-layout.md).
 
 ## Local Queue Behavior
 
-The `sync` queue backend calls the next worker's service layer directly in-process. This means the full pipeline can run as a single Python invocation — useful for debugging and testing the complete ingestion flow without any infrastructure.
+The `sync` queue backend calls the next worker's service layer directly in-process. This
+means the full pipeline can run as a single Python invocation — useful for debugging and
+testing the complete ingestion flow without any infrastructure.
 
-For testing async/concurrent behavior, switch to `redis` and run workers as separate processes.
+For testing async/concurrent behavior, switch to `redis` and run workers as separate
+processes.
 
 ## First-time Setup
 
@@ -179,11 +211,14 @@ uv run alembic upgrade head # apply migrations
 
 ## Data Seeding
 
-For development, keep a small set of test PDFs in a `data/seed/` directory (gitignored). A seed script runs the full pipeline synchronously against these documents to populate the local database with realistic data for frontend and retrieval development.
+For development, keep a small set of test PDFs in a `data/seed/` directory (gitignored).
+A seed script runs the full pipeline synchronously against these documents to populate
+the local database with realistic data for frontend and retrieval development.
 
 ## Approved Docker Images
 
-Only the images listed below are approved for use in this project. Pin to the tags shown — do not use `latest` or switch to alternative images without discussion.
+Only the images listed below are approved for use in this project. Pin to the tags shown
+— do not use `latest` or switch to alternative images without discussion.
 
 | Service | Image | Tag | Purpose |
 |---|---|---|---|
@@ -192,9 +227,12 @@ Only the images listed below are approved for use in this project. Pin to the ta
 | Redis | `redis` | `7-alpine` | Async queue / cache |
 | Python | `python` | `3.12-slim` | Application base image |
 
-When adding a new infrastructure service, add its image here before using it in `docker-compose.yml`.
+When adding a new infrastructure service, add its image here before using it in
+`docker-compose.yml`.
 
-**Berget.ai (LLM + embedding provider) needs no entry here.** It's an external HTTP API called from existing application processes (`api`, workers) — not a service this project runs, so it never touches `docker-compose.yml` or this table.
+**Berget.ai (LLM + embedding provider) needs no entry here.** It's an external HTTP API
+called from existing application processes (`api`, workers) — not a service this project
+runs, so it never touches `docker-compose.yml` or this table.
 
 ## Docker Compose Profiles
 
