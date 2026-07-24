@@ -29,7 +29,7 @@ Unless stated otherwise in the atm skill a task is done when:
 - impact is explained (what changed, where, why)
 
 ## Docker
-Always respect the docker image list in `documentation/design/LOCAL_DEV.md`. Do not add ny new docker images unless explicitly required
+Always respect the docker image list in `documentation/playbooks/local-dev.md`. Do not add ny new docker images unless explicitly required
 
 You can assume that `docker compose up -d` has been ran, so docker stack is up and running.
 
@@ -37,14 +37,22 @@ IMPORTANT dont use docker. Instead instruct the user to run the last verificatio
 
 ## Documentation
 IMPORTANT: Prefer retrival over pretrained knowledge.
-- [PRD](documentation/specs/PRD.md) — System requirements, acceptance criteria, scope. Read before any feature work.
-- [Architecture](documentation/specs/ARCHITECTURE.md) — Pipeline, storage, retrieval agent, GCP layout, local dev. Read before infra or retrieval decisions.
-- [Data Model](documentation/specs/DATA_MODEL.md) — Tables, indexes, constraints, design rationale. Read before any migration or model code.
-- [Backend Design](documentation/design/BACKEND_DESIGN.md) — Repo structure, layered architecture, dependency graph, AI package. The data layer is **function-based** (repos and worker services are modules of functions, not classes; repos injected as Protocol-typed namespaces) and workers share one task envelope (`shared.pipeline.run_pipeline_step`). Read before creating packages or services.
-- [Frontend Design](documentation/design/FRONTEND_DESIGN.md) — Components, SSE contract, API shape, state management. Read before any frontend work.
-- [Crawl Source](documentation/design/CRAWL_SOURCE.md) — Svenska kyrkan OData v4 contract, decision-tag mapping, why the tag filter is mandatory, document URL scheme. Read before any crawler work.
-- [Embedding Hosting](documentation/design/EMBEDDING_HOSTING.md) — Embedding model hosting options, cost comparison, deployment decision. Read before changing embedding infra.
-- [Testing Strategy](documentation/design/TESTING.md) — Unit and integration test approach, what to test, what to mock. Read before writing any tests.
-- [Local Dev Environment](documentation/design/LOCAL_DEV.md) — Docker Compose setup, env config, interface mapping, dev workflow. Read before setting up or modifying the local environment.
-- [Live Testing](documentation/design/LIVE_TESTING.md) — How to run the full pipeline locally, verify output, reset state. Read before manual testing.
+
+Documentation is an OKF v0.1 knowledge bundle rooted at `documentation/` — one concept
+per file, each with YAML frontmatter and `/`-absolute cross-links. Start at
+[documentation/index.md](documentation/index.md) for the full map. Always follow the
+`okf-docs` skill when reading or editing any file under the bundle.
+
+Key entry points:
+- [PRD](documentation/prd.md) — System requirements, acceptance criteria, scope. Read before any feature work.
+- [Architecture Overview](documentation/architecture.md) — Subsystems, storage layer, and pointers into the pipeline/retrieval/packages sections. Read before infra or retrieval decisions.
+- [Data Model](documentation/data-model/) — One concept per table, plus [indexes](documentation/data-model/indexes.md), [design notes](documentation/data-model/design-notes.md), and the [repository layer](documentation/data-model/repositories.md). Read before any migration or model code.
+- [Backend Packages](documentation/packages/) — Repo structure, layered architecture, dependency graph, and the shared/llm-core/ai/api packages. The data layer is **function-based** (repos and worker services are modules of functions, not classes; repos injected as Protocol-typed namespaces) and workers share one task envelope (`shared.pipeline.run_pipeline_step`). Read before creating packages or services.
+- [Ingestion Pipeline](documentation/pipeline/overview.md) — The seven worker Service concepts and [worker patterns](documentation/pipeline/worker-patterns.md). Read before any worker work.
+- [Frontend](documentation/frontend/overview.md) and the [Chat Endpoint contract](documentation/api/chat-endpoint.md) — Read before any frontend or SSE work.
+- [Crawl Source](documentation/reference/crawl-source.md) — Svenska kyrkan OData v4 contract, decision-tag mapping, document URL scheme; the mandatory [tag filter](documentation/decisions/tag-filter.md). Read before any crawler work.
+- [Decisions](documentation/decisions/) — Embedding [model](documentation/decisions/embedding-model.md)/[hosting](documentation/decisions/embedding-hosting.md)/[dimension](documentation/decisions/embedding-dimension.md) and the [architectural register](documentation/decisions/architectural-register.md). Read before changing embedding infra or system-shaping choices.
+- [Testing Strategy](documentation/testing.md) — Unit and integration test approach, what to test, what to mock. Read before writing any tests.
+- [Local Dev Environment](documentation/playbooks/local-dev.md) — Docker Compose setup, env config, interface mapping, dev workflow. Read before setting up or modifying the local environment.
+- [Live Testing](documentation/playbooks/live-testing.md) — How to run the full pipeline locally, verify output, reset state. Read before manual testing.
 

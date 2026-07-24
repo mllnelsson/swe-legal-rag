@@ -1,0 +1,9 @@
+# Documentation Update Log
+
+## 2026-07-24
+
+* **Creation**: Migrated the documentation set to an OKF v0.1 knowledge bundle — one concept per file, YAML frontmatter with a `type`, `/`-absolute cross-links, and per-directory `index.md` files. The former `specs/` and `design/` folders were replaced by topical sections (`pipeline/`, `retrieval/`, `data-model/`, `packages/`, `api/`, `frontend/`, `decisions/`, `playbooks/`, `reference/`).
+* **Creation**: Split the monolithic backend and architecture specs into per-worker [pipeline](/pipeline/overview.md) Service concepts, per-package [Package](/packages/overview.md) concepts, per-table [Table](/data-model/documents.md) concepts, and a [Repository](/data-model/repositories.md) concept for the function-based data layer.
+* **Deprecation**: Removed the superseded `min-instances 0 vs 1` self-hosting narration from the [embedding hosting](/decisions/embedding-hosting.md) decision. The tension — a direct NFR1 (<5s query) vs NFR2 (<$30/mo idle) tradeoff for a cold in-process `e5-large` load — is moot under the Berget-hosted default, since neither the API server nor `worker-embed` loads the model. It is preserved here in case the project ever reverts to self-hosting.
+* **Deprecation**: Fixed stale LLM config in the [live testing](/playbooks/live-testing.md) playbook. Its env block previously set `LLM_PROVIDER=gemini`, `LLM_MODEL=gemini-2.0-flash` (a model shut down 2026-06-01), and `EMBEDDING_PROVIDER=local`, contradicting the Berget default in [local dev](/playbooks/local-dev.md); it now matches the Berget provider and per-task model scheme.
+* **Update**: Consolidated the mandatory crawl tag-filter rationale into a single [decision](/decisions/tag-filter.md) (previously duplicated across the crawl source and backend specs), and the `ai` package into a single [concept](/packages/ai.md) (previously documented twice in the backend spec).

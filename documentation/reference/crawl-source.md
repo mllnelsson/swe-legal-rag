@@ -1,7 +1,17 @@
-# Crawl Source: Svenska kyrkan OData API
+---
+type: Reference
+title: Crawl Source — Svenska kyrkan OData API
+description: Authoritative reference for where Överklagandenämnden decisions come from and why the crawl worker is shaped the way it is.
+resource: https://www.svenskakyrkan.se/webapi/api-v3/odata/
+tags: [crawl, odata, source, svenska-kyrkan]
+timestamp: 2026-07-24T00:00:00Z
+---
+
+# Crawl Source — Svenska kyrkan OData API
 
 Authoritative reference for where Överklagandenämnden decisions come from and why the
-crawl worker is shaped the way it is. Read before touching `packages/worker-crawl/`.
+crawl worker is shaped the way it is. Read before touching `packages/worker-crawl/` (see
+also the [crawl worker](/pipeline/crawl.md) concept).
 
 ## Why this replaced HTML scraping
 
@@ -12,8 +22,8 @@ The worker now queries the same API the page's own JavaScript calls.
 
 ## The API
 
-**OData v4** (OASIS Open Data Protocol), served by an ASP.NET Web API OData endpoint over
-the CMS. Confirmed from `$metadata`:
+**OData v4** (OASIS Open Data Protocol), served by an ASP.NET Web API OData endpoint
+over the CMS. Confirmed from `$metadata`:
 
 ```xml
 <edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">
@@ -30,9 +40,9 @@ the CMS. Confirmed from `$metadata`:
 
 ### API key
 
-`CRAWL_API_KEY` is a **required setting with no default in code**. The working key is the
-client-side one the public decision search sends from a logged-out browser; read it from
-the site's own network requests.
+`CRAWL_API_KEY` is a **required setting with no default in code**. The working key is
+the client-side one the public decision search sends from a logged-out browser; read it
+from the site's own network requests.
 
 **Design decision:** it is not committed, even though it is very likely public. Its
 provenance was never fully verified (it does not appear in the served HTML of
@@ -49,16 +59,10 @@ published eq true
   and tags/any(t: t/databaseId in (<tag ids>))
 ```
 
-**The `tags/any(...)` clause is mandatory.** Dropping it does not widen the result to "all
-decisions" — it widens it to every binary file on that web:
-
-| Filter | Rows |
-|---|---|
-| Without the tag clause | **5039** — posters, ad creatives, kyrkostyrelsen protocols, annual reports |
-| With all decision tags | **1073** — the actual decision corpus |
-
-A date filter (`publishDate ge <ISO>`) is accepted by the API but is **not** a substitute:
-it cannot tell a decision apart from a poster published the same week.
+The `tags/any(...)` clause is **mandatory** — without it the query returns every binary
+file on the web rather than the decision corpus. See
+[the tag filter is mandatory](/decisions/tag-filter.md) for the rationale and the row
+counts.
 
 ## Decision tags
 
@@ -68,8 +72,8 @@ Decisions are scoped by tag, one tag per decision year, discovered at runtime vi
 GET /odata/tags?$filter=startswith(name,'Överklagandenämndens beslut')
 ```
 
-Resolving tags live means new years (2027…) work with **no code change**. The table below
-is a snapshot for reference and for the test fixture in
+Resolving tags live means new years (2027…) work with **no code change**. The table
+below is a snapshot for reference and for the test fixture in
 `packages/worker-crawl/tests/unit/test_tags.py` — it is not the lookup source.
 
 | Year | databaseId | Note |
@@ -106,20 +110,21 @@ is a snapshot for reference and for the test fixture in
 
 ### Three traps the code must survive
 
-1. **A year can map to several tag ids.** 2013 has two. `TagIndex.by_year` therefore holds
-   a *tuple* of ids per year, never a single id.
-2. **Ids are not chronological.** 2017 (`100065189`) is higher than 2019 (`100064819`), so
-   an id can never be derived arithmetically from a year — it must be looked up.
+1. **A year can map to several tag ids.** 2013 has two. `TagIndex.by_year` therefore
+   holds a *tuple* of ids per year, never a single id.
+2. **Ids are not chronological.** 2017 (`100065189`) is higher than 2019
+   (`100064819`), so an id can never be derived arithmetically from a year — it must be
+   looked up.
 3. **Casing is inconsistent.** The 2023 tag is lowercase. OData's `startswith` is
    case-insensitive (which is why that tag is reachable at all), and year parsing on our
    side matches on the trailing four digits, never on name casing.
 
 ### The year-less tag
 
-Tag `760887` carries 125 documents belonging to no single year. **Design decision:** it is
-included only under `--years all`, never in a routine current-year run, so incremental
-crawls stay clean while a full backfill still reaches the whole corpus. It is exposed
-separately as `TagIndex.undated`.
+Tag `760887` carries 125 documents belonging to no single year. **Design decision:** it
+is included only under `--years all`, never in a routine current-year run, so
+incremental crawls stay clean while a full backfill still reaches the whole corpus. It
+is exposed separately as `TagIndex.undated`.
 
 ## Document identity and download URL
 
@@ -129,16 +134,16 @@ separately as `TagIndex.undated`.
 https://www.svenskakyrkan.se/default.aspx?id={documentId}&ptid=
 ```
 
-Chosen over the `attachmentFileName` path (`filer/1374643/Beslut 2025-21 ....pdf`) because
-it is stable when a file is renamed and needs no URL-encoding of spaces and Swedish
-characters. It **302-redirects** to the real `/filer/...pdf` path — which is why
-`worker-download` must set `follow_redirects=True`. httpx defaults that to `False` and
-`raise_for_status()` rejects an unfollowed redirect, so without it every download fails on
-a 302.
+Chosen over the `attachmentFileName` path (`filer/1374643/Beslut 2025-21 ....pdf`)
+because it is stable when a file is renamed and needs no URL-encoding of spaces and
+Swedish characters. It **302-redirects** to the real `/filer/...pdf` path — which is why
+the [download worker](/pipeline/download.md) must set `follow_redirects=True`. httpx
+defaults that to `False` and `raise_for_status()` rejects an unfollowed redirect, so
+without it every download fails on a 302.
 
 The listing also yields `documentId`, `headline` and `publishDate`, persisted as
-`source_document_id` (unique), `source_headline` and `source_published_at`. See
-[DATA_MODEL.md](../specs/DATA_MODEL.md).
+`source_document_id` (unique), `source_headline` and `source_published_at`. See the
+[documents table](/data-model/documents.md).
 
 ## Module layout
 
@@ -154,11 +159,11 @@ I/O is kept at the edges; the selection logic is pure and unit-tested without HT
 
 ## Operational notes
 
-- **Pagination**: `$skip`/`$top` at `CRAWL_PAGE_SIZE` until `@odata.count` is reached, with
-  a `MAX_PAGES` cap so an upstream count bug cannot spin forever. Results are
+- **Pagination**: `$skip`/`$top` at `CRAWL_PAGE_SIZE` until `@odata.count` is reached,
+  with a `MAX_PAGES` cap so an upstream count bug cannot spin forever. Results are
   de-duplicated by document id, because `$orderBy=publishdate desc` is not a unique sort
   and a row can repeat across page boundaries.
-- **Retry**: 5xx, connect and timeout errors retry with exponential backoff; 4xx is raised
-  immediately. Previously a single transient 5xx aborted the entire crawl.
+- **Retry**: 5xx, connect and timeout errors retry with exponential backoff; 4xx is
+  raised immediately.
 - **Rate limiting**: `CRAWL_RATE_LIMIT_DELAY` seconds between pages; requests identify
   themselves via a `church-legal-db-crawler/0.2` User-Agent.
