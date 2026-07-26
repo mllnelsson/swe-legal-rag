@@ -2,6 +2,7 @@
 
 ## 2026-07-26
 
+* **Update**: [parse worker](/pipeline/parse.md) now repairs words split by a line-break hyphen — pypdfium2 emits U+FFFE there, which Postgres tokenized as two fragments, hiding the containing chunk from a search for the term. Line breaks themselves are deliberately left alone.
 * **Creation**: Documented the anatomy of a decision PDF and the anchors the pipeline segments it with in [decision document structure](/reference/document-structure.md) — header, holding, trailer, `Bilaga X` appendices, and the two identifier spaces (ärendenummer vs beslutsnummer).
 * **Creation**: Recorded [appendices are labelled, not dropped](/decisions/appendix-segmentation.md) — appended lower-instance decisions stay searchable but carry a `section` marker, and modelling the prior instance as structured data is explicitly deferred.
 * **Creation**: Recorded [body-first retrieval over one vector index](/decisions/body-first-retrieval.md) — one HNSW index with a `section` predicate rather than two, a hard filter rather than a ranking penalty, and the partial index deferred behind measurement.
