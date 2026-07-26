@@ -16,6 +16,14 @@ Always update the documentation after changes to reflect the new workings of the
 
 ## Astral
 This project uses the astral tools uv and ruff. IMPORTANT always use `uv` when doing python operations
+## Python
+
+- Style is ruff-enforced but **not** auto-applied — nothing formats your
+  code after you write it. Write it already-formatted.
+- `ty` type-checks the whole project when a turn ends. Annotate as you go;
+  don't leave inference to be discovered at the end.
+- Lint findings surfaced mid-turn are advisory. Fix what's real, and skip
+  nits in code you didn't touch.
 
 ## Definition of done
 Unless stated otherwise in the atm skill a task is done when:
