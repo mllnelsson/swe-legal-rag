@@ -11,9 +11,6 @@ You need not use the --porject. Project ID is already infered from repo.
 ## Code Guidelines
 Always use ur code guidline skill when writing or review code
 
-## Updating documentation
-Always update the documentation after changes to reflect the new workings of the program. When design descions are made it should be lcearly astated for futurew agents. Documentation is housed in the `documentation directory`
-
 ## Astral
 This project uses the astral tools uv and ruff. IMPORTANT always use `uv` when doing python operations
 ## Python
@@ -46,10 +43,15 @@ IMPORTANT dont use docker. Instead instruct the user to run the last verificatio
 ## Documentation
 IMPORTANT: Prefer retrival over pretrained knowledge.
 
+`documentation/` is an OKF bundle: markdown concepts with YAML frontmatter.
+When delegating any docs lookup to Explore, include in the prompt:
+"Links beginning with `/` are relative to documentation/, not the filesystem.
+Read YAML frontmatter (`description`, `type`) before opening bodies."
 Documentation is an OKF v0.1 knowledge bundle rooted at `documentation/` — one concept
 per file, each with YAML frontmatter and `/`-absolute cross-links. Start at
 [documentation/index.md](documentation/index.md) for the full map. Always follow the
 `okf-docs` skill when reading or editing any file under the bundle.
+Use the `òkf-docs-writer` agents when handleing the documentation.
 
 Key entry points:
 - [PRD](documentation/prd.md) — System requirements, acceptance criteria, scope. Read before any feature work.
