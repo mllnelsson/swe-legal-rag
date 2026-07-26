@@ -4,6 +4,7 @@ import os
 from enum import StrEnum, auto
 
 from ai.providers.roles import create_structured_llm_provider
+from shared.segmentation import DocumentSegments
 from worker_extract.entities import deduplicate_entities
 from worker_extract.extractors.base import ExtractionStrategy
 from worker_extract.extractors.llm import LLMStrategy
@@ -24,12 +25,14 @@ class ExtractStrategyMode(StrEnum):
     RULE_BASED_WITH_LLM_FALLBACK = auto()
 
 
-def _is_result_complete(result: ExtractionResult, document_text: str) -> bool:
+def _is_result_complete(result: ExtractionResult, segments: DocumentSegments) -> bool:
+    # Sized against the body alone: the yardstick is how much of the nämnd's own
+    # text there is to extract from, and appendix length says nothing about that.
     if not result.entities:
         return False
     min_expected = max(
         1,
-        len(document_text)
+        len(segments.body)
         // _CHARS_PER_ENTITY_ESTIMATE
         * _ENTITY_COUNT_PER_ESTIMATE_BLOCK,
     )
@@ -56,12 +59,12 @@ class _FallbackStrategy:
         self._llm = LLMStrategy(create_structured_llm_provider())
 
     async def extract(
-        self, document_text: str, case_number: str | None = None
+        self, segments: DocumentSegments, case_number: str | None = None
     ) -> ExtractionResult:
-        result = await self._rule_based.extract(document_text, case_number)
-        if _is_result_complete(result, document_text):
+        result = await self._rule_based.extract(segments, case_number)
+        if _is_result_complete(result, segments):
             return result
-        llm_result = await self._llm.extract(document_text, case_number)
+        llm_result = await self._llm.extract(segments, case_number)
         return _merge_results(result, llm_result)
 
 

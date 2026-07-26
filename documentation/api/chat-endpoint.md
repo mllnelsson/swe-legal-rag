@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — request shape, streamed token/sources/done events, and mid-stream error semantics.
 resource: POST /api/chat
 tags: [api, sse, chat, contract]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-26T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -40,7 +40,9 @@ data: {"sources": [
     "decision_outcome": "string",
     "category": "string",
     "excerpt": "string",
-    "pdf_url": "string"
+    "pdf_url": "string",
+    "section": "body | appendix",
+    "appendix_label": "string | null"
   }
 ]}
 
@@ -51,6 +53,14 @@ data: {"session_id": "uuid"}
 `token` events stream as the synthesized answer is produced. The `sources` event
 carries the cited decisions and arrives after the answer text. `done` terminates a
 successful turn and returns the (possibly newly created) `session_id`.
+
+`section` says which part of the PDF the excerpt is quoting.
+**`"appendix"` means the appealed decision** — the lower instance's words, which
+Överklagandenämnden may have overturned — and `appendix_label` names it (`"Bilaga A"`).
+A client must not present such an excerpt as the nämnd's own reasoning. Body excerpts
+are the default; appendices only appear when the query planner judged the question to be
+about the appealed decision, or when body-only retrieval found nothing. See
+[body-first retrieval](/decisions/body-first-retrieval.md).
 
 ## Error semantics
 

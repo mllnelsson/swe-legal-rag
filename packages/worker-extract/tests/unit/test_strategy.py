@@ -8,6 +8,7 @@ from worker_extract.extractors.factory import (
     ExtractStrategyMode,
     get_extraction_strategy,
 )
+from shared.segmentation import split_document
 from worker_extract.extractors.llm import LLMStrategy
 from worker_extract.extractors.rule_based import RuleBasedStrategy
 from worker_extract.models import ExtractionResult
@@ -53,7 +54,9 @@ class TestStrategyExtract:
     async def test_rule_based_strategy_extract_returns_result(self) -> None:
         strategy = RuleBasedStrategy()
         result = await strategy.extract(
-            "Kyrkoherden överklagade med hänvisning till ärende ÖN 2021-0345."
+            split_document(
+                "Kyrkoherden överklagade med hänvisning till ärende ÖN 2021-0345."
+            )
         )
         assert isinstance(result, ExtractionResult)
         assert len(result.references) == 1
@@ -67,7 +70,9 @@ class TestStrategyExtract:
             "worker_extract.extractors.llm.ai_extract_entities",
             AsyncMock(return_value=empty_result),
         ):
-            result = await strategy.extract("Document text", case_number="2023-0001")
+            result = await strategy.extract(
+                split_document("Document text"), case_number="2023-0001"
+            )
         assert isinstance(result, ExtractionResult)
 
     async def test_llm_strategy_passes_case_number_to_ai(self) -> None:
@@ -79,5 +84,8 @@ class TestStrategyExtract:
             "worker_extract.extractors.llm.ai_extract_entities",
             AsyncMock(return_value=empty_result),
         ) as mock:
-            await strategy.extract("Document text", case_number="2023-0042")
+            await strategy.extract(
+                split_document("Document text"), case_number="2023-0042"
+            )
+        # The LLM sees the body, never the appendices.
         mock.assert_called_once_with("Document text", "2023-0042", provider=None)

@@ -27,6 +27,7 @@ def _make_doc_read(
         raw_text=None,
         summary=None,
         case_number=None,
+        decision_number=None,
         decision_date=None,
         decision_outcome=None,
         category=None,

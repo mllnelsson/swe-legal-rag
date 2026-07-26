@@ -1,5 +1,5 @@
 from __future__ import annotations
-from shared.enums import PipelineStep
+from shared.enums import ChunkSection, PipelineStep
 
 import uuid
 from datetime import datetime, timezone
@@ -26,6 +26,7 @@ def _make_document(raw_text: str | None = "Swedish legal text.") -> DocumentRead
         raw_text=raw_text,
         summary=None,
         case_number=None,
+        decision_number=None,
         decision_date=None,
         decision_outcome=None,
         category=None,
@@ -54,6 +55,8 @@ def _make_chunk_read(document_id: uuid.UUID, index: int) -> ChunkRead:
         chunk_text="text",
         contextual_text="summary\n\n---\n\ntext",
         embedding=None,
+        section=ChunkSection.BODY,
+        appendix_label=None,
         created_at=_NOW,
     )
 

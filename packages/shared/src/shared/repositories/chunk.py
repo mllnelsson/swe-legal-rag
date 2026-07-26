@@ -1,15 +1,20 @@
 import uuid
+from collections.abc import Sequence
 from typing import Any, cast
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.chunk import ChunkCreate, ChunkRead
 from shared.dtos.search import ChunkSearchResult
+from shared.enums import ChunkSection
 from shared.models.chunk import Chunk
 
 DEFAULT_SEARCH_LIMIT = 20
+
+# Which parts of a document a search may draw from; None means every part.
+Sections = Sequence[ChunkSection] | None
 
 
 def _row_to_search_result(row: Any) -> ChunkSearchResult:
@@ -21,7 +26,24 @@ def _row_to_search_result(row: Any) -> ChunkSearchResult:
         chunk_text=chunk.chunk_text,
         chunk_index=chunk.chunk_index,
         score=float(row.score),
+        section=ChunkSection(chunk.section),
+        appendix_label=chunk.appendix_label,
     )
+
+
+def _restrict(
+    stmt: Select[Any], document_ids: list[uuid.UUID] | None, sections: Sections
+) -> Select[Any]:
+    """Apply the two optional predicates both searches share.
+
+    ``sections=None`` means "no restriction", which keeps the pre-segmentation
+    behaviour available for callers that genuinely want appendices too.
+    """
+    if document_ids is not None:
+        stmt = stmt.where(Chunk.document_id.in_(document_ids))
+    if sections is not None:
+        stmt = stmt.where(Chunk.section.in_([s.value for s in sections]))
+    return stmt
 
 
 async def bulk_create(
@@ -34,6 +56,8 @@ async def bulk_create(
             chunk_text=dto.chunk_text,
             contextual_text=dto.contextual_text,
             embedding=dto.embedding,
+            section=dto.section.value,
+            appendix_label=dto.appendix_label,
         )
         for dto in dtos
     ]
@@ -76,6 +100,7 @@ async def vector_search(
     embedding: list[float],
     document_ids: list[uuid.UUID] | None,
     limit: int = DEFAULT_SEARCH_LIMIT,
+    sections: Sections = None,
 ) -> list[ChunkSearchResult]:
     distance = Chunk.embedding.cosine_distance(embedding).label("score")
     stmt = (
@@ -84,9 +109,7 @@ async def vector_search(
         .order_by(distance)
         .limit(limit)
     )
-    if document_ids is not None:
-        stmt = stmt.where(Chunk.document_id.in_(document_ids))
-    result = await session.execute(stmt)
+    result = await session.execute(_restrict(stmt, document_ids, sections))
     return [_row_to_search_result(row) for row in result.all()]
 
 
@@ -95,6 +118,7 @@ async def text_search(
     query: str,
     document_ids: list[uuid.UUID] | None,
     limit: int = DEFAULT_SEARCH_LIMIT,
+    sections: Sections = None,
 ) -> list[ChunkSearchResult]:
     tsquery = func.websearch_to_tsquery("swedish", query)
     rank = func.ts_rank(Chunk.tsv, tsquery).label("score")
@@ -104,7 +128,5 @@ async def text_search(
         .order_by(rank.desc())
         .limit(limit)
     )
-    if document_ids is not None:
-        stmt = stmt.where(Chunk.document_id.in_(document_ids))
-    result = await session.execute(stmt)
+    result = await session.execute(_restrict(stmt, document_ids, sections))
     return [_row_to_search_result(row) for row in result.all()]

@@ -44,6 +44,7 @@ class TestDocumentDTOs:
             raw_text=None,
             summary=None,
             case_number=None,
+            decision_number=None,
             decision_date=None,
             decision_outcome=None,
             category=None,
@@ -110,6 +111,8 @@ class TestChunkDTOs:
             chunk_text="hello",
             contextual_text=None,
             embedding=[0.1],
+            section="body",
+            appendix_label=None,
             created_at=now,
         )
         dto = ChunkRead.model_validate(obj)

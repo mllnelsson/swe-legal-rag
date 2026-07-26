@@ -3,6 +3,8 @@ from datetime import date
 
 from pydantic import BaseModel
 
+from shared.enums import ChunkSection
+
 
 class DocumentFilter(BaseModel):
     date_from: date | None = None
@@ -20,3 +22,5 @@ class ChunkSearchResult(BaseModel):
     chunk_text: str
     chunk_index: int
     score: float
+    section: ChunkSection = ChunkSection.BODY
+    appendix_label: str | None = None

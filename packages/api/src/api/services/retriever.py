@@ -14,9 +14,11 @@ from api.services.query_planner import QueryPlan
 from llm_core import LLMProvider, Message, Role, generate_structured
 from shared.dtos.document import DocumentRead
 from shared.dtos.search import ChunkSearchResult, DocumentFilter
+from shared.enums import ChunkSection
 from shared.repositories import chunk as chunk_repo
 from shared.repositories import document as document_repo
 from shared.repositories import search as search_repo
+from shared.repositories.chunk import Sections
 from shared.search.rrf import rrf_fuse
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,8 @@ class RetrievedChunk(BaseModel):
     document_id: uuid.UUID
     chunk_text: str
     chunk_index: int
+    section: ChunkSection = ChunkSection.BODY
+    appendix_label: str | None = None
     case_number: str | None = None
     decision_date: date | None = None
     decision_outcome: str | None = None
@@ -62,6 +66,8 @@ def _make_retrieved_chunk(
         document_id=chunk.document_id,
         chunk_text=chunk.chunk_text,
         chunk_index=chunk.chunk_index,
+        section=chunk.section,
+        appendix_label=chunk.appendix_label,
         case_number=doc.case_number if doc else None,
         decision_date=doc.decision_date if doc else None,
         decision_outcome=doc.decision_outcome if doc else None,
@@ -69,6 +75,55 @@ def _make_retrieved_chunk(
         gcs_uri=doc.gcs_uri if doc else None,
         source_url=doc.source_url if doc else "",
     )
+
+
+def _sections_for(plan: QueryPlan, settings: RetrievalSettings) -> Sections:
+    """Which parts of a document this query may draw from.
+
+    ``None`` means every part. Body-only is the default because an appendix holds
+    the appealed decision, and its embedding carries the body-derived summary — so
+    similarity alone cannot keep the two instances apart.
+    """
+    if settings.retrieval_include_appendices or plan.include_appendices:
+        return None
+    return [ChunkSection.BODY]
+
+
+async def _hybrid_search(
+    session: AsyncSession,
+    query_embedding: list[float],
+    plan: QueryPlan,
+    settings: RetrievalSettings,
+    candidate_ids: list[uuid.UUID] | None,
+    sections: Sections,
+) -> list[ChunkSearchResult]:
+    vector_results, text_results = await asyncio.gather(
+        chunk_repo.vector_search(
+            session,
+            query_embedding,
+            candidate_ids,
+            limit=settings.retrieval_search_limit,
+            sections=sections,
+        ),
+        chunk_repo.text_search(
+            session,
+            plan.semantic_query,
+            candidate_ids,
+            limit=settings.retrieval_search_limit,
+            sections=sections,
+        ),
+    )
+
+    fused_ids = rrf_fuse(
+        [
+            [r.id for r in vector_results],
+            [r.id for r in text_results],
+        ]
+    )[: settings.retrieval_top_k]
+
+    chunk_map: dict[uuid.UUID, ChunkSearchResult] = {r.id: r for r in vector_results}
+    chunk_map.update({r.id: r for r in text_results})
+    return [chunk_map[cid] for cid in fused_ids if cid in chunk_map]
 
 
 class _RerankResult(BaseModel):
@@ -130,31 +185,18 @@ async def retrieve(
     embeddings = await embedding_provider.embed([E5_QUERY_PREFIX + plan.semantic_query])
     query_embedding = embeddings[0]
 
-    vector_results, text_results = await asyncio.gather(
-        chunk_repo.vector_search(
-            session,
-            query_embedding,
-            candidate_ids,
-            limit=settings.retrieval_search_limit,
-        ),
-        chunk_repo.text_search(
-            session,
-            plan.semantic_query,
-            candidate_ids,
-            limit=settings.retrieval_search_limit,
-        ),
+    sections = _sections_for(plan, settings)
+    top_chunks = await _hybrid_search(
+        session, query_embedding, plan, settings, candidate_ids, sections
     )
-
-    fused_ids = rrf_fuse(
-        [
-            [r.id for r in vector_results],
-            [r.id for r in text_results],
-        ]
-    )[: settings.retrieval_top_k]
-
-    chunk_map: dict[uuid.UUID, ChunkSearchResult] = {r.id: r for r in vector_results}
-    chunk_map.update({r.id: r for r in text_results})
-    top_chunks = [chunk_map[cid] for cid in fused_ids if cid in chunk_map]
+    if not top_chunks and sections is not None:
+        # Nothing in the nämnd's own text answers this. Rather than return empty,
+        # widen to the appealed decisions — the caller still sees which section
+        # each excerpt came from and can say so.
+        logger.info("No body chunks matched; widening search to appendices")
+        top_chunks = await _hybrid_search(
+            session, query_embedding, plan, settings, candidate_ids, None
+        )
 
     if settings.retrieval_rerank_enabled and top_chunks:
         top_chunks = await _rerank(

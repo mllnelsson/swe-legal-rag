@@ -1,9 +1,21 @@
+"""Route extracted citations to resolved or unresolved reference rows.
+
+Decisions cite each other by ärendenummer ("2025-0017") or by beslutsnummer
+("13/2025"), and a document carries both. The two canonical formats are disjoint,
+so a reference string says for itself which column can resolve it — no separate
+"kind" needs to travel with it from the extractor.
+
+A citation the corpus does not contain yet is parked in `unresolved_references`
+and promoted later, when the cited decision is itself ingested.
+"""
+
 from __future__ import annotations
 
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.dtos.document import DocumentRead
 from shared.dtos.document_reference import DocumentReferenceCreate
 from shared.dtos.unresolved_reference import UnresolvedReferenceCreate
 from shared.repositories import (
@@ -13,6 +25,9 @@ from shared.repositories import (
 )
 from worker_extract.models import ExtractedReference
 
+# Beslutsnummer are written "N/YYYY"; ärendenummer never contain a slash.
+_DECISION_NUMBER_MARKER = "/"
+
 
 async def process_references(
     session: AsyncSession,
@@ -20,13 +35,13 @@ async def process_references(
     ref_repo: DocumentReferenceRepo,
     unresolved_repo: UnresolvedReferenceRepo,
     source_document_id: UUID,
-    source_case_number: str | None,
+    source_identifiers: list[str],
     references: list[ExtractedReference],
 ) -> None:
     for ref in references:
-        if source_case_number and ref.case_number == source_case_number:
+        if ref.case_number in source_identifiers:
             continue
-        target = await doc_repo.get_by_case_number(session, ref.case_number)
+        target = await _resolve(session, doc_repo, ref.case_number)
         if target is not None:
             await ref_repo.upsert(
                 session,
@@ -52,19 +67,36 @@ async def reconcile_references(
     unresolved_repo: UnresolvedReferenceRepo,
     ref_repo: DocumentReferenceRepo,
     document_id: UUID,
-    case_number: str,
+    identifiers: list[str],
 ) -> int:
-    unresolved = await unresolved_repo.get_by_target_case_number(session, case_number)
+    """Promote references parked under any identifier this document answers to."""
     count = 0
-    for ur in unresolved:
-        await ref_repo.upsert(
-            session,
-            DocumentReferenceCreate(
-                source_document_id=ur.source_document_id,
-                target_document_id=document_id,
-                reference_context=ur.reference_context,
-            ),
+    for identifier in identifiers:
+        unresolved = await unresolved_repo.get_by_target_case_number(
+            session, identifier
         )
-        await unresolved_repo.delete(session, ur.id)
-        count += 1
+        for row in unresolved:
+            # A document that somehow cited itself must not become a self-edge:
+            # document_references has a composite PK over (source, target).
+            if row.source_document_id == document_id:
+                await unresolved_repo.delete(session, row.id)
+                continue
+            await ref_repo.upsert(
+                session,
+                DocumentReferenceCreate(
+                    source_document_id=row.source_document_id,
+                    target_document_id=document_id,
+                    reference_context=row.reference_context,
+                ),
+            )
+            await unresolved_repo.delete(session, row.id)
+            count += 1
     return count
+
+
+async def _resolve(
+    session: AsyncSession, doc_repo: DocumentRepo, identifier: str
+) -> DocumentRead | None:
+    if _DECISION_NUMBER_MARKER in identifier:
+        return await doc_repo.get_by_decision_number(session, identifier)
+    return await doc_repo.get_by_case_number(session, identifier)

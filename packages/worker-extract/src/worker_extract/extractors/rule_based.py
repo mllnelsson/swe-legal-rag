@@ -1,18 +1,42 @@
+"""Regex extraction of entities and cross-references from a segmented decision.
+
+Two rules shape everything here, both consequences of decision PDFs carrying the
+appealed decision as an appendix (see :mod:`shared.segmentation`):
+
+* **References come from the body only.** A reference found in an appendix is the
+  *lower instance* citing something, not Överklagandenämnden. The trailer is
+  excluded too — it holds the document's own identifiers, so scanning it made every
+  decision cite itself.
+* **Only the holding confers primacy.** Relevance used to be positional (latter 60 %
+  of the text), which an appendix inverts: the tail of the document *is* the appealed
+  decision, so its entities were the ones being promoted.
+"""
+
 from __future__ import annotations
 
 import re
 
+from shared.segmentation import (
+    DocumentSegments,
+    normalize_case_number,
+    normalize_decision_number,
+)
+from worker_extract.entities import deduplicate_entities
 from worker_extract.models import (
+    EntityRelevance,
     EntityType,
-    ExtractionResult,
     ExtractedEntity,
     ExtractedReference,
-    EntityRelevance,
+    ExtractionResult,
 )
 
-_CASE_REF_RE = re.compile(
-    r"\b(ÖN\s+(?:dnr\s+)?\d{4}[-–]\d{3,})\b",
-    re.IGNORECASE,
+# "ÖN 2025-0017" / "ÖN dnr 2025-0017" — the ärendenummer space.
+_CASE_REF_RE = re.compile(r"\bÖN\s+(?:dnr\s+)?\d{4}[-–]\d{3,}\b", re.IGNORECASE)
+
+# "beslut 13/2025" — the beslutsnummer space. Requires the leading word so bare
+# fractions and dates in prose are not mistaken for citations.
+_DECISION_REF_RE = re.compile(
+    r"\bbeslut(?:et)?\s+(\d{1,3}\s*/\s*\d{4})\b", re.IGNORECASE
 )
 
 _REGULATION_PATTERNS = [
@@ -37,6 +61,7 @@ _KNOWN_ROLES = frozenset(
         "kontraktsprost",
         "domprost",
         "stiftsstyrelse",
+        "präst",
     }
 )
 
@@ -53,8 +78,116 @@ _KNOWN_LEGAL_CONCEPTS = frozenset(
     }
 )
 
-# Entities in the latter portion of the document are considered primary
-_PRIMARY_THRESHOLD = 0.6
+# Swedish definite/genitive suffixes the keyword lookups tolerate.
+_INFLECTION_SUFFIX = r"(?:en|et|s|ns|ts|n|t|r)?"
+
+
+def extract_references(segments: DocumentSegments) -> list[ExtractedReference]:
+    """Find citations to other decisions, in either identifier space.
+
+    Both spellings are canonicalised so `reference_service` can resolve them
+    against `documents.case_number` / `documents.decision_number`. The two formats
+    are disjoint, so the canonical string alone says which column to try.
+    """
+    references: list[ExtractedReference] = []
+    seen: set[str] = set()
+
+    matchers = (
+        (_CASE_REF_RE, normalize_case_number),
+        (_DECISION_REF_RE, normalize_decision_number),
+    )
+    for pattern, normalize in matchers:
+        for match in pattern.finditer(segments.body):
+            case_number = normalize(match.group(0))
+            if case_number is None or case_number in seen:
+                continue
+            seen.add(case_number)
+            references.append(
+                ExtractedReference(
+                    case_number=case_number,
+                    reference_context=_extract_sentence(segments.body, match.start()),
+                )
+            )
+    return references
+
+
+def extract_entities_rule_based(segments: DocumentSegments) -> list[ExtractedEntity]:
+    """Extract entities from the body and every appendix.
+
+    The holding is scanned first at PRIMARY; because it is a slice of the body,
+    every holding entity is also found at MENTIONED and de-duplication resolves the
+    pair in PRIMARY's favour. Appendix entities stay MENTIONED unconditionally —
+    they belong to the appealed decision, not to this one.
+    """
+    entities = _entities_in(segments.holding or "", EntityRelevance.PRIMARY)
+    entities += _entities_in(segments.body, EntityRelevance.MENTIONED)
+    for appendix in segments.appendices:
+        entities += _entities_in(appendix.text, EntityRelevance.MENTIONED)
+    return deduplicate_entities(entities)
+
+
+def extract_rule_based(segments: DocumentSegments) -> ExtractionResult:
+    return ExtractionResult(
+        entities=extract_entities_rule_based(segments),
+        references=extract_references(segments),
+    )
+
+
+class RuleBasedStrategy:
+    async def extract(
+        self, segments: DocumentSegments, case_number: str | None = None
+    ) -> ExtractionResult:
+        # case_number is part of the ExtractionStrategy protocol for the LLM
+        # strategy's benefit. Rule-based extraction no longer needs it: excluding
+        # the trailer already removes the document's own identifiers.
+        return extract_rule_based(segments)
+
+
+def _entities_in(text: str, relevance: EntityRelevance) -> list[ExtractedEntity]:
+    if not text:
+        return []
+    found = (
+        [
+            (name, EntityType.REGULATION)
+            for name in _match_patterns(text, _REGULATION_PATTERNS)
+        ]
+        + [
+            (name, EntityType.PARISH)
+            for name in _match_patterns(text, _PARISH_PATTERNS)
+        ]
+        + [(name, EntityType.ROLE) for name in _match_keywords(text, _KNOWN_ROLES)]
+        + [
+            (name, EntityType.LEGAL_CONCEPT)
+            for name in _match_keywords(text, _KNOWN_LEGAL_CONCEPTS)
+        ]
+    )
+    return [
+        ExtractedEntity(name=name, type=entity_type, relevance=relevance)
+        for name, entity_type in found
+    ]
+
+
+def _match_patterns(text: str, patterns: list[re.Pattern[str]]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            name = match.group(0).lower().strip()
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
+
+
+def _match_keywords(text: str, keywords: frozenset[str]) -> list[str]:
+    # Sorted so extraction output is stable run to run: frozenset iteration order
+    # depends on per-process string hash seeding.
+    lowered = text.lower()
+    return [
+        keyword
+        for keyword in sorted(keywords)
+        if re.search(r"\b" + re.escape(keyword) + _INFLECTION_SUFFIX + r"\b", lowered)
+    ]
 
 
 def _extract_sentence(text: str, pos: int) -> str:
@@ -63,133 +196,3 @@ def _extract_sentence(text: str, pos: int) -> str:
     if sentence_end == -1:
         sentence_end = len(text)
     return text[sentence_start : sentence_end + 1].strip()
-
-
-def _relevance(text_len: int, pos: int) -> EntityRelevance:
-    return (
-        EntityRelevance.PRIMARY
-        if pos / max(text_len, 1) >= _PRIMARY_THRESHOLD
-        else EntityRelevance.MENTIONED
-    )
-
-
-def extract_references(text: str) -> list[ExtractedReference]:
-    refs: list[ExtractedReference] = []
-    seen: set[str] = set()
-    for m in _CASE_REF_RE.finditer(text):
-        case_number = m.group(1).strip()
-        if case_number in seen:
-            continue
-        seen.add(case_number)
-        refs.append(
-            ExtractedReference(
-                case_number=case_number,
-                reference_context=_extract_sentence(text, m.start()),
-            )
-        )
-    return refs
-
-
-def _extract_regulations(text: str) -> list[tuple[str, int]]:
-    results: list[tuple[str, int]] = []
-    seen: set[str] = set()
-    for pattern in _REGULATION_PATTERNS:
-        for m in pattern.finditer(text):
-            name = m.group(0).lower().strip()
-            if name not in seen:
-                seen.add(name)
-                results.append((name, m.start()))
-    return results
-
-
-def _extract_parishes(text: str) -> list[tuple[str, int]]:
-    results: list[tuple[str, int]] = []
-    seen: set[str] = set()
-    for pattern in _PARISH_PATTERNS:
-        for m in pattern.finditer(text):
-            name = m.group(0).lower().strip()
-            if name not in seen:
-                seen.add(name)
-                results.append((name, m.start()))
-    return results
-
-
-def _extract_roles(text: str) -> list[tuple[str, int]]:
-    results: list[tuple[str, int]] = []
-    seen: set[str] = set()
-    text_lower = text.lower()
-    for role in _KNOWN_ROLES:
-        # Allow common Swedish inflection suffixes (-n, -s, -t, -m, -r, -ns, -ts, -en)
-        pattern = re.compile(r"\b" + re.escape(role) + r"(?:en|et|s|ns|ts|n|t|r)?\b")
-        m = pattern.search(text_lower)
-        if m and role not in seen:
-            seen.add(role)
-            results.append((role, m.start()))
-    return results
-
-
-def _extract_legal_concepts(text: str) -> list[tuple[str, int]]:
-    results: list[tuple[str, int]] = []
-    seen: set[str] = set()
-    text_lower = text.lower()
-    for concept in _KNOWN_LEGAL_CONCEPTS:
-        # Allow common Swedish inflection suffixes
-        pattern = re.compile(r"\b" + re.escape(concept) + r"(?:en|et|s|ns|ts|n|t|r)?\b")
-        m = pattern.search(text_lower)
-        if m and concept not in seen:
-            seen.add(concept)
-            results.append((concept, m.start()))
-    return results
-
-
-def extract_entities_rule_based(text: str) -> list[ExtractedEntity]:
-    text_len = len(text)
-    entities: list[ExtractedEntity] = []
-
-    for name, pos in _extract_regulations(text):
-        entities.append(
-            ExtractedEntity(
-                name=name,
-                type=EntityType.REGULATION,
-                relevance=_relevance(text_len, pos),
-            )
-        )
-
-    for name, pos in _extract_parishes(text):
-        entities.append(
-            ExtractedEntity(
-                name=name, type=EntityType.PARISH, relevance=_relevance(text_len, pos)
-            )
-        )
-
-    for name, pos in _extract_roles(text):
-        entities.append(
-            ExtractedEntity(
-                name=name, type=EntityType.ROLE, relevance=_relevance(text_len, pos)
-            )
-        )
-
-    for name, pos in _extract_legal_concepts(text):
-        entities.append(
-            ExtractedEntity(
-                name=name,
-                type=EntityType.LEGAL_CONCEPT,
-                relevance=_relevance(text_len, pos),
-            )
-        )
-
-    return entities
-
-
-def extract_rule_based(text: str) -> ExtractionResult:
-    return ExtractionResult(
-        entities=extract_entities_rule_based(text),
-        references=extract_references(text),
-    )
-
-
-class RuleBasedStrategy:
-    async def extract(
-        self, document_text: str, case_number: str | None = None
-    ) -> ExtractionResult:
-        return extract_rule_based(document_text)

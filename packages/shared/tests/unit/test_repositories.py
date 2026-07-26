@@ -39,6 +39,7 @@ def _mock_document(**kwargs):
         raw_text=None,
         summary=None,
         case_number=None,
+        decision_number=None,
         decision_date=None,
         decision_outcome=None,
         category=None,

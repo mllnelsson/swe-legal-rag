@@ -8,6 +8,10 @@ from shared.dtos.search import DocumentFilter
 class QueryPlan(BaseModel):
     semantic_query: str
     filter: DocumentFilter
+    # Whether the question is about the appealed decision rather than the nämnd's
+    # own ruling. Kept off the DocumentFilter because it selects parts of a
+    # document, not documents.
+    include_appendices: bool = False
 
 
 async def plan_query(
@@ -33,4 +37,8 @@ async def plan_query(
         entity_names=list(result.entity_refs),
     )
 
-    return QueryPlan(semantic_query=result.semantic_query, filter=doc_filter)
+    return QueryPlan(
+        semantic_query=result.semantic_query,
+        filter=doc_filter,
+        include_appendices=result.include_appendices,
+    )

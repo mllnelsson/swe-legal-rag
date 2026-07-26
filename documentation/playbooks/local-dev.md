@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, docker, environment, workflow]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-26T00:00:00Z
 ---
 
 # Local Development Environment
@@ -127,6 +127,7 @@ REDIS_URL=redis://localhost:6379
 | `RETRIEVAL_TOP_K` | `8` | How many chunks to return after RRF fusion (`api`) |
 | `RETRIEVAL_SEARCH_LIMIT` | `20` | Results per arm (vector + text) before fusion (`api`) |
 | `RETRIEVAL_RERANK_ENABLED` | `false` | Enable optional LLM rerank step — default OFF for NFR1 <5s (`api`) |
+| `RETRIEVAL_INCLUDE_APPENDICES` | `false` | Search appended lower-instance decisions too. Default OFF — see [body-first retrieval](/decisions/body-first-retrieval.md) (`api`) |
 | `API_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins for the API server; Vite dev server default |
 | `SESSION_MAX_HISTORY_TURNS` | `10` | Max conversation turns passed to LLM; full history stays in DB |
 

@@ -31,6 +31,7 @@ def _make_doc(
         raw_text=raw_text,
         summary=None,
         case_number=case_number,
+        decision_number=None,
         decision_date=None,
         decision_outcome=None,
         category=None,

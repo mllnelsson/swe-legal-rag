@@ -13,7 +13,8 @@ from shared.enums import PipelineStep
 from shared.pipeline import StepInputError, run_pipeline_step
 from shared.queue.base import QueuePublisher
 from shared.repositories import ChunkRepo, DocumentRepo, TaskRepo
-from worker_chunk.chunker import build_contextual_text, split_into_chunks
+from shared.segmentation import split_document
+from worker_chunk.chunker import build_contextual_text, split_document_into_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +42,19 @@ async def process_chunking(
         if document.raw_text is None:
             raise StepInputError(f"Document {document_id} has no raw text")
 
-        result = await summarize_document(document.raw_text, provider=llm_provider)
+        segments = split_document(document.raw_text)
+
+        # Body only: the summary describes what Överklagandenämnden decided, and it
+        # is prepended to every chunk's contextual_text, so an appendix-derived
+        # summary would leak the appealed decision into every embedding.
+        result = await summarize_document(segments.body, provider=llm_provider)
         summary = result.summary
 
         await document_repo.update(
             session, document_id, DocumentUpdate(summary=summary)
         )
 
-        chunk_texts = split_into_chunks(document.raw_text)
+        chunks = split_document_into_chunks(segments)
 
         await chunk_repo.delete_by_document_id(session, document_id)
 
@@ -56,10 +62,12 @@ async def process_chunking(
             ChunkCreate(
                 document_id=document_id,
                 chunk_index=i,
-                chunk_text=chunk_text,
-                contextual_text=build_contextual_text(summary, chunk_text),
+                chunk_text=chunk.text,
+                contextual_text=build_contextual_text(summary, chunk.text),
+                section=chunk.section,
+                appendix_label=chunk.appendix_label,
             )
-            for i, chunk_text in enumerate(chunk_texts)
+            for i, chunk in enumerate(chunks)
         ]
 
         if chunk_dtos:

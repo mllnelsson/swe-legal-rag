@@ -17,6 +17,7 @@ from api.services.answerer import (
     answer_query,
 )
 from api.services.retriever import RetrievedChunk
+from shared.enums import ChunkSection
 
 
 def _settings() -> RetrievalSettings:
@@ -281,3 +282,23 @@ class TestAnswerQuery:
                 pass
 
         mock_append.assert_not_called()
+
+
+class TestSourceSectionProvenance:
+    def test_body_chunk_is_labelled_body(self):
+        sources = _build_sources([_chunk()], None)
+        assert sources[0].section is ChunkSection.BODY
+        assert sources[0].appendix_label is None
+
+    def test_appendix_chunk_carries_section_and_label(self):
+        # Without this the UI shows the appealed decision's words under the
+        # nämnd's case number with nothing marking the difference.
+        chunk = _chunk().model_copy(
+            update={
+                "section": ChunkSection.APPENDIX,
+                "appendix_label": "Bilaga A",
+            }
+        )
+        sources = _build_sources([chunk], None)
+        assert sources[0].section is ChunkSection.APPENDIX
+        assert sources[0].appendix_label == "Bilaga A"

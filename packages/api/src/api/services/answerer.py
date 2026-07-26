@@ -12,6 +12,7 @@ from api.config import RetrievalSettings
 from api.services.query_planner import plan_query
 from api.services.retriever import RetrievedChunk, retrieve
 from api.services.session_service import append_turn
+from shared.enums import ChunkSection
 from shared.storage.base import StorageBackend
 
 EXCERPT_MAX_LEN = 200
@@ -45,6 +46,11 @@ class SourceReference(BaseModel):
     category: str | None
     excerpt: str
     pdf_url: str | None
+    # Which part of the PDF the excerpt is quoting. "appendix" means the appealed
+    # decision — the lower instance's words, which the nämnd may have overturned —
+    # so the UI must not present it as the nämnd's own reasoning.
+    section: ChunkSection = ChunkSection.BODY
+    appendix_label: str | None = None
 
 
 def _pdf_url(document_id: uuid.UUID, storage: StorageBackend | None) -> str | None:
@@ -75,6 +81,8 @@ def _build_sources(
                 category=chunk.category,
                 excerpt=chunk.chunk_text[:EXCERPT_MAX_LEN],
                 pdf_url=_pdf_url(chunk.document_id, storage),
+                section=chunk.section,
+                appendix_label=chunk.appendix_label,
             )
         )
     return sources
@@ -108,6 +116,8 @@ async def answer_query(
             decision_date=str(chunk.decision_date) if chunk.decision_date else None,
             decision_outcome=chunk.decision_outcome,
             score=_DEFAULT_CHUNK_SCORE,
+            section=chunk.section,
+            appendix_label=chunk.appendix_label,
         )
         for chunk in chunks
     ]

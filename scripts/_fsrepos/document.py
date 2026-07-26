@@ -24,6 +24,7 @@ async def create(session: AsyncSession, dto: DocumentCreate) -> DocumentRead:
         raw_text=None,
         summary=None,
         case_number=None,
+        decision_number=None,
         decision_date=None,
         decision_outcome=None,
         category=None,
@@ -48,6 +49,14 @@ async def get_by_case_number(
     session: AsyncSession, case_number: str
 ) -> DocumentRead | None:
     return next((d for d in _rows(session) if d.case_number == case_number), None)
+
+
+async def get_by_decision_number(
+    session: AsyncSession, decision_number: str
+) -> DocumentRead | None:
+    return next(
+        (d for d in _rows(session) if d.decision_number == decision_number), None
+    )
 
 
 async def update(

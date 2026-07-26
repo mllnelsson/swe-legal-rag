@@ -15,6 +15,10 @@ class RetrievalSettings(BaseSettings):
     retrieval_top_k: int = 8
     retrieval_search_limit: int = 20
     retrieval_rerank_enabled: bool = False
+    # Appendices hold the appealed decision, so they are out of the primary search
+    # by default. Set true to search the whole corpus regardless of what the query
+    # planner decides; retrieval also widens on its own when body-only finds nothing.
+    retrieval_include_appendices: bool = False
 
 
 class SessionSettings(BaseSettings):

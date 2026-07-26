@@ -11,7 +11,10 @@ from llm_core import (
     generate_structured,
 )
 
+from shared.enums import ChunkSection
+
 from ai.dtos import (
+    ChunkContext,
     DecomposeResult,
     EntityResult,
     MetadataResult,
@@ -79,13 +82,26 @@ async def summarize_document(
     return SummarizeResult(summary=response.message.content)
 
 
+def _chunk_label(chunk: ChunkContext) -> str:
+    """Tag each excerpt with whose words it holds.
+
+    An appendix excerpt is the appealed decision — often the very reasoning
+    Överklagandenämnden went on to overturn — so the model has to be told, or it
+    will present it as the nämnd's own.
+    """
+    if chunk.section is ChunkSection.APPENDIX:
+        label = chunk.appendix_label or "bilaga"
+        return f"Mål {chunk.case_number} - {label}, det överklagade beslutet"
+    return f"Mål {chunk.case_number}"
+
+
 async def synthesize_answer(
     request: SynthesizeRequest,
     *,
     provider: LLMProvider | None = None,
 ) -> AsyncIterator[str]:
     formatted_chunks = "".join(
-        f"[Mål {chunk.case_number}] {chunk.chunk_text}\n" for chunk in request.chunks
+        f"[{_chunk_label(chunk)}] {chunk.chunk_text}\n" for chunk in request.chunks
     )
     context = {
         "question": request.question,

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import tiktoken
 
+from shared.enums import ChunkSection
+from shared.segmentation import split_document
 from worker_chunk.chunker import (
     CONTEXTUAL_SEPARATOR,
     ENCODING_NAME,
     build_contextual_text,
+    split_document_into_chunks,
     split_into_chunks,
 )
 
@@ -112,3 +115,72 @@ class TestBuildContextualText:
     def test_separator_present(self) -> None:
         result = build_contextual_text("Summary.", "Chunk.")
         assert CONTEXTUAL_SEPARATOR in result
+
+
+class TestSplitDocumentIntoChunks:
+    def _segments(self, text: str):
+        return split_document(text)
+
+    def test_body_chunks_are_labelled_body(self) -> None:
+        chunks = split_document_into_chunks(self._segments("Beslut i ärendet."))
+        assert [c.section for c in chunks] == [ChunkSection.BODY]
+        assert chunks[0].appendix_label is None
+
+    def test_appendix_chunks_carry_section_and_label(self) -> None:
+        segments = self._segments(
+            "Beslut i ärendet.\nSökord: X\nBilaga A\nDet överklagade beslutet.\n"
+        )
+        chunks = split_document_into_chunks(segments)
+        appendix = [c for c in chunks if c.section is ChunkSection.APPENDIX]
+        assert len(appendix) == 1
+        assert appendix[0].appendix_label == "Bilaga A"
+        assert appendix[0].text == "Det överklagade beslutet."
+
+    def test_body_chunks_come_first(self) -> None:
+        segments = self._segments(
+            "Nämndens skäl.\nSökord: X\nBilaga A\nUnderinstansens skäl.\n"
+        )
+        sections = [c.section for c in split_document_into_chunks(segments)]
+        assert sections == [ChunkSection.BODY, ChunkSection.APPENDIX]
+
+    def test_no_chunk_straddles_the_boundary(self) -> None:
+        # A chunk holding both the nämnd's reasoning and the appealed decision
+        # could not be honestly labelled as either.
+        segments = self._segments(
+            "Nämndens skäl.\nSökord: X\nBilaga A\nUnderinstansens skäl.\n"
+        )
+        for chunk in split_document_into_chunks(segments):
+            if chunk.section is ChunkSection.BODY:
+                assert "Underinstansens" not in chunk.text
+            else:
+                assert "Nämndens" not in chunk.text
+
+    def test_trailer_is_not_chunked(self) -> None:
+        # Sökord / Ärendenummer / Beslut are already structured columns on
+        # documents; indexing them only adds noise to the tsvector.
+        segments = self._segments(
+            "Nämndens skäl.\nSökord: Avvisning.\nÄrendenummer: ÖN 2025-0017\n"
+        )
+        joined = " ".join(c.text for c in split_document_into_chunks(segments))
+        assert "Sökord" not in joined
+        assert "Ärendenummer" not in joined
+
+    def test_multiple_appendices_keep_their_own_labels(self) -> None:
+        segments = self._segments(
+            "Skäl.\nSökord: X\nBilaga A\nFörsta.\nBilaga B\nAndra.\n"
+        )
+        labels = [
+            c.appendix_label
+            for c in split_document_into_chunks(segments)
+            if c.section is ChunkSection.APPENDIX
+        ]
+        assert labels == ["Bilaga A", "Bilaga B"]
+
+    def test_document_without_appendix_yields_only_body_chunks(self) -> None:
+        chunks = split_document_into_chunks(self._segments("Enbart nämndens text."))
+        assert all(c.section is ChunkSection.BODY for c in chunks)
+
+    def test_empty_body_with_appendix_still_yields_appendix_chunks(self) -> None:
+        segments = self._segments("Bilaga A\nEnbart bilagetext.\n")
+        chunks = split_document_into_chunks(segments)
+        assert [c.section for c in chunks] == [ChunkSection.APPENDIX]
