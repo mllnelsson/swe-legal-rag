@@ -113,6 +113,8 @@ class TestChunkSearch:
             document_id=uuid.uuid4(),
             chunk_text="test chunk",
             chunk_index=0,
+            section="body",
+            appendix_label=None,
         )
         return SimpleNamespace(Chunk=chunk, score=score)
 

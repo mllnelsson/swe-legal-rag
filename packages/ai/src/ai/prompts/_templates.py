@@ -11,7 +11,8 @@ Schema:
   "filters": {"start": "YYYY-MM-DD eller null", "end": "YYYY-MM-DD eller null"},
   "categories": ["ämneskategori"],
   "entity_refs": ["enhet eller person"],
-  "semantic_query": "omskriven söksträng på svenska"
+  "semantic_query": "omskriven söksträng på svenska",
+  "include_appendices": true eller false
 }
 
 Regler:
@@ -19,6 +20,10 @@ Regler:
 - categories: ämneskategorier (t.ex. "tjänstetillsättning", "överklagande", "disciplinärende")
 - entity_refs: namngivna enheter, församlingar, stift, myndigheter
 - semantic_query: omskriven fråga optimerad för semantisk sökning på svenska
+- include_appendices: sätt true endast när frågan gäller det överklagade beslutet
+  eller underinstansens egen bedömning (t.ex. "vad beslutade stiftet?",
+  "hur motiverade domkapitlet sitt beslut?"). Sätt false när frågan gäller
+  Överklagandenämndens eget ställningstagande - det är normalfallet.
 - Svara enbart med JSON, inga förklaringar"""
 
 _QUERY_DECOMPOSITION_USER = """\
@@ -42,6 +47,10 @@ Regler:
 - Inkludera hänvisningar till ärendenummer, t.ex. "Enligt beslut 12/2023..."
 - Var saklig, tydlig och neutral
 - Basera svaret enbart på de angivna utdragen
+- Utdrag markerade som "bilaga" är det överklagade beslutet, alltså underinstansens
+  egna ord - inte Överklagandenämndens ställningstagande. Nämnden kan ha ändrat eller
+  upphävt det. Återge aldrig ett sådant utdrag som nämndens bedömning; skriv i så fall
+  ut vem som uttalat sig.
 - Returnera löpande text, inga förklaringar utanför svarstexten"""
 
 _ANSWER_SYNTHESIS_USER = """\

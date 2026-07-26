@@ -3,12 +3,13 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import TEXT, INTEGER, Computed, DateTime, ForeignKey, Index
+from sqlalchemy import TEXT, VARCHAR, INTEGER, Computed, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from shared.config import EMBEDDING_DIMENSION
+from shared.enums import ChunkSection
 from shared.models.base import Base
 
 
@@ -24,6 +25,13 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(INTEGER, nullable=False)
     chunk_text: Mapped[str] = mapped_column(TEXT, nullable=False)
     contextual_text: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    # Which part of the source PDF this came from. Retrieval filters on it so the
+    # appealed decision is never cited as the nämnd's own reasoning.
+    section: Mapped[str] = mapped_column(
+        VARCHAR, nullable=False, server_default=ChunkSection.BODY.value
+    )
+    # The "Bilaga A" label, when section is APPENDIX.
+    appendix_label: Mapped[str | None] = mapped_column(VARCHAR, nullable=True)
     embedding: Mapped[list[float]] = mapped_column(
         Vector(EMBEDDING_DIMENSION), nullable=False
     )
@@ -38,6 +46,7 @@ class Chunk(Base):
 
     __table_args__ = (
         Index("ix_chunks_document_id", "document_id"),
+        Index("ix_chunks_section", "section"),
         Index(
             "ix_chunks_embedding_hnsw",
             "embedding",

@@ -1,5 +1,17 @@
 # Documentation Update Log
 
+## 2026-07-26
+
+* **Creation**: Documented the anatomy of a decision PDF and the anchors the pipeline segments it with in [decision document structure](/reference/document-structure.md) — header, holding, trailer, `Bilaga X` appendices, and the two identifier spaces (ärendenummer vs beslutsnummer).
+* **Creation**: Recorded [appendices are labelled, not dropped](/decisions/appendix-segmentation.md) — appended lower-instance decisions stay searchable but carry a `section` marker, and modelling the prior instance as structured data is explicitly deferred.
+* **Creation**: Recorded [body-first retrieval over one vector index](/decisions/body-first-retrieval.md) — one HNSW index with a `section` predicate rather than two, a hard filter rather than a ranking penalty, and the partial index deferred behind measurement.
+* **Update**: [chunks](/data-model/chunks.md) gains `section` and `appendix_label`; [documents](/data-model/documents.md) gains `decision_number`; both new [indexes](/data-model/indexes.md) listed (migration `004`).
+* **Update**: [extract worker](/pipeline/extract.md) — references now come from the body only and in two identifier spaces, and relevance follows the holding instead of the latter 60% of the document, a heuristic appendices inverted.
+* **Update**: [metadata worker](/pipeline/metadata.md) — field extractors take `DocumentSegments`, `decision_number` is extracted, and the LLM fallback is handed the body rather than `raw_text`.
+* **Update**: [chunk worker](/pipeline/chunk.md) — body and each appendix are chunked separately and labelled, the trailer is not chunked, and the summary is derived from the body only.
+* **Update**: [retrieval agent](/retrieval/agent.md) gains section scoping with a widen-on-empty fallback; the [chat endpoint](/api/chat-endpoint.md) `sources` payload gains `section` and `appendix_label`.
+* **Update**: [shared package](/packages/shared.md) documents the new `segmentation.py` module and the `ChunkSection` vocabulary; [parse worker](/pipeline/parse.md) notes why `raw_text` deliberately keeps appendices.
+
 ## 2026-07-24
 
 * **Creation**: Migrated the documentation set to an OKF v0.1 knowledge bundle — one concept per file, YAML frontmatter with a `type`, `/`-absolute cross-links, and per-directory `index.md` files. The former `specs/` and `design/` folders were replaced by topical sections (`pipeline/`, `retrieval/`, `data-model/`, `packages/`, `api/`, `frontend/`, `decisions/`, `playbooks/`, `reference/`).

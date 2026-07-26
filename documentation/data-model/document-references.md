@@ -4,7 +4,7 @@ title: document_references
 description: Resolved cross-citations between decisions — one decision citing another as precedent.
 resource: postgres://document_references
 tags: [data-model, table, references, graph]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-26T00:00:00Z
 ---
 
 # `document_references`
@@ -24,3 +24,10 @@ non-nullable FK; citations whose target is not yet in the corpus are held in
 ingested. Populated by the [extract worker](/pipeline/extract.md); used by the
 [retrieval agent](/retrieval/agent.md) for relationship traversal ("what other decisions
 cite this one?").
+
+Citations are matched in **two identifier spaces** — `documents.case_number`
+(`2025-0017`) and `documents.decision_number` (`1/2026`). The canonical forms are
+disjoint, so the reference string itself selects the column. Only citations found in the
+decision **body** are recorded: the trailer holds the document's own identifiers, and an
+appendix citation belongs to the appealed instance rather than to Överklagandenämnden.
+See [decision document structure](/reference/document-structure.md).

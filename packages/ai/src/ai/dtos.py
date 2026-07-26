@@ -4,7 +4,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict
 
-from shared.enums import EntityRelevance, EntityType
+from shared.enums import ChunkSection, EntityRelevance, EntityType
 
 
 class DateFilter(BaseModel):
@@ -28,6 +28,9 @@ class DecomposeResult(BaseModel):
     categories: list[str]
     entity_refs: list[str]
     semantic_query: str
+    # True when the question is about the decision under appeal rather than
+    # Överklagandenämndens own ruling — see the query-decomposition prompt.
+    include_appendices: bool = False
 
 
 class ChunkContext(BaseModel):
@@ -38,6 +41,8 @@ class ChunkContext(BaseModel):
     decision_date: str | None = None
     decision_outcome: str | None = None
     score: float
+    section: ChunkSection = ChunkSection.BODY
+    appendix_label: str | None = None
 
 
 class SynthesizeRequest(BaseModel):

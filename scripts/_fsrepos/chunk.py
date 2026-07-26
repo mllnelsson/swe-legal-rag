@@ -24,6 +24,8 @@ async def bulk_create(
             chunk_text=dto.chunk_text,
             contextual_text=dto.contextual_text,
             embedding=dto.embedding,
+            section=dto.section,
+            appendix_label=dto.appendix_label,
             created_at=created_at,
         )
         for dto in dtos

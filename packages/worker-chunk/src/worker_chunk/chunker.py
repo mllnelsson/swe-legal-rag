@@ -3,11 +3,56 @@ from __future__ import annotations
 import re
 
 import tiktoken
+from pydantic import BaseModel, ConfigDict
+
+from shared.enums import ChunkSection
+from shared.segmentation import DocumentSegments
 
 MAX_TOKENS = 500
 OVERLAP_TOKENS = 50
 ENCODING_NAME = "cl100k_base"
 CONTEXTUAL_SEPARATOR = "\n\n---\n\n"
+
+
+class SectionedChunk(BaseModel):
+    """A chunk plus the provenance retrieval needs to keep instances apart."""
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+    section: ChunkSection
+    appendix_label: str | None = None
+
+
+def split_document_into_chunks(
+    segments: DocumentSegments,
+    max_tokens: int = MAX_TOKENS,
+    overlap_tokens: int = OVERLAP_TOKENS,
+) -> list[SectionedChunk]:
+    """Chunk the body and each appendix separately.
+
+    Splitting per segment means no chunk can straddle the boundary between the
+    nämnd's reasoning and the decision it was reviewing — a chunk carrying both
+    could not be honestly labelled as either.
+
+    The trailer is deliberately not chunked: it is Sökord / Ärendenummer / Beslut,
+    already captured as structured columns on `documents`, and indexing it only
+    adds noise to the Swedish tsvector.
+    """
+    chunks = [
+        SectionedChunk(text=text, section=ChunkSection.BODY)
+        for text in split_into_chunks(segments.body, max_tokens, overlap_tokens)
+    ]
+    for appendix in segments.appendices:
+        chunks += [
+            SectionedChunk(
+                text=text,
+                section=ChunkSection.APPENDIX,
+                appendix_label=appendix.label,
+            )
+            for text in split_into_chunks(appendix.text, max_tokens, overlap_tokens)
+        ]
+    return chunks
 
 
 def split_into_chunks(

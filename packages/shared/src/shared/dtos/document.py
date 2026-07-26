@@ -16,6 +16,7 @@ class DocumentUpdate(BaseModel):
     raw_text: str | None = None
     summary: str | None = None
     case_number: str | None = None
+    decision_number: str | None = None
     decision_date: date | None = None
     decision_outcome: str | None = None
     category: str | None = None
@@ -33,6 +34,7 @@ class DocumentRead(BaseModel):
     raw_text: str | None
     summary: str | None
     case_number: str | None
+    decision_number: str | None
     decision_date: date | None
     decision_outcome: str | None
     category: str | None

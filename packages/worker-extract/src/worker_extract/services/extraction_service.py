@@ -16,6 +16,7 @@ from shared.repositories import (
     TaskRepo,
     UnresolvedReferenceRepo,
 )
+from shared.segmentation import split_document
 from worker_extract.extractors.factory import get_extraction_strategy
 from worker_extract.services.entity_service import persist_entities
 from worker_extract.services.reference_service import (
@@ -24,6 +25,15 @@ from worker_extract.services.reference_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _own_identifiers(*identifiers: str | None) -> list[str]:
+    """The identifiers by which this document refers to itself.
+
+    A decision carries both an ärendenummer and a beslutsnummer; a citation in
+    either space that matches one of them is a self-reference, not a cross-reference.
+    """
+    return [identifier for identifier in identifiers if identifier]
 
 
 async def process_extraction(
@@ -46,10 +56,9 @@ async def process_extraction(
         if document.raw_text is None:
             raise StepInputError(f"Document {document_id} has no raw text")
 
+        segments = split_document(document.raw_text)
         strategy = get_extraction_strategy()
-        result = await strategy.extract(
-            document.raw_text, case_number=document.case_number
-        )
+        result = await strategy.extract(segments, case_number=document.case_number)
 
         await persist_entities(
             session, entity_repo, doc_entity_repo, document_id, result.entities
@@ -60,13 +69,16 @@ async def process_extraction(
             ref_repo,
             unresolved_repo,
             document_id,
-            document.case_number,
+            _own_identifiers(document.case_number, document.decision_number),
             result.references,
         )
-        if document.case_number:
-            await reconcile_references(
-                session, unresolved_repo, ref_repo, document_id, document.case_number
-            )
+        await reconcile_references(
+            session,
+            unresolved_repo,
+            ref_repo,
+            document_id,
+            _own_identifiers(document.case_number, document.decision_number),
+        )
 
     await run_pipeline_step(
         task_repo=task_repo,

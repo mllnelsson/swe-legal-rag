@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from shared.enums import ChunkSection
 
 from ai.dtos import (
     ChunkContext,
@@ -171,3 +172,43 @@ async def test_synthesize_answer_uses_answer_synthesis_template() -> None:
 
     assert any("7/2022" in m.content for m in captured_messages)
     assert any("Vad händer" in m.content for m in captured_messages)
+
+
+async def test_synthesize_answer_marks_appendix_excerpts() -> None:
+    """An appendix excerpt is the appealed decision, not the nämnd's holding.
+
+    The label is the only thing standing between the model and presenting the
+    overturned reasoning as the ruling.
+    """
+    captured_messages: list[Message] = []
+
+    async def mock_generate_stream(messages: list[Message], **kwargs: object):  # type: ignore[return]
+        captured_messages.extend(messages)
+        yield "token"
+
+    request = SynthesizeRequest(
+        question="Vad beslutade stiftet?",
+        chunks=[
+            ChunkContext(
+                case_number="1/2026",
+                chunk_text="Stiftet avslår begäran.",
+                score=0.8,
+                section=ChunkSection.APPENDIX,
+                appendix_label="Bilaga A",
+            ),
+            ChunkContext(
+                case_number="1/2026",
+                chunk_text="Nämnden undanröjer beslutet.",
+                score=0.8,
+            ),
+        ],
+    )
+
+    with patch("ai.services.generate_stream", mock_generate_stream):
+        async for _ in synthesize_answer(request):
+            pass
+
+    prompt = "\n".join(m.content for m in captured_messages)
+    assert "Bilaga A, det överklagade beslutet" in prompt
+    # The body excerpt keeps the plain label.
+    assert "[Mål 1/2026]" in prompt

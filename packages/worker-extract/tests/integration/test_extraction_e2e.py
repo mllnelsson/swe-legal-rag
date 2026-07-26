@@ -97,7 +97,7 @@ async def test_extraction_populates_entities_and_completes_task(
         unresolved_repo,
         sync_publisher,
         raw_text=_ENTITY_RICH_TEXT,
-        case_number="ÖN 2023-0001",
+        case_number="2023-0001",
     )
 
     entities = (await session.execute(select(Entity))).scalars().all()
@@ -144,7 +144,7 @@ async def test_extraction_cross_reference_resolution(
         session, DocumentCreate(source_url="https://example.com/doc_a.pdf")
     )
     await document_repo.update(
-        session, doc_a.id, DocumentUpdate(case_number="ÖN 2020-0100")
+        session, doc_a.id, DocumentUpdate(case_number="2020-0100")
     )
     await session.commit()
 
@@ -163,7 +163,7 @@ async def test_extraction_cross_reference_resolution(
         unresolved_repo,
         sync_publisher,
         raw_text=text_b,
-        case_number="ÖN 2021-0200",
+        case_number="2021-0200",
     )
 
     refs = (
@@ -207,7 +207,7 @@ async def test_extraction_unresolved_reference(
         unresolved_repo,
         sync_publisher,
         raw_text=text_b,
-        case_number="ÖN 2021-0200",
+        case_number="2021-0200",
     )
 
     unresolved = (
@@ -215,7 +215,7 @@ async def test_extraction_unresolved_reference(
             await session.execute(
                 select(UnresolvedReference).where(
                     UnresolvedReference.source_document_id == doc_b.id,
-                    UnresolvedReference.target_case_number == "ÖN 2099-9999",
+                    UnresolvedReference.target_case_number == "2099-9999",
                 )
             )
         )
@@ -252,14 +252,14 @@ async def test_extraction_reconciliation(
         unresolved_repo,
         sync_publisher,
         raw_text=text_b,
-        case_number="ÖN 2021-0200",
+        case_number="2021-0200",
     )
 
     unresolved_before = (
         (
             await session.execute(
                 select(UnresolvedReference).where(
-                    UnresolvedReference.target_case_number == "ÖN 2099-9999"
+                    UnresolvedReference.target_case_number == "2099-9999"
                 )
             )
         )
@@ -273,14 +273,14 @@ async def test_extraction_reconciliation(
         session, DocumentCreate(source_url="https://example.com/doc_c.pdf")
     )
     await document_repo.update(
-        session, doc_c.id, DocumentUpdate(case_number="ÖN 2099-9999")
+        session, doc_c.id, DocumentUpdate(case_number="2099-9999")
     )
     await session.commit()
     doc_c = await document_repo.get_by_id(session, doc_c.id)
     assert doc_c is not None
 
     count = await reconcile_references(
-        session, unresolved_repo, ref_repo, doc_c.id, "ÖN 2099-9999"
+        session, unresolved_repo, ref_repo, doc_c.id, ["2099-9999"]
     )
     await session.commit()
 
@@ -304,7 +304,7 @@ async def test_extraction_reconciliation(
         (
             await session.execute(
                 select(UnresolvedReference).where(
-                    UnresolvedReference.target_case_number == "ÖN 2099-9999"
+                    UnresolvedReference.target_case_number == "2099-9999"
                 )
             )
         )
@@ -340,7 +340,7 @@ async def test_extraction_idempotency(
         unresolved_repo,
         sync_publisher,
         raw_text=_ENTITY_RICH_TEXT,
-        case_number="ÖN 2023-0001",
+        case_number="2023-0001",
     )
 
     entity_count_after_first = (

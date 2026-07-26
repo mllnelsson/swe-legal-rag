@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from shared.config import EMBEDDING_DIMENSION
+from shared.enums import ChunkSection
 from shared.dtos.chunk import ChunkRead
 from shared.dtos.task import TaskRead
 from worker_embed.errors import (
@@ -31,6 +32,8 @@ def _make_chunk(
         chunk_text="raw chunk text",
         contextual_text=contextual_text,
         embedding=[0.0] * _EMBEDDING_DIM,
+        section=ChunkSection.BODY,
+        appendix_label=None,
         created_at=_NOW,
     )
 

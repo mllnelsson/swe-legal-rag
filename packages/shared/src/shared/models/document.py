@@ -34,7 +34,11 @@ class Document(Base):
     gcs_uri: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     raw_text: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     summary: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    # Ärendenummer, canonical "YYYY-NNNN" (see shared.segmentation).
     case_number: Mapped[str | None] = mapped_column(VARCHAR, nullable=True)
+    # Beslutsnummer, canonical "N/YYYY" — a separate identifier space from
+    # case_number. Decisions cite each other by either, so both must be resolvable.
+    decision_number: Mapped[str | None] = mapped_column(VARCHAR, nullable=True)
     decision_date: Mapped[date | None] = mapped_column(DATE, nullable=True)
     decision_outcome: Mapped[str | None] = mapped_column(VARCHAR, nullable=True)
     category: Mapped[str | None] = mapped_column(VARCHAR, nullable=True)
@@ -52,4 +56,5 @@ class Document(Base):
         UniqueConstraint("source_url", name="uq_documents_source_url"),
         UniqueConstraint("source_document_id", name="uq_documents_source_document_id"),
         Index("ix_documents_source_url", "source_url"),
+        Index("ix_documents_decision_number", "decision_number"),
     )

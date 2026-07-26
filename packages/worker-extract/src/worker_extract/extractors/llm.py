@@ -3,6 +3,7 @@ from __future__ import annotations
 from ai import extract_entities as ai_extract_entities
 from ai.dtos import EntityResult
 from llm_core import LLMProvider
+from shared.segmentation import DocumentSegments
 
 from worker_extract.models import (
     ExtractionResult,
@@ -33,9 +34,12 @@ class LLMStrategy:
         self._provider = provider
 
     async def extract(
-        self, document_text: str, case_number: str | None = None
+        self, segments: DocumentSegments, case_number: str | None = None
     ) -> ExtractionResult:
+        # Body only. The appendix is the appealed decision written in the same
+        # register, and the model has no way to tell whose reasoning is whose once
+        # the two are concatenated.
         result = await ai_extract_entities(
-            document_text, case_number, provider=self._provider
+            segments.body, case_number, provider=self._provider
         )
         return _map_entity_result(result)

@@ -4,7 +4,7 @@ title: shared Package
 description: The single source of truth for data and database access — models, DTOs, enums, errors, the task envelope, config, and the storage/queue infrastructure abstractions.
 resource: packages/shared
 tags: [package, shared, models, dtos, infrastructure]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-26T00:00:00Z
 ---
 
 # shared Package (`packages/shared/`)
@@ -53,9 +53,20 @@ not import from `ai`.
 ## `enums.py`
 
 The single source of truth for finite vocabularies — `TaskStatus`, `PipelineStep`,
-`EntityType`, `EntityRelevance`, all `StrEnum`, so each member *is* the exact string
-stored in the DB and passed on the queue. `PipelineStep` also names the queue topic each
-stage consumes from.
+`EntityType`, `EntityRelevance`, `ChunkSection`, all `StrEnum`, so each member *is* the
+exact string stored in the DB and passed on the queue. `PipelineStep` also names the
+queue topic each stage consumes from.
+
+## `segmentation.py`
+
+Pure functions that cut a decision's `raw_text` into `DocumentSegments(body, holding,
+trailer, appendices)`, plus `normalize_case_number()` / `normalize_decision_number()`.
+
+It lives in `shared` because the [metadata](/pipeline/metadata.md),
+[extract](/pipeline/extract.md) and [chunk](/pipeline/chunk.md) workers all need the same
+split, and each previously re-derived (or failed to derive) it locally. No I/O, no
+config, never raises. Fully described in
+[decision document structure](/reference/document-structure.md).
 
 ## `errors.py`
 

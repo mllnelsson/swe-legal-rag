@@ -44,6 +44,21 @@ async def get_by_case_number(
     return DocumentRead.model_validate(doc) if doc else None
 
 
+async def get_by_decision_number(
+    session: AsyncSession, decision_number: str
+) -> DocumentRead | None:
+    """Look up by beslutsnummer ("1/2026") rather than ärendenummer.
+
+    Decisions cite each other in both identifier spaces, so reference resolution
+    has to try both.
+    """
+    result = await session.execute(
+        select(Document).where(Document.decision_number == decision_number)
+    )
+    doc = result.scalar_one_or_none()
+    return DocumentRead.model_validate(doc) if doc else None
+
+
 async def update(
     session: AsyncSession, document_id: uuid.UUID, dto: DocumentUpdate
 ) -> DocumentRead | None:

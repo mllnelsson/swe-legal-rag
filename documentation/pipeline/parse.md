@@ -31,6 +31,12 @@ underlying library is swappable without touching the service layer. The concrete
 each page via `page.get_textpage().get_text_range()`, joins pages with `"\n\n---\n\n"`
 separators, and wraps pypdfium2 exceptions in `ParseError`.
 
+`raw_text` is a faithful flattening of the PDF, appendices included — the citation flow
+depends on it matching what the user opens. Downstream steps that need only
+Överklagandenämndens own text derive it with
+[`shared.segmentation`](/reference/document-structure.md) rather than the parser
+withholding it.
+
 **`pypdfium2` uses the Apache 2.0 license** (permissive), unlike PyMuPDF/pymupdf4llm
 which is AGPL — see the [architectural register](/decisions/architectural-register.md).
 

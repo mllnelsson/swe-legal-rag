@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from shared.enums import ChunkSection
+
 
 class ChunkCreate(BaseModel):
     document_id: uuid.UUID
@@ -10,6 +12,8 @@ class ChunkCreate(BaseModel):
     chunk_text: str
     contextual_text: str | None = None
     embedding: list[float] | None = None
+    section: ChunkSection = ChunkSection.BODY
+    appendix_label: str | None = None
 
 
 class ChunkRead(BaseModel):
@@ -21,4 +25,6 @@ class ChunkRead(BaseModel):
     chunk_text: str
     contextual_text: str | None
     embedding: list[float] | None
+    section: ChunkSection
+    appendix_label: str | None
     created_at: datetime

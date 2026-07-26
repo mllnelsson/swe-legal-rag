@@ -3,7 +3,7 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-26T00:00:00Z
 ---
 
 # Architectural Decision Register
@@ -24,6 +24,12 @@ below are **Accepted**.
   keyword matching. See [retrieval agent](/retrieval/agent.md).
 - **Agent-driven filtering over user-driven** — the LLM extracts structure from natural
   language rather than exposing manual filters in V1.
+- **Appendices are labelled, not dropped** — a decision PDF contains the decision it
+  reviewed; that text stays searchable but is marked so it can never be cited as the
+  nämnd's own. See [appendices are labelled, not dropped](/decisions/appendix-segmentation.md).
+- **Body-first retrieval over one vector index** — appendix scoping is a `WHERE`
+  predicate on the existing HNSW index, applied as a hard filter rather than a ranking
+  penalty. See [body-first retrieval](/decisions/body-first-retrieval.md).
 
 ## Storage and graph
 

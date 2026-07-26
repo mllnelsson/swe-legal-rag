@@ -9,7 +9,13 @@ comparisons into explicit, matchable options.
 
 from enum import StrEnum, auto
 
-__all__ = ["TaskStatus", "PipelineStep", "EntityType", "EntityRelevance"]
+__all__ = [
+    "TaskStatus",
+    "PipelineStep",
+    "EntityType",
+    "EntityRelevance",
+    "ChunkSection",
+]
 
 
 class TaskStatus(StrEnum):
@@ -48,3 +54,15 @@ class EntityRelevance(StrEnum):
 
     PRIMARY = auto()
     MENTIONED = auto()
+
+
+class ChunkSection(StrEnum):
+    """Which part of the source PDF a chunk was cut from.
+
+    Decision PDFs carry the appealed decision as an appendix, so an ``APPENDIX``
+    chunk holds the *lower instance's* words — often the reasoning Överklagande-
+    nämnden went on to overturn. Retrieval defaults to ``BODY`` for that reason.
+    """
+
+    BODY = auto()
+    APPENDIX = auto()

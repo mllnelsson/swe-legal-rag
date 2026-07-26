@@ -35,6 +35,7 @@ def _make_doc_read(
         raw_text=raw_text,
         summary=None,
         case_number=None,
+        decision_number=None,
         decision_date=None,
         decision_outcome=None,
         category=None,
@@ -116,6 +117,7 @@ async def test_rule_based_succeeds_no_llm_called() -> None:
 
     complete_result = MetadataResult(
         case_number="2023-0042",
+        decision_number=None,
         decision_date=datetime.date(2023, 1, 15),
         decision_outcome="bifaller överklagandet",
         category="Kyrkogårdsförvaltning",
@@ -160,6 +162,7 @@ async def test_partial_rule_based_llm_fills_gaps() -> None:
 
     rule_result = MetadataResult(
         case_number="2023-0042",
+        decision_number=None,
         decision_date=datetime.date(2023, 1, 15),
     )
     rule_extractor = MagicMock(return_value=rule_result)

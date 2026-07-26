@@ -11,10 +11,13 @@ from shared.enums import PipelineStep
 from shared.pipeline import StepInputError, run_pipeline_step
 from shared.queue.base import QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
+from shared.segmentation import split_document
 from worker_metadata.patterns import MetadataResult, is_complete
 
 logger = logging.getLogger(__name__)
 
+# decision_number is absent here on purpose: it is never worth an LLM call, and
+# is_complete() ignores it for the same reason.
 _METADATA_FIELDS = ("case_number", "decision_date", "decision_outcome", "category")
 
 
@@ -44,8 +47,11 @@ async def process_metadata(
                 document_id,
                 missing,
             )
+            # Body only: an appended lower-instance decision has its own date,
+            # outcome and diarienummer, and the LLM cannot tell them apart.
+            body = split_document(document.raw_text).body
             try:
-                llm_result = await llm_extractor(document.raw_text, missing)
+                llm_result = await llm_extractor(body, missing)
                 for field in missing:
                     llm_value = getattr(llm_result, field)
                     if llm_value is not None:
@@ -60,6 +66,7 @@ async def process_metadata(
             document.id,
             DocumentUpdate(
                 case_number=result.case_number,
+                decision_number=result.decision_number,
                 decision_date=result.decision_date,
                 decision_outcome=result.decision_outcome,
                 category=result.category,
