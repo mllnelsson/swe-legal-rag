@@ -1,3 +1,6 @@
+from llm_core import trace_context
+
+from ai._observability import LLMTraceConfig, install_file_tracing
 from ai.dtos import (
     ChunkContext,
     DateFilter,
@@ -32,6 +35,11 @@ from ai.services import (
 )
 
 __all__ = [
+    # Observability. Every process making LLM calls installs tracing once at
+    # startup and sets trace_context at each unit-of-work boundary.
+    "install_file_tracing",
+    "LLMTraceConfig",
+    "trace_context",
     # Service functions
     "decompose_query",
     "extract_metadata",
