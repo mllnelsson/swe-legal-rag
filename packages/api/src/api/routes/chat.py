@@ -5,6 +5,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 
+from ai import trace_context
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -25,6 +26,10 @@ router = APIRouter()
 
 # Upper bound on a single user message; keeps prompts and payloads bounded.
 MAX_MESSAGE_CHARS = 4000
+
+# Fallback attribution for anything the chat path calls that does not name
+# itself; inner calls override it.
+_SOURCE = "api.chat"
 
 
 class ChatRequest(BaseModel):
@@ -58,41 +63,62 @@ async def chat_endpoint(
     history = history_for_llm(chat_session, session_settings.session_max_history_turns)
 
     async def generate() -> AsyncIterator[str]:
-        done_emitted = False
-        try:
-            async for event in answer_query(
-                body.message,
-                history,
-                db,
-                embedding_provider=embedding_provider,
-                settings=retrieval_settings,
-                storage=storage,
-                structured_llm_provider=structured_llm_provider,
-                chat_llm_provider=chat_llm_provider,
-                chat_session_id=chat_session.id,
-            ):
-                match event:
-                    case TokenEvent():
-                        yield _format_sse("token", {"text": event.text})
-                    case SourcesEvent():
-                        yield _format_sse(
-                            "sources",
-                            {"sources": [s.model_dump() for s in event.sources]},
-                        )
-                    case DoneEvent():
-                        done_emitted = True
-                        yield _format_sse("done", {"session_id": str(chat_session.id)})
-        except Exception:
-            if not done_emitted:
-                logger.exception("Error during query for session %s", chat_session.id)
-                yield _format_sse(
-                    "error",
-                    {"message": "An error occurred while processing your request."},
-                )
-            else:
-                logger.exception(
-                    "Error persisting turn for session %s", chat_session.id
-                )
+        # The trace context is set here, inside the generator, rather than
+        # around the handler body: Starlette drives this generator *after*
+        # chat_endpoint has returned, so a context entered out there would
+        # already have exited before the first token. Set inside, it spans
+        # every nested call — decomposition, embedding, reranking, and the
+        # streaming synthesis — so one interaction id ties together everything
+        # this question cost.
+        interaction_id = str(uuid.uuid4())
+        logger.info(
+            "Chat interaction %s for session %s", interaction_id, chat_session.id
+        )
+
+        with trace_context(
+            interaction_id=interaction_id,
+            session_id=str(chat_session.id),
+            source=_SOURCE,
+        ):
+            done_emitted = False
+            try:
+                async for event in answer_query(
+                    body.message,
+                    history,
+                    db,
+                    embedding_provider=embedding_provider,
+                    settings=retrieval_settings,
+                    storage=storage,
+                    structured_llm_provider=structured_llm_provider,
+                    chat_llm_provider=chat_llm_provider,
+                    chat_session_id=chat_session.id,
+                ):
+                    match event:
+                        case TokenEvent():
+                            yield _format_sse("token", {"text": event.text})
+                        case SourcesEvent():
+                            yield _format_sse(
+                                "sources",
+                                {"sources": [s.model_dump() for s in event.sources]},
+                            )
+                        case DoneEvent():
+                            done_emitted = True
+                            yield _format_sse(
+                                "done", {"session_id": str(chat_session.id)}
+                            )
+            except Exception:
+                if not done_emitted:
+                    logger.exception(
+                        "Error during query for session %s", chat_session.id
+                    )
+                    yield _format_sse(
+                        "error",
+                        {"message": "An error occurred while processing your request."},
+                    )
+                else:
+                    logger.exception(
+                        "Error persisting turn for session %s", chat_session.id
+                    )
 
     return StreamingResponse(
         generate(),

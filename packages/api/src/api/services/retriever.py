@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai.embedding import EmbeddingProvider
 from api.config import RetrievalSettings
 from api.services.query_planner import QueryPlan
-from llm_core import LLMProvider, Message, Role, generate_structured
+from llm_core import LLMProvider, Message, Role, generate_structured, trace_context
 from shared.dtos.document import DocumentRead
 from shared.dtos.search import ChunkSearchResult, DocumentFilter
 from shared.enums import ChunkSection
@@ -29,6 +29,8 @@ E5_QUERY_PREFIX = "query: "
 
 # Per-chunk snippet length shown to the reranker LLM; keeps the prompt bounded.
 SNIPPET_CHARS = 400
+
+_RERANK_SOURCE = "api.retriever.rerank"
 
 
 class RetrievedChunk(BaseModel):
@@ -150,13 +152,20 @@ async def _rerank(
             ),
         )
     ]
+    # This is the one caller that reaches past `ai` straight into llm-core, so
+    # it has to name itself or its records would be the only unattributed ones.
     try:
-        result = await generate_structured(messages, _RerankResult, provider=provider)
+        with trace_context(source=_RERANK_SOURCE):
+            result = await generate_structured(
+                messages, _RerankResult, provider=provider
+            )
         assert isinstance(result, _RerankResult)
         valid = [i for i in result.ranked_indices if 0 <= i < len(chunks)]
         missing = [i for i in range(len(chunks)) if i not in set(valid)]
         return [chunks[i] for i in valid + missing]
     except Exception:
+        # Swallowed on purpose: a failed rerank costs relevance, not an answer.
+        # The trace records the failure, which is where it becomes visible.
         logger.warning("Rerank failed; keeping RRF order")
         return chunks
 
