@@ -4,10 +4,11 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from llm_core._exceptions import MaxIterationsError, ToolExecutionError
+from llm_core._exceptions import MaxIterationsError, ProviderError, ToolExecutionError
 from llm_core._service import generate, generate_stream, generate_structured, tool_loop
+from llm_core._tracing import LLMCallRecord, LLMOperation, set_trace_recorder
 from llm_core._types import (
     LLMResponse,
     Message,
@@ -15,7 +16,20 @@ from llm_core._types import (
     StreamChunk,
     ToolCall,
     ToolDefinition,
+    Usage,
 )
+
+
+class RecordingRecorder:
+    def __init__(self) -> None:
+        self.records: list[LLMCallRecord] = []
+
+    def record(self, record: LLMCallRecord) -> None:
+        self.records.append(record)
+
+
+class _Answer(BaseModel):
+    answer: str
 
 
 def _make_response(
@@ -251,3 +265,138 @@ async def test_tool_loop_result_serialized_as_json() -> None:
     tool_result_msg = result.history[2]
     assert tool_result_msg.role == Role.tool_result
     assert '"key": "value"' in tool_result_msg.content
+
+
+class TestTracing:
+    """Every provider round-trip through the service layer leaves a record."""
+
+    @pytest.fixture
+    def recorder(self):
+        recorder = RecordingRecorder()
+        set_trace_recorder(recorder)
+        yield recorder
+        set_trace_recorder(None)
+
+    async def test_generate_records_success(self, recorder) -> None:
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(return_value=_make_response("Hej"))
+
+        await generate([Message(role=Role.user, content="Hi")], provider=mock_provider)
+
+        (record,) = recorder.records
+        assert record.operation == LLMOperation.generate
+        assert record.success is True
+        assert record.response_text == "Hej"
+
+    async def test_generate_records_failure_and_reraises(self, recorder) -> None:
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(side_effect=ProviderError("upstream 503"))
+
+        with pytest.raises(ProviderError):
+            await generate(
+                [Message(role=Role.user, content="Hi")], provider=mock_provider
+            )
+
+        (record,) = recorder.records
+        assert record.success is False
+        assert record.error_type == "ProviderError"
+
+    async def test_generate_structured_records_before_validation(
+        self, recorder
+    ) -> None:
+        """A schema violation is a caller-side failure, not a provider one.
+
+        The call was still made and billed, so the record stands as successful
+        and carries the text that would not parse.
+        """
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(return_value=_make_response("not json"))
+
+        with pytest.raises(ValidationError):
+            await generate_structured(
+                [Message(role=Role.user, content="Hi")],
+                _Answer,
+                provider=mock_provider,
+            )
+
+        (record,) = recorder.records
+        assert record.operation == LLMOperation.generate_structured
+        assert record.success is True
+        assert record.response_text == "not json"
+
+    async def test_stream_records_once_when_fully_consumed(self, recorder) -> None:
+        mock_provider = AsyncMock()
+        mock_provider.generate_stream = AsyncMock(
+            return_value=_async_iter(
+                StreamChunk(text="Hej "),
+                StreamChunk(text="där"),
+                StreamChunk(text="", usage=Usage(input_tokens=7, total_tokens=11)),
+            )
+        )
+
+        chunks = [
+            chunk
+            async for chunk in generate_stream(
+                [Message(role=Role.user, content="Hi")], provider=mock_provider
+            )
+        ]
+
+        assert chunks == ["Hej ", "där"]
+        (record,) = recorder.records
+        assert record.success is True
+        assert record.response_text == "Hej där"
+        assert record.usage == Usage(input_tokens=7, total_tokens=11)
+
+    async def test_abandoned_stream_records_partial_answer(self, recorder) -> None:
+        mock_provider = AsyncMock()
+        mock_provider.generate_stream = AsyncMock(
+            return_value=_async_iter(
+                StreamChunk(text="Hej "),
+                StreamChunk(text="där"),
+            )
+        )
+
+        stream = generate_stream(
+            [Message(role=Role.user, content="Hi")], provider=mock_provider
+        )
+        assert await anext(stream) == "Hej "
+        await stream.aclose()
+
+        (record,) = recorder.records
+        assert record.success is False
+        assert record.error_type == "GeneratorExit"
+        assert record.response_text == "Hej "
+
+    async def test_tool_loop_records_every_iteration(self, recorder) -> None:
+        tc = ToolCall(id="1", name="search", arguments={"q": "x"})
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(
+            side_effect=[
+                _make_response(tool_calls=(tc,)),
+                _make_response(tool_calls=(tc,)),
+                _make_response("done"),
+            ]
+        )
+
+        result = await tool_loop(
+            [Message(role=Role.user, content="Hi")],
+            [ToolDefinition(name="search", description="", parameters={})],
+            {"search": AsyncMock(return_value="hit")},
+            provider=mock_provider,
+        )
+
+        assert result.iterations == 3
+        assert len(recorder.records) == 3
+        assert {r.operation for r in recorder.records} == {LLMOperation.tool_loop}
+        assert [r.context["tool_loop_iteration"] for r in recorder.records] == [1, 2, 3]
+
+    async def test_no_recorder_leaves_behaviour_unchanged(self) -> None:
+        set_trace_recorder(None)
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(return_value=_make_response("Hej"))
+
+        result = await generate(
+            [Message(role=Role.user, content="Hi")], provider=mock_provider
+        )
+
+        assert result.message.content == "Hej"
