@@ -37,12 +37,31 @@ class ToolDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class Usage:
+    """Token counts as reported by the provider.
+
+    Every field is optional and `None` means "the provider did not report it" —
+    never zero. Cost estimation depends on telling those apart.
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LLMResponse:
     message: Message
     raw: Any = field(default=None, repr=False)
+    usage: Usage | None = None
+    model: str | None = None
+    provider: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class StreamChunk:
     text: str
     raw: Any = field(default=None, repr=False)
+    usage: Usage | None = None
+    model: str | None = None
+    provider: str | None = None
