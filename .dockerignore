@@ -1,0 +1,18 @@
+# Downloaded PDFs and trace streams. Without this the build context carries
+# every PDF ever crawled — hundreds of MB, none of it needed to build.
+data/
+
+# Host virtualenv: wrong platform, and `uv sync` rebuilds it in the image.
+.venv/
+
+.git/
+frontend/node_modules/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Configuration reaches the containers through compose's `env_file`, at run
+# time. Baking secrets into an image layer is how they leak.
+.env

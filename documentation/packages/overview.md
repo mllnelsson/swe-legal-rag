@@ -3,7 +3,7 @@ type: Concept
 title: Backend Packages Overview
 description: The uv workspace layout, package dependency graph, and the layered Model→Repo→Service→Endpoint architecture.
 tags: [backend, packages, workspace, architecture]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Backend Packages Overview
@@ -30,9 +30,25 @@ packages/
   worker-extract/  worker-chunk/  worker-embed/
 alembic/             — migration scripts (runs against shared.db.Base metadata)
 alembic.ini          — Alembic config (sqlalchemy.url via DATABASE_URL in env.py)
-docker-compose.yml   — Postgres+pgvector default, MinIO+Redis under the "full" profile
+scripts/
+  run_pipeline.py    — crawl→embed in one process; the entrypoint the pipeline container runs
+  run_step.py        — one step, one document, no cascade; the hand-testing runner
+Dockerfile           — local-dev image for the whole backend (python:3.12-slim + uv sync)
+docker-compose.yml   — Postgres+pgvector default; pipeline+api under "app", MinIO+Redis under "full"
 docker/init.sql      — enables the pgvector extension on first DB creation
 ```
+
+`scripts/run_pipeline.py` exists because `QUEUE_BACKEND=sync` dispatches into a
+module-level broker in the *same* process: something has to subscribe the six downstream
+handlers before crawl publishes, and each worker's `main()` already does exactly that and
+returns (`SyncQueueSubscriber.start()` is a no-op). Composing them is calling them in
+order. It refuses to run on any other queue backend.
+
+The same script is the `pipeline` compose service's command, and `api` runs uvicorn from
+the same image — one image, two services, and deliberately **one** pipeline container
+rather than seven, for the same in-process-broker reason. See
+[Running in Containers](/playbooks/local-dev.md#running-in-containers). Each worker
+remains its own deployable unit for Cloud Run, which needs a real queue backend first.
 
 All packages use src layout (`packages/<name>/src/<python_name>/`) with `py.typed`
 markers; hyphenated directory names map to underscore Python names (`worker-crawl` →
