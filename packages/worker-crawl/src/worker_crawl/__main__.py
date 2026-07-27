@@ -66,9 +66,9 @@ async def _run(year_spec: str) -> None:
     )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     load_dotenv()
-    args = _parse_args()
+    args = _parse_args(argv)
     year_spec = args.years or get_crawl_settings().crawl_years
     try:
         asyncio.run(_run(year_spec))
