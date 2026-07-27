@@ -3,23 +3,21 @@ type: Reference
 title: LLM Pricing Prerequisites
 description: The pricing rules and verified rate table that back write-time LLM cost tracking (binding for ai/_pricing.py).
 tags: [observability, cost, pricing, llm]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # LLM Pricing Prerequisites
 
-> **Status:** design phase. Broader observability (LLM trace capture, end-to-end
-> interaction tracking, pipeline health) is planned in ATM stories 15 and 16; the full
-> design decisions (D1–D8) live in those story descriptions and will be consolidated
-> here when story 15 is built. This concept currently specifies the **LLM pricing
-> prerequisites**, which the cost-tracking implementation depends on.
+This concept specifies the **rate table and matching rules** that
+`ai/_pricing.py` implements. How records are captured and correlated is
+[LLM Observability](/observability.md).
 
 ## Why cost tracking exists
 
 A core project goal is seeing how cheap the system can run ([PRD](/prd.md): <$5/month
-LLM budget). Every LLM call is traced to a Postgres `llm_traces` row (a planned table)
-storing the full prompt/response, token counts, latency, and a write-time
-`estimated_cost_usd` computed from the pricing table below.
+LLM budget). Every LLM call is written to a trace record in file storage holding the
+full prompt/response, token counts, latency, and a write-time `estimated_cost_usd`
+computed from the table below.
 
 ## Source of truth
 
@@ -34,9 +32,26 @@ Prices come from Google's official Gemini API pricing page:
 - Prices must be re-verified **whenever the configured Gemini model changes** and
   whenever a builder touches `ai/_pricing.py`.
 
-These rates apply when `LLM_PROVIDER=gemini`. The default provider is Berget (see
-[local dev](/playbooks/local-dev.md)); Berget-hosted models are priced separately and
-are not yet tabulated here.
+These rates apply when `LLM_PROVIDER=gemini`.
+
+## Berget rates are not known
+
+The default provider is Berget (see [local dev](/playbooks/local-dev.md)), and **no
+Berget rate is published in this repo**. Guessing one would be worse than reporting
+nothing, so the four models this project runs by default are deliberately absent from
+the table:
+
+| Model | Role |
+|---|---|
+| `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | `LLM_MODEL_STRUCTURED` |
+| `mistralai/Mistral-Medium-3.5-128B` | `LLM_MODEL_SUMMARIZE` |
+| `zai-org/GLM-5.2` | `LLM_MODEL_CHAT` |
+| `intfloat/multilingual-e5-large` | Berget-hosted embeddings |
+
+**Consequence:** on the out-of-the-box configuration every record carries
+`estimated_cost_usd: null`, and cost questions are answerable in *tokens* only. Tokens
+are the ground truth, so adding a rate later makes historical cost recomputable — see
+[recomputing](#recomputing-cost-from-tokens). Adding one is a single line in `_PRICES`.
 
 ## Verified prices (checked 2026-06-13)
 
@@ -59,29 +74,35 @@ rate silently.
 
 ## Table semantics (binding for `ai/_pricing.py`)
 
-- **Units:** USD per 1M tokens, input and output priced separately. Stored as `Decimal`
-  — never float (`estimated_cost_usd` is `NUMERIC(12,8)`).
+- **Units:** USD per 1M tokens, input and output priced separately. Held as `Decimal`
+  and serialized as a JSON **string** — never a float, which does not round-trip a
+  Decimal and drifts when thousands are summed. Quantized to 8 decimal places, since a
+  single cheap call costs well under a cent.
 - **Keying:** model-name **prefix**, matched longest-prefix-first against the model
-  string the API *returns* (`response.model_version`), not only the configured name. The
-  returned string can carry suffixes (e.g. `-001`, preview tags); prefix matching
-  absorbs them. Longest-prefix-first is required so `gemini-2.5-flash-lite` wins over
-  `gemini-2.5-flash` for lite models.
-- **Unknown model ⇒ `NULL` cost, never an error and never a guess.** Token counts are
-  always stored regardless — they are the ground truth from which cost can be recomputed.
+  string the API *returns* (`response.model` / `response.model_version`), not the
+  configured name. The returned string can carry suffixes (e.g. `-001`, preview tags);
+  prefix matching absorbs them. Longest-prefix-first is required so
+  `gemini-2.5-flash-lite` wins over `gemini-2.5-flash` for lite models.
+- **Matching is case-insensitive.** Berget model ids are mixed-case, and matching them
+  case-sensitively would silently yield null costs forever.
+- **Unknown model ⇒ `null` cost, never an error and never a guess.** Token counts are
+  always stored regardless — they are the ground truth from which cost is recomputed.
+  A null is not a zero; `"0.00000000"` means genuinely free.
 - **Write-time freeze is intentional:** `estimated_cost_usd` records the price in effect
   when the call happened. Later price changes update the table for *future* calls only;
-  historical rows are not rewritten.
+  existing records are not rewritten.
 
 ## Recomputing cost from tokens
 
-If a price was wrong or missing, recompute from the stored tokens instead of editing
-history blindly:
+If a rate was wrong or missing, recompute from the stored tokens rather than editing
+history blindly. Records are append-only, so recomputation happens at read time:
 
-```sql
--- e.g. backfill rows that had no pricing entry at write time
-UPDATE llm_traces
-SET estimated_cost_usd = (input_tokens * 0.10 + output_tokens * 0.40) / 1000000.0
-WHERE model LIKE 'gemini-2.5-flash-lite%' AND estimated_cost_usd IS NULL;
+```bash
+# spend for a model that had no rate at write time (flash-lite: 0.10 in / 0.40 out)
+jq -s 'map(select(.model | startswith("gemini-2.5-flash-lite")))
+       | map((.usage.input_tokens // 0) * 0.10 + (.usage.output_tokens // 0) * 0.40)
+       | add / 1000000' \
+  data/pdfs/llm-traces/2026-07-27.jsonl
 ```
 
 ## Maintenance checklist
@@ -90,25 +111,27 @@ When changing the model or touching pricing (do these in the same change):
 
 1. Check the pricing page; record the date checked in the table above.
 2. Add/adjust the prefix entry in `ai/_pricing.py` (Decimal, per 1M tokens, standard
-   text rates).
+   text rates, lowercase prefix key).
 3. Confirm the model has no context-length pricing tiers; if it does, extend
    `estimate_cost_usd()` first.
 4. Update the model defaults in `.env.example` and the [local dev](/playbooks/local-dev.md)
    env listing if the default changes.
-5. After the first live call, sanity-check one `llm_traces` row: `estimated_cost_usd`
-   non-null and plausible against the Google AI Studio usage dashboard.
+5. After the first live call, sanity-check one trace record: `estimated_cost_usd`
+   non-null and plausible against the provider's usage dashboard.
 
 ## Follow-up queries (headline)
 
-```sql
--- LLM spend, last 30 days (the budget question)
-SELECT sum(estimated_cost_usd) FROM llm_traces
-WHERE created_at > now() - interval '30 days';
+```bash
+# LLM spend for one day (the budget question)
+jq -s 'map(.estimated_cost_usd | select(. != null) | tonumber) | add' \
+  data/pdfs/llm-traces/2026-07-27.jsonl
 
--- spend by model
-SELECT model, count(*), sum(total_tokens), sum(estimated_cost_usd)
-FROM llm_traces GROUP BY model ORDER BY 4 DESC NULLS LAST;
+# spend by model
+jq -s 'group_by(.model) | map({model: .[0].model, calls: length,
+        tokens: (map(.usage.total_tokens // 0) | add),
+        usd: (map(.estimated_cost_usd | select(. != null) | tonumber) | add)})' \
+  data/pdfs/llm-traces/2026-07-27.jsonl
 ```
 
-More queries (per-document cost, failure follow-up, interaction cost) will be documented
-when stories 15/16 are built.
+Per-interaction and per-document cost queries are in
+[LLM Observability](/observability.md).

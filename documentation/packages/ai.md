@@ -1,10 +1,10 @@
 ---
 type: Package
 title: ai Package
-description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, and the embedding abstraction.
+description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -18,6 +18,8 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | Module | Role |
 |---|---|
 | `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
+| `_observability.py` | `FileTraceRecorder`, `LLMTraceConfig`, `install_file_tracing()` — writes LLM traces to file storage |
+| `_pricing.py` | The Decimal rate table and `estimate_cost_usd()` |
 | `services.py` | Five async service functions (below) |
 | `embedding.py` | `EmbeddingProvider` Protocol, `EmbeddingConfig`, `create_embedding_provider` factory |
 | `providers/berget_embeddings.py` | `BergetEmbeddingProvider` — Berget's hosted embedding API (default) |
@@ -29,8 +31,10 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 
 ## Prompt templates (`ai/prompts/`)
 
-`PromptTemplate` is a frozen dataclass holding just data (`system_prompt`,
-`user_template`). Rendering is a **free function** `render(template, context) ->
+`PromptTemplate` is a frozen dataclass holding just data (`name`, `system_prompt`,
+`user_template`). The `name` is what identifies the prompt in a trace record — `render()`
+returns a plain message list, so nothing downstream could otherwise tell which template
+produced it. Rendering is a **free function** `render(template, context) ->
 list[Message]` — it substitutes variables via `str.format_map(context)` and returns
 `[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Five template constants
 cover every use case:
@@ -112,18 +116,48 @@ only for the Berget provider.
 
 - **`BergetEmbeddingProvider`** (default, `EMBEDDING_PROVIDER=berget`) — calls Berget's
   hosted `intfloat/multilingual-e5-large` via `openai.AsyncOpenAI.embeddings.create()`.
+  **Traced**: embedding runs once per chunk over the whole corpus, so it is plausibly
+  the largest single line of token spend.
 - **`LocalEmbeddingProvider`** (`EMBEDDING_PROVIDER=local`) — `sentence-transformers`
-  in-process; the offline dev/test fallback.
+  in-process; the offline dev/test fallback. **Not traced** — no API call, no token
+  accounting, and a contribution of exactly zero to what a question cost.
+
+Tracing sits inside `BergetEmbeddingProvider` rather than in a wrapper: a wrapper
+implementing `EmbeddingProvider` could time the call but not see token usage, since
+`embed() -> list[list[float]]` has nowhere to put it. The embedded texts are not
+recorded — they are chunk text already durable in Postgres — only their count and
+character total.
 
 See the [embedding hosting](/decisions/embedding-hosting.md) decision. The width
 constraint and its startup verification (`verify_embedding_dimension`) are covered in
 [embedding dimension](/decisions/embedding-dimension.md).
 
+## Trace recording (`ai/_observability.py`, `ai/_pricing.py`)
+
+`ai` supplies the concrete recorder behind llm-core's hook. It belongs here because it
+needs both llm-core's record type and `shared`'s storage layer, and `shared` must not
+depend on llm-core.
+
+`install_file_tracing(storage=None)` is called **once at startup** by every process that
+makes LLM calls — the API lifespan and each of the four LLM workers. It never raises: a
+backend it cannot build leaves no recorder at all, and llm-core treats that as tracing
+off. `trace_context` is re-exported here so callers need no direct llm-core dependency.
+
+Cost is estimated at write time from a `Decimal` table keyed by lowercased model-name
+prefix, matched longest-first against the model the provider **returned**. Unknown model
+means a null cost, never a guess. Only the two verified Gemini rates are seeded — the
+Berget models this project runs by default are unpriced, so their records carry tokens
+and a null cost until rates are added.
+
+Full record schema, correlation keys and the wiring invariant:
+[LLM Observability](/observability.md). Rate rules: [LLM pricing](/reference/llm-pricing.md).
+
 ## Adding a new LLM use case
 
 1. Add `YourRequest`/`YourResult` (`frozen=True`) to `ai/dtos.py`.
-2. Add a `PromptTemplate` constant to `ai/prompts/_templates.py`.
+2. Add a `PromptTemplate` constant to `ai/prompts/_templates.py`, including its `name`.
 3. Add a service function to `ai/services.py` (render the template, call
-   `generate_structured`/`generate`/`generate_stream`).
+   `generate_structured`/`generate`/`generate_stream` inside a `trace_context` naming
+   the `source` and `prompt`).
 4. Export from `__init__.py`.
 5. Add a unit test mocking `ai.services.generate_structured`.

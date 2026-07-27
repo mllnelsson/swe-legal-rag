@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, docker, environment, workflow]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Local Development Environment
@@ -98,6 +98,16 @@ EMBEDDING_MODEL=intfloat/multilingual-e5-large
 # Must match the model's output width (e5-large=1024, e5-base=768)
 EMBEDDING_DIMENSION=1024
 
+# LLM trace capture (see /observability.md). On by default; traces land under
+# {LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{date}.jsonl.
+LLM_TRACE_ENABLED=true
+LLM_TRACE_KEY_PREFIX=llm-traces
+LLM_TRACE_QUEUE_SIZE=1000
+LLM_TRACE_FLUSH_TIMEOUT=5.0
+# Ask the provider for token usage on streamed responses. Turn off only if a
+# host rejects the parameter — it fails the whole call, and streaming is chat.
+LLM_STREAM_USAGE=true
+
 # Optional services
 MINIO_ENDPOINT=http://localhost:9000
 REDIS_URL=redis://localhost:6379
@@ -130,6 +140,11 @@ REDIS_URL=redis://localhost:6379
 | `RETRIEVAL_INCLUDE_APPENDICES` | `false` | Search appended lower-instance decisions too. Default OFF — see [body-first retrieval](/decisions/body-first-retrieval.md) (`api`) |
 | `API_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins for the API server; Vite dev server default |
 | `SESSION_MAX_HISTORY_TURNS` | `10` | Max conversation turns passed to LLM; full history stays in DB |
+| `LLM_TRACE_ENABLED` | `true` | Capture every LLM/embedding call to storage — see [observability](/observability.md). Off means no recorder, no thread, no files |
+| `LLM_TRACE_KEY_PREFIX` | `llm-traces` | Storage key prefix for the daily trace streams |
+| `LLM_TRACE_QUEUE_SIZE` | `1000` | Records buffered before the recorder starts dropping rather than blocking an LLM call |
+| `LLM_TRACE_FLUSH_TIMEOUT` | `5.0` | Seconds `flush()` and process shutdown will wait for the writer |
+| `LLM_STREAM_USAGE` | `true` | Ask the provider for token usage on streamed responses. Turn off only if a host rejects the parameter |
 
 ## Running the Pipeline Locally
 

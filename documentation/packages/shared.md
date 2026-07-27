@@ -4,7 +4,7 @@ title: shared Package
 description: The single source of truth for data and database access — models, DTOs, enums, errors, the task envelope, config, and the storage/queue infrastructure abstractions.
 resource: packages/shared
 tags: [package, shared, models, dtos, infrastructure]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # shared Package (`packages/shared/`)
@@ -111,10 +111,40 @@ concern is a Protocol, a set of backend implementations, and a factory selecting
 backend from env vars — making local ↔ GCP a config change (see
 [GCP layout](/reference/gcp-layout.md)).
 
-**Storage** — `StorageBackend` Protocol (`store`, `retrieve`, `exists`, `delete`,
-`get_url`). `LocalStorageBackend` (under `LOCAL_STORAGE_PATH`) and `GCSStorageBackend`
-(wraps `google-cloud-storage`, needs `GCS_BUCKET`). `create_storage_backend(settings)`
-lazy-imports GCS libs. Optional dep: `uv add 'shared[gcs]'`.
+**Storage** — `StorageBackend` Protocol, in two halves. Blobs: `store`, `retrieve`,
+`exists`, `delete`, `get_url`. Append-style JSON streams: `add_json(key, record)` and
+`iter_json(prefix)`. `LocalStorageBackend` (under `LOCAL_STORAGE_PATH`) and
+`GCSStorageBackend` (wraps `google-cloud-storage`, needs `GCS_BUCKET`).
+`create_storage_backend(settings)` lazy-imports GCS libs. Optional dep:
+`uv add 'shared[gcs]'`.
+
+### JSON streams
+
+`add_json` takes an **extension-free logical stream key** (`llm-traces/2026-07-27`), not
+a file name. The two backends lay a stream out differently, because an object store
+cannot append:
+
+| Backend | One stream is |
+|---|---|
+| Local | One `.jsonl` file, one record per line |
+| GCS | One prefix holding one object per record |
+
+The divergence is deliberate and stays behind the Protocol — callers write with
+`add_json` and read with `iter_json` and never learn which backend they have. That
+symmetry is also why there is no `list_keys`: a key list would re-expose the difference,
+since one key means "many records" locally and "one record" on GCS.
+
+Records within a stream are **unordered**; key order approximates write order on GCS and
+completion order locally, and neither is total. Sort on a field of the record.
+
+Local appends take an exclusive `flock`. `O_APPEND` is atomic only below `PIPE_BUF`
+(4096 bytes) and records can run to tens of kilobytes, so concurrent worker processes
+would otherwise interleave partial lines. The lock is advisory, which holds only because
+the Protocol is the single door. Without `fcntl` (non-POSIX hosts) the fallback guards
+threads but not processes.
+
+The one production consumer today is LLM trace capture — see
+[LLM Observability](/observability.md).
 
 **Queue** — `QueueMessage(task_id, document_id, payload)` maps 1:1 to task rows;
 `QueuePublisher.publish(topic, message)` and `QueueSubscriber.subscribe/start/shutdown`

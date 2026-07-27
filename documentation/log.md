@@ -1,5 +1,15 @@
 # Documentation Update Log
 
+## 2026-07-27
+
+* **Creation**: Established [LLM Observability](/observability.md) — every LLM and hosted-embedding call is captured to file storage with its full prompt, response, tokens and cost, correlated by `interaction_id` so one chat question can be costed as a sum over one key.
+* **Update**: [LLM pricing](/reference/llm-pricing.md) no longer describes a Postgres `llm_traces` table — records are JSON in file storage, `estimated_cost_usd` is a string or null, and the queries are `jq`. Adds the explicit statement that no Berget rate is published in this repo, so default-configuration records carry tokens and a null cost.
+* **Update**: [shared](/packages/shared.md) — `StorageBackend` gains `add_json`/`iter_json` append-style JSON streams, with the deliberate local-`.jsonl` vs GCS-object-per-record divergence and the `flock` requirement documented.
+* **Update**: [llm-core](/packages/llm-core.md) — `Usage` type, per-provider token/model mapping, `LLM_STREAM_USAGE`, and `_tracing.py`: the package carries the trace hook but never a writer.
+* **Update**: [ai](/packages/ai.md) — `_observability.py` and `_pricing.py`, `install_file_tracing()`, `PromptTemplate.name`, and why Berget embeddings are traced while local ones are not.
+* **Update**: [architecture](/architecture.md) — the trace stream sits alongside PDFs in object storage, deliberately not in Postgres.
+* **Update**: [live testing](/playbooks/live-testing.md) gains a "Verifying LLM Traces" section, including how to cost a single question; [local dev](/playbooks/local-dev.md) lists the five new env vars.
+
 ## 2026-07-26
 
 * **Update**: [parse worker](/pipeline/parse.md) now repairs words split by a line-break hyphen — pypdfium2 emits U+FFFE there, which Postgres tokenized as two fragments, hiding the containing chunk from a search for the term. Line breaks themselves are deliberately left alone.
