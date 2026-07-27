@@ -7,6 +7,7 @@ import signal
 
 from dotenv import load_dotenv
 
+from ai import install_file_tracing, trace_context
 from ai.providers.roles import create_structured_llm_provider
 from ai.services import extract_metadata as _ai_extract_metadata
 from shared.config import get_settings
@@ -20,6 +21,9 @@ from worker_metadata.service import process_metadata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Attribution for traces from this worker; inner calls name themselves.
+_SOURCE = "worker-metadata"
 
 
 def _make_llm_extractor(provider):
@@ -53,6 +57,7 @@ def main() -> None:
     settings = get_settings()
     metadata_settings = get_metadata_settings()
 
+    install_file_tracing()
     llm_extractor = _make_llm_extractor(create_structured_llm_provider())
 
     publisher = create_queue_publisher(settings.queue)
@@ -73,7 +78,15 @@ def main() -> None:
                     next_topic=metadata_settings.metadata_next_topic,
                 )
 
-        asyncio.run(_handle())
+        # Set outside asyncio.run: the runner copies the current context when
+        # it builds the loop, so everything inside inherits it. The document id
+        # is what ties this worker's cost back to the document that caused it.
+        with trace_context(
+            document_id=str(message.document_id),
+            task_id=str(message.task_id),
+            source=_SOURCE,
+        ):
+            asyncio.run(_handle())
 
     subscriber.subscribe(metadata_settings.metadata_topic, handle_message)
 

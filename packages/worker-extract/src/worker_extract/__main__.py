@@ -6,6 +6,7 @@ import signal
 
 from dotenv import load_dotenv
 
+from ai import install_file_tracing, trace_context
 from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_publisher, create_queue_subscriber
@@ -24,11 +25,16 @@ from worker_extract.services.extraction_service import process_extraction
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Attribution for traces from this worker; inner calls name themselves.
+_SOURCE = "worker-extract"
+
 
 def main() -> None:
     load_dotenv()
     settings = get_settings()
     extract_settings = get_extract_settings()
+
+    install_file_tracing()
 
     publisher = create_queue_publisher(settings.queue)
     subscriber = create_queue_subscriber(settings.queue)
@@ -50,7 +56,15 @@ def main() -> None:
                     next_topic=extract_settings.extract_next_topic,
                 )
 
-        asyncio.run(_handle())
+        # Set outside asyncio.run: the runner copies the current context when
+        # it builds the loop, so everything inside inherits it. The document id
+        # is what ties this worker's cost back to the document that caused it.
+        with trace_context(
+            document_id=str(message.document_id),
+            task_id=str(message.task_id),
+            source=_SOURCE,
+        ):
+            asyncio.run(_handle())
 
     subscriber.subscribe(extract_settings.extract_topic, handle_message)
 
