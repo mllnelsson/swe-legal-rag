@@ -9,6 +9,7 @@ from llm_core import (
     generate,
     generate_stream,
     generate_structured,
+    trace_context,
 )
 
 from shared.enums import ChunkSection
@@ -30,6 +31,18 @@ from ai.prompts import (
     render,
 )
 
+# Each traced call is tagged with what it is (`source`) and which prompt drove
+# it. Who asked for it — an interaction or a document — comes from the trace
+# context the caller has already set further out.
+#
+# The prompt name would otherwise be lost: `render()` returns a plain message
+# list, so nothing downstream can tell which template produced it.
+_SOURCE_DECOMPOSE = "ai.decompose_query"
+_SOURCE_METADATA = "ai.extract_metadata"
+_SOURCE_ENTITIES = "ai.extract_entities"
+_SOURCE_SUMMARIZE = "ai.summarize_document"
+_SOURCE_SYNTHESIZE = "ai.synthesize_answer"
+
 
 async def decompose_query(
     question: str,
@@ -44,7 +57,8 @@ async def decompose_query(
         ),
     }
     messages = render(QUERY_DECOMPOSITION, context)
-    return await generate_structured(messages, DecomposeResult, provider=provider)  # type: ignore[return-value]
+    with trace_context(source=_SOURCE_DECOMPOSE, prompt=QUERY_DECOMPOSITION.name):
+        return await generate_structured(messages, DecomposeResult, provider=provider)  # type: ignore[return-value]
 
 
 async def extract_metadata(
@@ -54,7 +68,8 @@ async def extract_metadata(
 ) -> MetadataResult:
     context = {"raw_text": raw_text}
     messages = render(METADATA_EXTRACTION, context)
-    return await generate_structured(messages, MetadataResult, provider=provider)  # type: ignore[return-value]
+    with trace_context(source=_SOURCE_METADATA, prompt=METADATA_EXTRACTION.name):
+        return await generate_structured(messages, MetadataResult, provider=provider)  # type: ignore[return-value]
 
 
 async def extract_entities(
@@ -68,7 +83,8 @@ async def extract_entities(
         "case_number": case_number or "unknown",
     }
     messages = render(ENTITY_EXTRACTION, context)
-    return await generate_structured(messages, EntityResult, provider=provider)  # type: ignore[return-value]
+    with trace_context(source=_SOURCE_ENTITIES, prompt=ENTITY_EXTRACTION.name):
+        return await generate_structured(messages, EntityResult, provider=provider)  # type: ignore[return-value]
 
 
 async def summarize_document(
@@ -78,7 +94,8 @@ async def summarize_document(
 ) -> SummarizeResult:
     context = {"raw_text": raw_text}
     messages = render(DOCUMENT_SUMMARIZATION, context)
-    response: LLMResponse = await generate(messages, provider=provider)
+    with trace_context(source=_SOURCE_SUMMARIZE, prompt=DOCUMENT_SUMMARIZATION.name):
+        response: LLMResponse = await generate(messages, provider=provider)
     return SummarizeResult(summary=response.message.content)
 
 
@@ -111,5 +128,6 @@ async def synthesize_answer(
         ),
     }
     messages = render(ANSWER_SYNTHESIS, context)
-    async for token in generate_stream(messages, provider=provider):
-        yield token
+    with trace_context(source=_SOURCE_SYNTHESIZE, prompt=ANSWER_SYNTHESIS.name):
+        async for token in generate_stream(messages, provider=provider):
+            yield token

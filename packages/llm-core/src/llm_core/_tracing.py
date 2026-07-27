@@ -200,6 +200,31 @@ def trace_stream_completed(builder: TraceBuilder | None) -> None:
         builder.succeeded = True
 
 
+def trace_result(
+    builder: TraceBuilder | None,
+    *,
+    usage: Usage | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+    response_text: str | None = None,
+) -> None:
+    """Record a successful outcome reported piecemeal rather than as a response.
+
+    For callers outside this package that talk to a provider themselves —
+    embeddings, for instance — and so have token counts and attribution but no
+    `LLMResponse` to hand over.
+    """
+    if builder is None:
+        return
+    builder.succeeded = True
+    builder.usage = usage
+    builder.model = model
+    builder.provider = provider
+    if response_text is not None:
+        builder.has_response = True
+        builder.text_parts.append(response_text)
+
+
 def trace_failure(builder: TraceBuilder | None, error: BaseException) -> None:
     if builder is None:
         return

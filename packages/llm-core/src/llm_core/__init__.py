@@ -21,9 +21,13 @@ from llm_core._tracing import (
     LLMOperation,
     TraceRecorder,
     current_trace_context,
+    finish_trace,
     get_trace_recorder,
     set_trace_recorder,
+    start_trace,
     trace_context,
+    trace_failure,
+    trace_result,
 )
 from llm_core._types import (
     LLMResponse,
@@ -53,6 +57,12 @@ __all__ = [
     "get_trace_recorder",
     "trace_context",
     "current_trace_context",
+    # For callers that reach a provider themselves — embeddings, say — and so
+    # must open and close their own trace.
+    "start_trace",
+    "trace_result",
+    "trace_failure",
+    "finish_trace",
     "generate",
     "generate_stream",
     "generate_structured",

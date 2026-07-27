@@ -33,6 +33,7 @@ Konversationshistorik:
 {conversation_history}"""
 
 QUERY_DECOMPOSITION = PromptTemplate(
+    name="QUERY_DECOMPOSITION",
     system_prompt=_QUERY_DECOMPOSITION_SYSTEM,
     user_template=_QUERY_DECOMPOSITION_USER,
 )
@@ -63,6 +64,7 @@ Konversationshistorik:
 {conversation_history}"""
 
 ANSWER_SYNTHESIS = PromptTemplate(
+    name="ANSWER_SYNTHESIS",
     system_prompt=_ANSWER_SYNTHESIS_SYSTEM,
     user_template=_ANSWER_SYNTHESIS_USER,
 )
@@ -89,6 +91,7 @@ Dokumenttext:
 {raw_text}"""
 
 METADATA_EXTRACTION = PromptTemplate(
+    name="METADATA_EXTRACTION",
     system_prompt=_METADATA_EXTRACTION_SYSTEM,
     user_template=_METADATA_EXTRACTION_USER,
 )
@@ -149,6 +152,7 @@ Dokumenttext:
 {raw_text}"""
 
 ENTITY_EXTRACTION = PromptTemplate(
+    name="ENTITY_EXTRACTION",
     system_prompt=_ENTITY_EXTRACTION_SYSTEM,
     user_template=_ENTITY_EXTRACTION_USER,
 )
@@ -168,6 +172,7 @@ Dokumenttext:
 {raw_text}"""
 
 DOCUMENT_SUMMARIZATION = PromptTemplate(
+    name="DOCUMENT_SUMMARIZATION",
     system_prompt=_DOCUMENT_SUMMARIZATION_SYSTEM,
     user_template=_DOCUMENT_SUMMARIZATION_USER,
 )

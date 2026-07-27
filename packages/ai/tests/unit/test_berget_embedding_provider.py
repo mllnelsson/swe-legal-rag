@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from llm_core import LLMOperation, Usage, set_trace_recorder
 
 from ai.embedding import EmbeddingConfig, EmbeddingProvider, create_embedding_provider
 from ai.providers.berget_embeddings import BergetEmbeddingProvider
@@ -111,3 +113,92 @@ def test_create_embedding_provider_defaults_to_berget() -> None:
     ):
         result = create_embedding_provider(EmbeddingConfig(BERGET_API_KEY="test-key"))
     assert result is mock_instance
+
+
+class TestEmbedTracing:
+    """Embedding runs once per chunk, so its token spend has to be visible."""
+
+    @pytest.fixture
+    def recorder(self):
+        class Recording:
+            def __init__(self):
+                self.records = []
+
+            def record(self, record):
+                self.records.append(record)
+
+        recorder = Recording()
+        set_trace_recorder(recorder)
+        yield recorder
+        set_trace_recorder(None)
+
+    def _provider(self):
+        with patch("openai.AsyncOpenAI"):
+            return BergetEmbeddingProvider(
+                _make_config(), default_base_url="https://api.berget.ai/v1"
+            )
+
+    def _response(self, **attrs):
+        return SimpleNamespace(
+            data=[SimpleNamespace(embedding=[0.1, 0.2])],
+            **attrs,
+        )
+
+    @pytest.mark.asyncio
+    async def test_successful_embed_is_recorded(self, recorder) -> None:
+        provider = self._provider()
+        provider._client.embeddings.create = AsyncMock(
+            return_value=self._response(
+                usage=SimpleNamespace(prompt_tokens=812, total_tokens=812),
+                model="intfloat/multilingual-e5-large",
+            )
+        )
+
+        await provider.embed(["kyrkomötet beslutade", "stiftet överklagade"])
+
+        (record,) = recorder.records
+        assert record.operation == LLMOperation.embed
+        assert record.success is True
+        assert record.usage == Usage(input_tokens=812, total_tokens=812)
+        assert record.model == "intfloat/multilingual-e5-large"
+        assert record.provider == "berget"
+
+    @pytest.mark.asyncio
+    async def test_record_counts_texts_without_storing_them(self, recorder) -> None:
+        """Chunk text is already in Postgres; copying it here buys nothing."""
+        provider = self._provider()
+        provider._client.embeddings.create = AsyncMock(
+            return_value=self._response(usage=None, model=None)
+        )
+
+        await provider.embed(["abc", "de"])
+
+        (record,) = recorder.records
+        assert record.context["source"] == "ai.embed"
+        assert record.context["texts_count"] == 2
+        assert record.context["input_chars"] == 5
+        assert record.messages == ()
+        assert record.response_text is None
+
+    @pytest.mark.asyncio
+    async def test_failed_embed_is_recorded_and_reraised(self, recorder) -> None:
+        provider = self._provider()
+        provider._client.embeddings.create = AsyncMock(
+            side_effect=RuntimeError("upstream 503")
+        )
+
+        with pytest.raises(RuntimeError):
+            await provider.embed(["abc"])
+
+        (record,) = recorder.records
+        assert record.success is False
+        assert record.error_type == "RuntimeError"
+
+    @pytest.mark.asyncio
+    async def test_empty_input_records_nothing(self, recorder) -> None:
+        provider = self._provider()
+        provider._client.embeddings.create = AsyncMock()
+
+        await provider.embed([])
+
+        assert recorder.records == []

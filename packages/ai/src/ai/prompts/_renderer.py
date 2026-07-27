@@ -10,6 +10,7 @@ class PromptTemplate:
     """Inert prompt data: a system prompt plus a user template. Rendering into
     concrete messages is done by :func:`render`, keeping this a pure data type."""
 
+    name: str
     system_prompt: str
     user_template: str
 

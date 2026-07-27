@@ -22,8 +22,12 @@ from ai.services import (
     summarize_document,
     synthesize_answer,
 )
-from llm_core import LLMResponse, Message, Role
+from llm_core import LLMResponse, Message, Role, StreamChunk
 from shared.enums import EntityRelevance, EntityType
+
+
+def _response(content: str) -> LLMResponse:
+    return LLMResponse(message=Message(role=Role.assistant, content=content))
 
 
 @pytest.mark.asyncio
@@ -212,3 +216,99 @@ async def test_synthesize_answer_marks_appendix_excerpts() -> None:
     assert "Bilaga A, det överklagade beslutet" in prompt
     # The body excerpt keeps the plain label.
     assert "[Mål 1/2026]" in prompt
+
+
+class TestTraceAttribution:
+    """Each service call tags its trace with what it is and which prompt drove it."""
+
+    @pytest.fixture
+    def recorder(self):
+        from llm_core import set_trace_recorder
+
+        class Recording:
+            def __init__(self):
+                self.records = []
+
+            def record(self, record):
+                self.records.append(record)
+
+        recorder = Recording()
+        set_trace_recorder(recorder)
+        yield recorder
+        set_trace_recorder(None)
+
+    async def test_decompose_query_is_attributed(self, recorder) -> None:
+        provider = AsyncMock()
+        provider.generate = AsyncMock(
+            return_value=_response(
+                '{"categories": [], "entity_refs": [], "semantic_query": "kyrka"}'
+            )
+        )
+
+        await decompose_query("Vad gäller?", provider=provider)
+
+        (record,) = recorder.records
+        assert record.context["source"] == "ai.decompose_query"
+        assert record.context["prompt"] == "QUERY_DECOMPOSITION"
+
+    async def test_extract_metadata_is_attributed(self, recorder) -> None:
+        provider = AsyncMock()
+        provider.generate = AsyncMock(return_value=_response("{}"))
+
+        await extract_metadata("beslut", provider=provider)
+
+        (record,) = recorder.records
+        assert record.context["source"] == "ai.extract_metadata"
+        assert record.context["prompt"] == "METADATA_EXTRACTION"
+
+    async def test_extract_entities_is_attributed(self, recorder) -> None:
+        provider = AsyncMock()
+        provider.generate = AsyncMock(
+            return_value=_response('{"entities": [], "references": []}')
+        )
+
+        await extract_entities("beslut", provider=provider)
+
+        (record,) = recorder.records
+        assert record.context["source"] == "ai.extract_entities"
+        assert record.context["prompt"] == "ENTITY_EXTRACTION"
+
+    async def test_summarize_document_is_attributed(self, recorder) -> None:
+        provider = AsyncMock()
+        provider.generate = AsyncMock(return_value=_response("sammanfattning"))
+
+        await summarize_document("beslut", provider=provider)
+
+        (record,) = recorder.records
+        assert record.context["source"] == "ai.summarize_document"
+        assert record.context["prompt"] == "DOCUMENT_SUMMARIZATION"
+
+    async def test_synthesize_answer_is_attributed(self, recorder) -> None:
+        async def _stream(*args, **kwargs):
+            for text in ["Sva", "r"]:
+                yield StreamChunk(text=text)
+
+        provider = AsyncMock()
+        provider.generate_stream = AsyncMock(side_effect=_stream)
+
+        request = SynthesizeRequest(question="Vad gäller?", chunks=[])
+        assert [token async for token in synthesize_answer(request, provider=provider)]
+
+        (record,) = recorder.records
+        assert record.context["source"] == "ai.synthesize_answer"
+        assert record.context["prompt"] == "ANSWER_SYNTHESIS"
+        assert record.response_text == "Svar"
+
+    async def test_outer_correlation_survives_into_the_record(self, recorder) -> None:
+        """The caller's interaction id must reach the innermost trace."""
+        from llm_core import trace_context
+
+        provider = AsyncMock()
+        provider.generate = AsyncMock(return_value=_response("{}"))
+
+        with trace_context(interaction_id="abc"):
+            await extract_metadata("beslut", provider=provider)
+
+        (record,) = recorder.records
+        assert record.context["interaction_id"] == "abc"
+        assert record.context["source"] == "ai.extract_metadata"
