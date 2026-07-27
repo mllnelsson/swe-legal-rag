@@ -1,11 +1,19 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from llm_core._types import LLMResponse, Message, Role, ToolCall, ToolDefinition
-from llm_core.providers._gemini import GeminiProvider
+from llm_core._types import (
+    LLMResponse,
+    Message,
+    Role,
+    ToolCall,
+    ToolDefinition,
+    Usage,
+)
+from llm_core.providers._gemini import GeminiProvider, _usage_from_gemini
 
 
 def _make_provider() -> GeminiProvider:
@@ -14,7 +22,17 @@ def _make_provider() -> GeminiProvider:
     provider._temperature = 0.0
     provider._max_tokens = None
     provider._client = MagicMock()
+    provider._provider_name = "gemini"
     return provider
+
+
+def _make_usage_metadata(**counts: int):
+    """Usage metadata carrying only the attributes named.
+
+    MagicMock would answer every getattr, so an attribute that is genuinely
+    absent has to be genuinely absent here.
+    """
+    return SimpleNamespace(**counts)
 
 
 class TestSplitSystem:
@@ -218,3 +236,118 @@ class TestFromGeminiResponse:
         result = provider._from_gemini_response(response)
         assert result.message.content == ""
         assert result.message.tool_calls == ()
+
+
+class TestUsageMapping:
+    def test_maps_all_token_counts(self) -> None:
+        usage = _usage_from_gemini(
+            _make_usage_metadata(
+                prompt_token_count=120,
+                candidates_token_count=30,
+                total_token_count=150,
+            )
+        )
+        assert usage == Usage(input_tokens=120, output_tokens=30, total_tokens=150)
+
+    def test_missing_metadata_maps_to_none(self) -> None:
+        assert _usage_from_gemini(None) is None
+
+    def test_thinking_tokens_count_as_output(self) -> None:
+        """Thinking bills at the output rate but is excluded from candidates."""
+        usage = _usage_from_gemini(
+            _make_usage_metadata(
+                prompt_token_count=120,
+                candidates_token_count=30,
+                thoughts_token_count=200,
+                total_token_count=350,
+            )
+        )
+        assert usage == Usage(input_tokens=120, output_tokens=230, total_tokens=350)
+
+    def test_thinking_tokens_alone_still_count_as_output(self) -> None:
+        usage = _usage_from_gemini(_make_usage_metadata(thoughts_token_count=200))
+        assert usage == Usage(input_tokens=None, output_tokens=200, total_tokens=None)
+
+    def test_absent_output_counters_stay_none_not_zero(self) -> None:
+        usage = _usage_from_gemini(_make_usage_metadata(prompt_token_count=120))
+        assert usage == Usage(input_tokens=120, output_tokens=None, total_tokens=None)
+
+
+class TestResponseAttribution:
+    def test_response_carries_usage_model_and_provider(self) -> None:
+        provider = _make_provider()
+        response = SimpleNamespace(
+            candidates=[],
+            usage_metadata=_make_usage_metadata(
+                prompt_token_count=10,
+                candidates_token_count=4,
+                total_token_count=14,
+            ),
+            model_version="gemini-2.5-flash-001",
+        )
+
+        result = provider._from_gemini_response(response)
+
+        assert result.usage == Usage(input_tokens=10, output_tokens=4, total_tokens=14)
+        assert result.model == "gemini-2.5-flash-001"
+        assert result.provider == "gemini"
+
+    def test_model_falls_back_to_the_configured_name(self) -> None:
+        provider = _make_provider()
+        response = SimpleNamespace(candidates=[])
+
+        result = provider._from_gemini_response(response)
+
+        assert result.model == "test-model"
+        assert result.usage is None
+
+
+class TestStreamUsage:
+    async def _collect(self, provider):
+        return [
+            chunk
+            async for chunk in await provider.generate_stream(
+                [Message(role=Role.user, content="hi")]
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_textless_usage_chunk_is_yielded(self) -> None:
+        provider = _make_provider()
+
+        async def _fake_stream():
+            yield SimpleNamespace(text="Hej", usage_metadata=None)
+            yield SimpleNamespace(
+                text=None,
+                usage_metadata=_make_usage_metadata(
+                    prompt_token_count=50,
+                    candidates_token_count=12,
+                    total_token_count=62,
+                ),
+                model_version="gemini-2.5-flash-001",
+            )
+
+        provider._client.aio.models.generate_content_stream = AsyncMock(
+            return_value=_fake_stream()
+        )
+
+        chunks = await self._collect(provider)
+
+        assert [c.text for c in chunks] == ["Hej", ""]
+        assert chunks[-1].usage == Usage(
+            input_tokens=50, output_tokens=12, total_tokens=62
+        )
+
+    @pytest.mark.asyncio
+    async def test_chunk_with_neither_text_nor_usage_is_skipped(self) -> None:
+        provider = _make_provider()
+
+        async def _fake_stream():
+            yield SimpleNamespace(text=None, usage_metadata=None)
+            yield SimpleNamespace(text="Hej", usage_metadata=None)
+
+        provider._client.aio.models.generate_content_stream = AsyncMock(
+            return_value=_fake_stream()
+        )
+
+        assert [c.text for c in await self._collect(provider)] == ["Hej"]

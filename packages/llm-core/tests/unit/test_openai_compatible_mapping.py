@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,17 +16,39 @@ from llm_core._types import (
     StreamChunk,
     ToolCall,
     ToolDefinition,
+    Usage,
 )
-from llm_core.providers._openai_compatible import OpenAiCompatibleProvider
+from llm_core.providers._openai_compatible import (
+    OpenAiCompatibleProvider,
+    _usage_from_openai,
+)
 
 
-def _make_provider() -> OpenAiCompatibleProvider:
+def _make_provider(stream_usage: bool = True) -> OpenAiCompatibleProvider:
     provider = object.__new__(OpenAiCompatibleProvider)
     provider._model = "test-model"
     provider._temperature = 0.0
     provider._max_tokens = None
     provider._client = MagicMock()
+    provider._provider_name = "berget"
+    provider._stream_usage = stream_usage
     return provider
+
+
+def _make_usage(prompt: int | None, completion: int | None, total: int | None):
+    """A usage block with only the SDK's real attributes.
+
+    MagicMock would answer every getattr, so the mapper must be handed
+    something that can actually be missing an attribute.
+    """
+    usage = SimpleNamespace()
+    if prompt is not None:
+        usage.prompt_tokens = prompt
+    if completion is not None:
+        usage.completion_tokens = completion
+    if total is not None:
+        usage.total_tokens = total
+    return usage
 
 
 class _RerankResult(BaseModel):
@@ -264,3 +287,131 @@ class TestGenerateStream:
         )
         with pytest.raises(ProviderError):
             await provider.generate_stream([Message(role=Role.user, content="hi")])
+
+
+class TestUsageMapping:
+    def test_maps_all_token_counts(self) -> None:
+        usage = _usage_from_openai(_make_usage(120, 30, 150))
+        assert usage == Usage(input_tokens=120, output_tokens=30, total_tokens=150)
+
+    def test_missing_usage_maps_to_none(self) -> None:
+        assert _usage_from_openai(None) is None
+
+    def test_absent_counters_stay_none_not_zero(self) -> None:
+        usage = _usage_from_openai(_make_usage(120, None, None))
+        assert usage == Usage(input_tokens=120, output_tokens=None, total_tokens=None)
+
+
+class TestResponseAttribution:
+    @pytest.mark.asyncio
+    async def test_generate_attaches_usage_model_and_provider(self) -> None:
+        provider = _make_provider()
+        message = SimpleNamespace(content="answer", tool_calls=None)
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=message)],
+            usage=_make_usage(10, 4, 14),
+            model="test-model-2026-07-01",
+        )
+        provider._client.chat.completions.create = AsyncMock(return_value=response)
+
+        result = await provider.generate([Message(role=Role.user, content="hi")])
+
+        assert result.usage == Usage(input_tokens=10, output_tokens=4, total_tokens=14)
+        assert result.model == "test-model-2026-07-01"
+        assert result.provider == "berget"
+
+    @pytest.mark.asyncio
+    async def test_model_falls_back_to_the_configured_name(self) -> None:
+        provider = _make_provider()
+        message = SimpleNamespace(content="answer", tool_calls=None)
+        response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        provider._client.chat.completions.create = AsyncMock(return_value=response)
+
+        result = await provider.generate([Message(role=Role.user, content="hi")])
+
+        assert result.model == "test-model"
+        assert result.usage is None
+
+
+class TestStreamUsage:
+    def _text_chunk(self, text: str):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content=text))]
+        )
+
+    def _usage_chunk(self):
+        return SimpleNamespace(
+            choices=[], usage=_make_usage(50, 12, 62), model="served"
+        )
+
+    async def _collect(self, provider):
+        return [
+            chunk
+            async for chunk in await provider.generate_stream(
+                [Message(role=Role.user, content="hi")]
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_final_usage_chunk_is_not_dropped(self) -> None:
+        provider = _make_provider()
+
+        async def _fake_stream():
+            yield self._text_chunk("Hej")
+            yield self._usage_chunk()
+
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=_fake_stream()
+        )
+
+        chunks = await self._collect(provider)
+
+        assert [c.text for c in chunks] == ["Hej", ""]
+        assert chunks[-1].usage == Usage(
+            input_tokens=50, output_tokens=12, total_tokens=62
+        )
+        assert chunks[-1].model == "served"
+
+    @pytest.mark.asyncio
+    async def test_choiceless_chunk_without_usage_is_still_skipped(self) -> None:
+        provider = _make_provider()
+
+        async def _fake_stream():
+            yield SimpleNamespace(choices=[])
+            yield self._text_chunk("Hej")
+
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=_fake_stream()
+        )
+
+        assert [c.text for c in await self._collect(provider)] == ["Hej"]
+
+    @pytest.mark.asyncio
+    async def test_stream_options_requested_when_enabled(self) -> None:
+        provider = _make_provider(stream_usage=True)
+
+        async def _fake_stream():
+            yield self._text_chunk("Hej")
+
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=_fake_stream()
+        )
+        await provider.generate_stream([Message(role=Role.user, content="hi")])
+
+        kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert kwargs["stream_options"] == {"include_usage": True}
+
+    @pytest.mark.asyncio
+    async def test_stream_options_omitted_when_disabled(self) -> None:
+        provider = _make_provider(stream_usage=False)
+
+        async def _fake_stream():
+            yield self._text_chunk("Hej")
+
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=_fake_stream()
+        )
+        await provider.generate_stream([Message(role=Role.user, content="hi")])
+
+        kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert kwargs["stream_options"] is omit
