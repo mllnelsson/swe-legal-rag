@@ -19,7 +19,6 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 |---|---|
 | `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
 | `_observability.py` | `FileTraceRecorder`, `LLMTraceConfig`, `install_file_tracing()` — writes LLM traces to file storage |
-| `_pricing.py` | The Decimal rate table and `estimate_cost_usd()` |
 | `services.py` | Five async service functions (below) |
 | `embedding.py` | `EmbeddingProvider` Protocol, `EmbeddingConfig`, `create_embedding_provider` factory |
 | `providers/berget_embeddings.py` | `BergetEmbeddingProvider` — Berget's hosted embedding API (default) |
@@ -139,7 +138,7 @@ See the [embedding hosting](/decisions/embedding-hosting.md) decision. The width
 constraint and its startup verification (`verify_embedding_dimension`) are covered in
 [embedding dimension](/decisions/embedding-dimension.md).
 
-## Trace recording (`ai/_observability.py`, `ai/_pricing.py`)
+## Trace recording (`ai/_observability.py`)
 
 `ai` supplies the concrete recorder behind llm-core's hook. It belongs here because it
 needs both llm-core's record type and `shared`'s storage layer, and `shared` must not
@@ -156,13 +155,13 @@ as whole objects with `store()` — so an object store, which cannot append, nev
 Batching is what makes that path viable: embedding runs once per chunk over the whole
 corpus, and an object per call would be hundreds of thousands of tiny billed writes.
 
-Cost is **not** written into the record. `_pricing.py` holds a `Decimal` table keyed by
-lowercased model-name prefix, matched longest-first against the model the provider
-returned, and it runs at read time from `scripts/llm_cost.py`. Cost adds no information
-a record does not already carry in `model` and `usage`, and pricing on read means adding
-a rate re-prices all history — which matters, because only the two verified Gemini rates
-are seeded and the Berget models this project runs by default are unpriced today.
-Unknown model means unpriced, never a guess and never a zero.
+Cost is **not** written into the record, and there is no rate table in this package.
+A record carries the served `model` and the provider's `usage`, which is the complete
+raw material — applying a price to it is an analysis question, answered against
+[LLM pricing](/reference/llm-pricing.md) when the traces are analyzed. Computing it here
+would only freeze a rate that may be wrong or, as today, missing: no Berget rate is
+published in this repo, so every record would carry a null that could never be filled
+in.
 
 Full record schema, correlation keys and the wiring invariant:
 [LLM Observability](/observability.md). Rate rules: [LLM pricing](/reference/llm-pricing.md).

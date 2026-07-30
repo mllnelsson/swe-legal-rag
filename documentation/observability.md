@@ -87,9 +87,9 @@ disappears — adding a field does not break a reader and does not bump it.
 | `usage` | Provider-reported token counts. With `model`, the raw material cost is derived from. |
 | `context` | The caller's correlation values, passed through verbatim. |
 
-**There is no cost field.** Cost is a pure function of `model` and `usage`, both
-recorded here, so it is applied at read time by `scripts/llm_cost.py` rather than
-frozen into the record. See [Costing a trace](#costing-a-trace).
+**There is no cost field, and no rate table in this repo.** `model` and `usage` are
+the complete raw material; applying a price to them is an analysis question. See
+[Costing a trace](#costing-a-trace).
 
 ### Reading the nulls
 
@@ -104,29 +104,30 @@ A reader that treats these as zero will silently under-report.
 
 ## Costing a trace
 
-```bash
-uv run python scripts/llm_cost.py                      # today, by model
-uv run python scripts/llm_cost.py --date 2026-07-30
-uv run python scripts/llm_cost.py --interaction <uuid> # one chat question
-```
+The pipeline records what a call *used*; it never prices it. A record carries the
+served `model` and the provider's `usage`, and cost is a pure function of those two —
+so pricing is done when the traces are analyzed, with whatever tool the analysis uses.
 
-Pricing at read time is a deliberate inversion of the obvious design. Cost adds no
-information a record does not already carry, and freezing it makes a rate that was
-wrong or absent at write time permanently wrong. Applying the table on read means
-**adding a rate re-prices the entire history** — which is the case that matters here,
-because the Berget-hosted models this project runs by default are unpriced today, so
-every record currently costs nothing that a frozen field could have captured.
+That is why there is no cost field, no rate table and no costing CLI in this repo.
+Computing it at write time would freeze a rate that may be wrong or, as today, missing
+entirely: the Berget-hosted models this project runs by default have no published rate
+here, so every record would carry a null that could never be filled in. Applied on
+read, obtaining a rate later prices **every trace already written**.
 
-The script sums in `Decimal` and reports unpriced models explicitly rather than as
-zero, so a total is always labelled a floor when some calls could not be priced. Rates
-live in `ai/_pricing.py`; see [LLM pricing](/reference/llm-pricing.md).
-
-On GCS, pipe the objects in rather than copying them down:
+Rates and the rules for applying them are in
+[LLM pricing](/reference/llm-pricing.md) — including that unpriced is not zero, and
+that `usage: null` means "not reported".
 
 ```bash
-gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl' \
-  | uv run python scripts/llm_cost.py --path -
+# tokens by model for one day, the input to any cost calculation
+cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+  | jq -s 'group_by(.model) | map({model: .[0].model, calls: length,
+           input: (map(.usage.input_tokens // 0) | add),
+           output: (map(.usage.output_tokens // 0) | add)})'
 ```
+
+On GCS, `gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl'` substitutes for
+`cat`.
 
 ### A successful record whose response will not parse
 
@@ -249,13 +250,7 @@ already-downloaded documents.
 ## What did this question cost
 
 Find the interaction id in the API log (`Chat interaction <uuid> for session
-…`), then price its records:
-
-```bash
-uv run python scripts/llm_cost.py --interaction <uuid>
-```
-
-To see the individual calls rather than a per-model total:
+…`), then pull every call it caused:
 
 ```bash
 cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
@@ -266,16 +261,16 @@ cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
 
 Expect at least four rows — `ai.decompose_query`, `ai.embed`,
 `ai.synthesize_answer`, plus `api.retriever.rerank` when reranking is on.
+Summing the token columns and applying the rates from
+[LLM pricing](/reference/llm-pricing.md) is what the question cost.
 
 The same shape answers the per-document ingestion question against
-`.context.document_id`, and `scripts/llm_cost.py` with no arguments answers the
-budget question for the whole day.
+`.context.document_id`, and dropping the `select` answers it for a whole day.
 
-> **Costs are unpriced on the default configuration.** Only the two verified
-> Gemini rates are seeded; the Berget-hosted models this project runs by default
-> have no published rate here, so the script reports them as `unpriced` and
-> labels the total a floor. Adding a rate prices them **retroactively**, across
-> every trace already written — see [LLM pricing](/reference/llm-pricing.md).
+> **On the default configuration the answer is in tokens, not currency.** No
+> Berget rate is published in this repo, and guessing one would be worse than
+> reporting nothing. Tokens are recorded either way, so a rate obtained later
+> prices these same records — see [LLM pricing](/reference/llm-pricing.md).
 
 ## Where the code lives
 
@@ -286,8 +281,7 @@ budget question for the whole day.
 | Token/model mapping per provider | `llm-core`, `providers/` |
 | Blob `store`/`retrieve` — no JSON, no append | `shared`, `storage/` |
 | Batching, storage layout, serialization, `install_file_tracing` | `ai`, `_observability.py` |
-| Rate table and cost estimation | `ai`, `_pricing.py` |
-| Read-time costing CLI | `scripts/llm_cost.py` |
+| Rates and how to apply them | [LLM pricing](/reference/llm-pricing.md) — reference data, no code |
 
 llm-core carries the hook but never a writer, which is what lets it stay free of
 any dependency on the rest of the project. See

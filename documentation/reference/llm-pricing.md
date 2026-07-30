@@ -1,23 +1,35 @@
 ---
 type: Reference
 title: LLM Pricing Prerequisites
-description: The pricing rules and verified rate table that back write-time LLM cost tracking (binding for ai/_pricing.py).
+description: Verified per-token rates and the rules for applying them when analyzing LLM trace records. Reference data, not implemented anywhere in the repo.
 tags: [observability, cost, pricing, llm]
 timestamp: 2026-07-27T00:00:00Z
 ---
 
 # LLM Pricing Prerequisites
 
-This concept specifies the **rate table and matching rules** that
-`ai/_pricing.py` implements. How records are captured and correlated is
+This concept holds the **verified rates and the rules for applying them**. It is
+reference data for whoever analyzes the traces — there is deliberately no rate
+table in the codebase. How records are captured and correlated is
 [LLM Observability](/observability.md).
 
-## Why cost tracking exists
+## Why there is no pricing code
 
 A core project goal is seeing how cheap the system can run ([PRD](/prd.md): <$5/month
-LLM budget). Every LLM call is written to a trace record in file storage holding the
-full prompt/response, token counts and latency. The record carries **no cost field** —
-cost is applied on read by `scripts/llm_cost.py` from the table below.
+LLM budget). Every LLM call is written to a trace record holding the full
+prompt/response, token counts and latency.
+
+The record carries the served `model` and the provider's `usage`. That is the complete
+raw material, and cost is a pure function of it. Pricing is therefore an **analysis
+question**, answered when the traces are analyzed, with whatever tool the analysis
+uses — not something the pipeline computes, stores, or ships a CLI for.
+
+Two things follow, and both are the point:
+
+- **Rates can be corrected.** A rate that was wrong, or absent, when a call happened
+  applies to that call anyway, because it is applied on read. Nothing needs rewriting.
+- **The repo carries no rate table to drift.** Rates change; a hard-coded table would
+  need re-verifying against this page forever. The verified numbers live here, dated.
 
 ## Source of truth
 
@@ -28,9 +40,8 @@ Prices come from Google's official Gemini API pricing page:
   calls).
 - Use the **text** input rate. The pipeline sends text only; audio/video rates,
   context-caching rates, and cache-storage rates are out of scope. If context caching or
-  batch calls are ever adopted, the pricing model here must be extended first.
-- Prices must be re-verified **whenever the configured Gemini model changes** and
-  whenever a builder touches `ai/_pricing.py`.
+  batch calls are ever adopted, the rules here must be extended first.
+- Re-verify **whenever the configured Gemini model changes**, and record the date below.
 
 These rates apply when `LLM_PROVIDER=gemini`.
 
@@ -38,8 +49,7 @@ These rates apply when `LLM_PROVIDER=gemini`.
 
 The default provider is Berget (see [local dev](/playbooks/local-dev.md)), and **no
 Berget rate is published in this repo**. Guessing one would be worse than reporting
-nothing, so the four models this project runs by default are deliberately absent from
-the table:
+nothing, so the four models this project runs by default have no rate here:
 
 | Model | Role |
 |---|---|
@@ -48,11 +58,9 @@ the table:
 | `zai-org/GLM-5.2` | `LLM_MODEL_CHAT` |
 | `intfloat/multilingual-e5-large` | Berget-hosted embeddings |
 
-**Consequence:** on the out-of-the-box configuration `scripts/llm_cost.py` reports every
-model as `unpriced` and labels the total a floor. Tokens are the ground truth and are
-always recorded, so adding a rate — a single line in `_PRICES` — prices those calls
-**retroactively, across every trace already written**. That is the whole reason cost is
-not frozen into the record.
+**Consequence:** on the out-of-the-box configuration, cost questions are answerable in
+*tokens* only. Tokens are always recorded, so obtaining a Berget rate later prices every
+trace already written.
 
 ## Verified prices (checked 2026-06-13)
 
@@ -60,87 +68,74 @@ not frozen into the record.
 |---|---|---|---|
 | `gemini-2.5-flash-lite` | 0.10 | 0.40 | Recommended Gemini default — same price point as the old 2.0-flash |
 | `gemini-2.5-flash` | 0.30 | 2.50 | |
-| `gemini-2.0-flash` | — | — | **Shut down 2026-06-01. Do not seed; calls fail.** |
-| `gemini-2.0-flash-lite` | — | — | **Shut down 2026-06-01. Do not seed; calls fail.** |
+| `gemini-2.0-flash` | — | — | **Shut down 2026-06-01. Calls fail.** |
+| `gemini-2.0-flash-lite` | — | — | **Shut down 2026-06-01. Calls fail.** |
 
 No context-length pricing tiers apply to these models (verified on the pricing page);
-the table assumes a flat per-token rate. If Google introduces tiered pricing for an
-adopted model, `estimate_cost_usd()` must be extended — do not approximate with the base
-rate silently.
+a flat per-token rate is correct. If Google introduces tiered pricing for an adopted
+model, the analysis must account for it rather than approximate with the base rate.
 
 > **When running on Gemini,** pick a live model — `gemini-2.5-flash-lite` matches the
 > price of the shut-down `gemini-2.0-flash`. The repo default provider is now Berget, so
 > the historical "default is the shut-down `gemini-2.0-flash`" hazard no longer applies
 > to the out-of-the-box configuration.
 
-## Table semantics (binding for `ai/_pricing.py`)
+## Rules for applying these rates
 
-- **Units:** USD per 1M tokens, input and output priced separately. Held as `Decimal`
-  and serialized as a JSON **string** — never a float, which does not round-trip a
-  Decimal and drifts when thousands are summed. Quantized to 8 decimal places, since a
-  single cheap call costs well under a cent.
-- **Keying:** model-name **prefix**, matched longest-prefix-first against the model
-  string the API *returns* (`response.model` / `response.model_version`), not the
-  configured name. The returned string can carry suffixes (e.g. `-001`, preview tags);
-  prefix matching absorbs them. Longest-prefix-first is required so
-  `gemini-2.5-flash-lite` wins over `gemini-2.5-flash` for lite models.
-- **Matching is case-insensitive.** Berget model ids are mixed-case, and matching them
-  case-sensitively would silently yield null costs forever.
-- **Unknown model ⇒ unpriced, never an error and never a guess.** Token counts are
-  always stored regardless — they are the ground truth from which cost is derived.
-  Unpriced is not zero, and a total containing unpriced calls is reported as a floor.
-- **Read-time pricing is intentional.** Cost is a pure function of the served `model`
-  and `usage`, both already in the record, so writing it in adds nothing and freezes a
-  rate that may have been wrong or absent. Applying the table on read means a corrected
-  or newly added rate reprices *all* history, not just future calls.
+- **Units:** USD per 1M tokens, input and output priced separately.
+- **Use a decimal type, never a float.** A float does not round-trip a decimal and
+  drifts once thousands of sub-cent calls are summed. Eight decimal places is a sensible
+  floor, since a single cheap call costs well under a cent.
+- **Match on model-name prefix, longest first,** against the model the API *returned*
+  (the record's `model`), not the configured name. The returned string carries suffixes
+  (`-001`, preview tags) that prefix matching absorbs, and longest-first is required so
+  `gemini-2.5-flash-lite` does not match the `gemini-2.5-flash` row.
+- **Match case-insensitively.** Berget model ids are mixed-case.
+- **Unknown model ⇒ unpriced, never a guess and never a zero.** A total containing
+  unpriced calls is a floor, not a total, and should be labelled as one.
+- **`usage: null` and `output_tokens: null` mean "not reported", not zero.** Embeddings
+  never report output tokens. Treating either as zero silently under-reports.
+- **Failed calls still cost.** `success: false` records carry usage and are billed;
+  exclude them only deliberately.
 
 ## Costing traces
 
-```bash
-uv run python scripts/llm_cost.py                      # today, per model
-uv run python scripts/llm_cost.py --date 2026-07-30
-uv run python scripts/llm_cost.py --interaction <uuid> # one chat question
-```
-
-The script sums in `Decimal` — floats do not round-trip a `Decimal` and drift when
-thousands are summed — and separates unpriced models from genuinely free ones.
-
-On GCS, pipe the objects in rather than copying them down:
+Records are plain JSONL — one object per flushed batch under
+`{LLM_TRACE_KEY_PREFIX}/{date}/`. Extract the two fields that matter and price them
+however the analysis is being done:
 
 ```bash
-gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl' \
-  | uv run python scripts/llm_cost.py --path -
+# every call's model and tokens, for one day
+cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+  | jq -r '[.context.source, .model, .usage.input_tokens,
+            .usage.output_tokens] | @tsv'
+
+# tokens by model, the input to any cost calculation
+cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+  | jq -s 'group_by(.model) | map({model: .[0].model, calls: length,
+           input: (map(.usage.input_tokens // 0) | add),
+           output: (map(.usage.output_tokens // 0) | add)})'
+
+# one chat question, end to end
+cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+  | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
+      | [.context.source, .model, .usage.input_tokens,
+         .usage.output_tokens] | @tsv'
 ```
+
+On GCS, `gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl'` substitutes for
+`cat`.
 
 ## Maintenance checklist
 
-When changing the model or touching pricing (do these in the same change):
+When changing the model (do these in the same change):
 
-1. Check the pricing page; record the date checked in the table above.
-2. Add/adjust the prefix entry in `ai/_pricing.py` (Decimal, per 1M tokens, standard
-   text rates, lowercase prefix key).
-3. Confirm the model has no context-length pricing tiers; if it does, extend
-   `estimate_cost_usd()` first.
-4. Update the model defaults in `.env.example` and the [local dev](/playbooks/local-dev.md)
-   env listing if the default changes.
-5. After the first live call, run `uv run python scripts/llm_cost.py` and confirm the
-   model is no longer reported as `unpriced` and the figure is plausible against the
-   provider's usage dashboard.
+1. Check the pricing page; add the rate and the date checked to the table above.
+2. Confirm the model has no context-length pricing tiers; note it here if it does.
+3. Update the model defaults in `.env.example` and the
+   [local dev](/playbooks/local-dev.md) env listing if the default changes.
+4. After the first live call, confirm the record's `model` and `usage` are non-null and
+   that tokens are plausible against the provider's usage dashboard.
 
-## Follow-up queries (headline)
-
-`scripts/llm_cost.py` answers the budget and per-model questions directly. For anything
-it does not cover, the records are plain JSONL:
-
-```bash
-# token spend by source, for one day
-cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
-  | jq -r '[.context.source, .model, .usage.total_tokens] | @tsv'
-
-# the calls that failed but were still billed
-cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
-  | jq -r 'select(.success == false) | [.context.source, .error.type] | @tsv'
-```
-
-Per-interaction and per-document cost queries are in
+Per-interaction and per-document correlation is in
 [LLM Observability](/observability.md).

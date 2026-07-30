@@ -120,10 +120,12 @@ def serialize_record(record: LLMCallRecord) -> dict[str, Any]:
     Prompts and responses are stored whole — never truncated, never redacted.
     Reading back exactly what was sent is the entire point.
 
-    Cost is deliberately absent. It is a pure function of `model` and `usage`,
-    both recorded here, so pricing it at read time costs nothing and lets a rate
-    that was wrong or missing be corrected across all history. Freezing a number
-    here would bake in today's gaps permanently. See `ai/_pricing.py`.
+    Cost is deliberately absent, and no rate table lives in this repo. `model`
+    and `usage` are the complete raw material; applying a price to them is an
+    analysis question, answered against
+    [LLM pricing](/reference/llm-pricing.md) with whatever tool the analysis
+    uses. Writing a number in would only freeze a rate that may be wrong or
+    missing, for no gain.
     """
     return {
         "schema_version": TRACE_SCHEMA_VERSION,

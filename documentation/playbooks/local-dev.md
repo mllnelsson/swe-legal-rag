@@ -100,7 +100,7 @@ EMBEDDING_DIMENSION=1024
 
 # LLM trace capture (see /observability.md). On by default; traces land under
 # {LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{date}/*.jsonl, one object per
-# flushed batch. Cost is applied on read: scripts/llm_cost.py.
+# flushed batch. Records carry model + tokens; cost is an analysis step.
 LLM_TRACE_ENABLED=true
 LLM_TRACE_KEY_PREFIX=llm-traces
 LLM_TRACE_QUEUE_SIZE=1000

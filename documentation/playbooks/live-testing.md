@@ -268,22 +268,19 @@ Expect a **small number** of `.jsonl` objects — records are batched, so this i
 near one file per call — at least one record per LLM-using worker that fired, a non-null
 `model` and `usage.total_tokens` on each, and `success` true.
 
-Then price them:
-
-```bash
-uv run python scripts/llm_cost.py
-```
-
-> Every model reports as **`unpriced`** on the default Berget configuration — no rate
-> for those is published in this repo (see [LLM pricing](/reference/llm-pricing.md)).
-> Unpriced is not zero, and the script labels the total a floor. Adding a rate later
-> prices these same records retroactively.
+> **Cost is answered in tokens, not currency.** No rate table lives in this repo and no
+> Berget rate is published here (see [LLM pricing](/reference/llm-pricing.md)). The
+> records carry `model` and `usage`; pricing them is an analysis step, and a rate
+> obtained later applies to these same records.
 
 To cost a single chat question, start the API, send one message, and note the
 `Chat interaction <uuid> for session …` line in the API log:
 
 ```bash
-uv run python scripts/llm_cost.py --interaction <uuid>
+cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+  | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
+      | [.context.source, .model, .usage.input_tokens,
+         .usage.output_tokens] | @tsv'
 ```
 
 Expect at least four calls — `ai.decompose_query`, `ai.embed`, `ai.synthesize_answer`,
