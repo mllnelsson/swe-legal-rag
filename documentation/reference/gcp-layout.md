@@ -24,7 +24,7 @@ a code change:
 
 | GCP Service | Local Replacement | Notes |
 |---|---|---|
-| Cloud SQL (pgvector) | Docker Postgres + pgvector | `ankane/pgvector` image, identical SQL interface |
+| Cloud SQL (pgvector) | Postgres 17 + pgvector | Identical SQL interface; `ankane/pgvector` via Compose on Linux, native Homebrew on macOS |
 | Pub/Sub | In-process queue or Redis Streams | A synchronous in-process queue works for dev; Redis to test async behavior |
 | GCS | Local filesystem or MinIO | A local directory; MinIO for S3-compatible API parity |
 | Cloud Run | Local Python process | Run the workers directly — no containerization during dev |

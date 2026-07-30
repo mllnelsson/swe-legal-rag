@@ -32,8 +32,10 @@ class Chunk(Base):
     )
     # The "Bilaga A" label, when section is APPENDIX.
     appendix_label: Mapped[str | None] = mapped_column(VARCHAR, nullable=True)
-    embedding: Mapped[list[float]] = mapped_column(
-        Vector(EMBEDDING_DIMENSION), nullable=False
+    # Null until the embed worker runs. Chunking and embedding are separate pipeline
+    # steps, so a chunk exists before its vector does — see /pipeline/embed.md.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIMENSION), nullable=True
     )
     tsv: Mapped[Any] = mapped_column(
         TSVECTOR,

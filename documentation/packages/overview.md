@@ -33,9 +33,9 @@ alembic.ini          — Alembic config (sqlalchemy.url via DATABASE_URL in env.
 scripts/
   run_pipeline.py    — crawl→embed in one process; the entrypoint the pipeline container runs
   run_step.py        — one step, one document, no cascade; the hand-testing runner
-Dockerfile           — local-dev image for the whole backend (python:3.12-slim + uv sync)
-docker-compose.yml   — Postgres+pgvector default; pipeline+api under "app", MinIO+Redis under "full"
-docker/init.sql      — enables the pgvector extension on first DB creation
+Dockerfile           — optional container image for the whole backend (python:3.12-slim + uv sync)
+docker-compose.yml   — optional; Postgres+pgvector default, pipeline+api under "app", MinIO+Redis under "full"
+docker/init.sql      — enables the pgvector extension; redundant, migration 001 does it too
 ```
 
 `scripts/run_pipeline.py` exists because `QUEUE_BACKEND=sync` dispatches into a

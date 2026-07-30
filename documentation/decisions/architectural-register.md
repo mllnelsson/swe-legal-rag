@@ -48,6 +48,21 @@ below are **Accepted**.
 - **Interface abstraction for all infra dependencies** — storage, queue, LLM, embedding
   are swappable via config for local-dev parity. See
   [GCP layout](/reference/gcp-layout.md).
+- **No LLM proxy container** — containerizing `ai`/`llm-core` as a service was considered
+  as a way to give every worker its own container without each owning a private trace
+  file. It solves neither half. What keeps the workers in one process is the `sync`
+  queue, whose broker is a module-level singleton dispatching in-process — a proxy does
+  nothing for that. And traces were never the obstacle: one storage key plus an exclusive
+  `flock` per append already lets many processes share one stream. Against that, a proxy
+  adds a hop on the <5 s streaming chat path and diverges from Cloud Run, where each
+  service calls the provider directly. See [observability](/observability.md).
+- **Local Postgres is platform-dependent, `DATABASE_URL` is not** — Compose on Linux,
+  Homebrew `postgresql@17` on macOS, where Docker Desktop would only add a VM. Creating a
+  `postgres` superuser role on the native install makes one connection string work
+  everywhere, so no code, config or test fixture knows which platform it is on. Nothing
+  else in the stack ever required Docker: storage is the filesystem, the queue is
+  in-process, MinIO and Redis were already optional. See
+  [local dev](/playbooks/local-dev.md).
 
 ## Data layer and libraries
 

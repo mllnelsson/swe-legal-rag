@@ -77,7 +77,7 @@ Pub/Sub — rows are durable before any async consumer acts on a message.
 
 ## Integration test pattern
 
-Integration tests use a real async `Session` on Docker Postgres, real repo namespaces and
+Integration tests use a real async `Session` on a local Postgres, real repo namespaces and
 storage (conftest fixtures expose the repo *modules* so they inject exactly as production
 does; `shared.testing.bind_repo(module, session)` session-binds a module for direct-call
 tests), mocked HTTP only, a `SyncQueueBroker` with a recording handler (captures
