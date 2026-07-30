@@ -159,7 +159,6 @@ async def _rerank(
             result = await generate_structured(
                 messages, _RerankResult, provider=provider
             )
-        assert isinstance(result, _RerankResult)
         valid = [i for i in result.ranked_indices if 0 <= i < len(chunks)]
         missing = [i for i in range(len(chunks)) if i not in set(valid)]
         return [chunks[i] for i in valid + missing]

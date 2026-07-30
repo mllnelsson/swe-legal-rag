@@ -12,13 +12,10 @@ from llm_core._exceptions import MaxIterationsError, ToolExecutionError
 from llm_core._protocol import LLMProvider
 from llm_core._tracing import (
     LLMOperation,
-    finish_trace,
-    start_trace,
     trace_chunk,
     trace_context,
-    trace_failure,
     trace_response,
-    trace_stream_completed,
+    traced_call,
 )
 from llm_core._types import LLMResponse, Message, Role, ToolCall, ToolDefinition
 
@@ -54,18 +51,12 @@ async def _generate_traced(
     response_schema: type[BaseModel] | None = None,
 ) -> LLMResponse:
     """One provider round-trip, traced whether it succeeds or fails."""
-    trace = start_trace(operation, messages)
-    try:
+    with traced_call(operation, messages) as trace:
         response = await p.generate(
             messages, tools=tools, response_schema=response_schema
         )
-    except BaseException as exc:
-        trace_failure(trace, exc)
-        finish_trace(trace)
-        raise
-    trace_response(trace, response)
-    finish_trace(trace)
-    return response
+        trace_response(trace, response)
+        return response
 
 
 async def generate(
@@ -78,13 +69,18 @@ async def generate(
     return await _generate_traced(p, messages, LLMOperation.generate)
 
 
-async def generate_structured(
+async def generate_structured[T: BaseModel](
     messages: list[Message],
-    response_model: type[BaseModel],
+    response_model: type[T],
     *,
     provider: LLMProvider | None = None,
     config: LLMConfig | None = None,
-) -> BaseModel:
+) -> T:
+    """Generate and parse into `response_model`, whose type flows to the caller.
+
+    Generic so callers get the model they asked for rather than a bare
+    `BaseModel` they must re-narrow with a cast or an assert.
+    """
     p = _resolve_provider(provider, config)
     response = await _generate_traced(
         p,
@@ -106,8 +102,7 @@ async def generate_stream(
     config: LLMConfig | None = None,
 ) -> AsyncGenerator[str, None]:
     p = _resolve_provider(provider, config)
-    trace = start_trace(LLMOperation.generate_stream, messages)
-    try:
+    with traced_call(LLMOperation.generate_stream, messages) as trace:
         stream = await p.generate_stream(messages)
         async for chunk in stream:
             trace_chunk(trace, chunk)
@@ -115,19 +110,6 @@ async def generate_stream(
             # as an empty token to the consumer.
             if chunk.text:
                 yield chunk.text
-    except BaseException as exc:
-        # BaseException, not Exception: a consumer that abandons the stream
-        # closes the generator, which arrives here as GeneratorExit. That case
-        # is worth recording precisely because the answer was paid for and
-        # never delivered.
-        trace_failure(trace, exc)
-        raise
-    else:
-        trace_stream_completed(trace)
-    finally:
-        # Recording synchronously matters here — under GeneratorExit, awaiting
-        # anything that suspends would raise RuntimeError instead.
-        finish_trace(trace)
 
 
 async def tool_loop(

@@ -16,8 +16,8 @@ This concept specifies the **rate table and matching rules** that
 
 A core project goal is seeing how cheap the system can run ([PRD](/prd.md): <$5/month
 LLM budget). Every LLM call is written to a trace record in file storage holding the
-full prompt/response, token counts, latency, and a write-time `estimated_cost_usd`
-computed from the table below.
+full prompt/response, token counts and latency. The record carries **no cost field** —
+cost is applied on read by `scripts/llm_cost.py` from the table below.
 
 ## Source of truth
 
@@ -48,10 +48,11 @@ the table:
 | `zai-org/GLM-5.2` | `LLM_MODEL_CHAT` |
 | `intfloat/multilingual-e5-large` | Berget-hosted embeddings |
 
-**Consequence:** on the out-of-the-box configuration every record carries
-`estimated_cost_usd: null`, and cost questions are answerable in *tokens* only. Tokens
-are the ground truth, so adding a rate later makes historical cost recomputable — see
-[recomputing](#recomputing-cost-from-tokens). Adding one is a single line in `_PRICES`.
+**Consequence:** on the out-of-the-box configuration `scripts/llm_cost.py` reports every
+model as `unpriced` and labels the total a floor. Tokens are the ground truth and are
+always recorded, so adding a rate — a single line in `_PRICES` — prices those calls
+**retroactively, across every trace already written**. That is the whole reason cost is
+not frozen into the record.
 
 ## Verified prices (checked 2026-06-13)
 
@@ -85,24 +86,30 @@ rate silently.
   `gemini-2.5-flash-lite` wins over `gemini-2.5-flash` for lite models.
 - **Matching is case-insensitive.** Berget model ids are mixed-case, and matching them
   case-sensitively would silently yield null costs forever.
-- **Unknown model ⇒ `null` cost, never an error and never a guess.** Token counts are
-  always stored regardless — they are the ground truth from which cost is recomputed.
-  A null is not a zero; `"0.00000000"` means genuinely free.
-- **Write-time freeze is intentional:** `estimated_cost_usd` records the price in effect
-  when the call happened. Later price changes update the table for *future* calls only;
-  existing records are not rewritten.
+- **Unknown model ⇒ unpriced, never an error and never a guess.** Token counts are
+  always stored regardless — they are the ground truth from which cost is derived.
+  Unpriced is not zero, and a total containing unpriced calls is reported as a floor.
+- **Read-time pricing is intentional.** Cost is a pure function of the served `model`
+  and `usage`, both already in the record, so writing it in adds nothing and freezes a
+  rate that may have been wrong or absent. Applying the table on read means a corrected
+  or newly added rate reprices *all* history, not just future calls.
 
-## Recomputing cost from tokens
-
-If a rate was wrong or missing, recompute from the stored tokens rather than editing
-history blindly. Records are append-only, so recomputation happens at read time:
+## Costing traces
 
 ```bash
-# spend for a model that had no rate at write time (flash-lite: 0.10 in / 0.40 out)
-jq -s 'map(select(.model | startswith("gemini-2.5-flash-lite")))
-       | map((.usage.input_tokens // 0) * 0.10 + (.usage.output_tokens // 0) * 0.40)
-       | add / 1000000' \
-  data/pdfs/llm-traces/2026-07-27.jsonl
+uv run python scripts/llm_cost.py                      # today, per model
+uv run python scripts/llm_cost.py --date 2026-07-30
+uv run python scripts/llm_cost.py --interaction <uuid> # one chat question
+```
+
+The script sums in `Decimal` — floats do not round-trip a `Decimal` and drift when
+thousands are summed — and separates unpriced models from genuinely free ones.
+
+On GCS, pipe the objects in rather than copying them down:
+
+```bash
+gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl' \
+  | uv run python scripts/llm_cost.py --path -
 ```
 
 ## Maintenance checklist
@@ -116,21 +123,23 @@ When changing the model or touching pricing (do these in the same change):
    `estimate_cost_usd()` first.
 4. Update the model defaults in `.env.example` and the [local dev](/playbooks/local-dev.md)
    env listing if the default changes.
-5. After the first live call, sanity-check one trace record: `estimated_cost_usd`
-   non-null and plausible against the provider's usage dashboard.
+5. After the first live call, run `uv run python scripts/llm_cost.py` and confirm the
+   model is no longer reported as `unpriced` and the figure is plausible against the
+   provider's usage dashboard.
 
 ## Follow-up queries (headline)
 
-```bash
-# LLM spend for one day (the budget question)
-jq -s 'map(.estimated_cost_usd | select(. != null) | tonumber) | add' \
-  data/pdfs/llm-traces/2026-07-27.jsonl
+`scripts/llm_cost.py` answers the budget and per-model questions directly. For anything
+it does not cover, the records are plain JSONL:
 
-# spend by model
-jq -s 'group_by(.model) | map({model: .[0].model, calls: length,
-        tokens: (map(.usage.total_tokens // 0) | add),
-        usd: (map(.estimated_cost_usd | select(. != null) | tonumber) | add)})' \
-  data/pdfs/llm-traces/2026-07-27.jsonl
+```bash
+# token spend by source, for one day
+cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+  | jq -r '[.context.source, .model, .usage.total_tokens] | @tsv'
+
+# the calls that failed but were still billed
+cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+  | jq -r 'select(.success == false) | [.context.source, .error.type] | @tsv'
 ```
 
 Per-interaction and per-document cost queries are in

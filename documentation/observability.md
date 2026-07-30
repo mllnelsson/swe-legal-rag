@@ -71,7 +71,6 @@ disappears — adding a field does not break a reader and does not bump it.
   "response_text": "{\"filters\": …}",
   "response_tool_calls": [],
   "usage": {"input_tokens": 1234, "output_tokens": 88, "total_tokens": 1322},
-  "estimated_cost_usd": "0.00031250",
   "context": {"source": "ai.decompose_query", "prompt": "QUERY_DECOMPOSITION",
               "interaction_id": "…", "session_id": "…"}
 }
@@ -85,8 +84,12 @@ disappears — adding a field does not break a reader and does not bump it.
 | `model` | The model the provider **says it served**, not the one configured. |
 | `error` | `null` when `success`, otherwise `{"type", "message"}`. |
 | `messages` | The full prompt, every field of every message, never truncated. |
-| `estimated_cost_usd` | A **string** or `null`, never a float. |
+| `usage` | Provider-reported token counts. With `model`, the raw material cost is derived from. |
 | `context` | The caller's correlation values, passed through verbatim. |
+
+**There is no cost field.** Cost is a pure function of `model` and `usage`, both
+recorded here, so it is applied at read time by `scripts/llm_cost.py` rather than
+frozen into the record. See [Costing a trace](#costing-a-trace).
 
 ### Reading the nulls
 
@@ -96,12 +99,34 @@ A reader that treats these as zero will silently under-report.
 |---|---|
 | `usage: null` | The provider reported no token counts. **Not zero.** |
 | `usage.output_tokens: null` | That counter was absent. Always so for embeddings. |
-| `estimated_cost_usd: null` | Unpriced model or missing usage. **Never `0` as a stand-in** — `"0.00000000"` means genuinely free. |
 | `response_text: null` | Nothing was produced. `""` means it succeeded and produced empty text. |
-| `model: null` | Neither the response nor the config named one; implies a null cost. |
+| `model: null` | Neither the response nor the config named one, so the call cannot be priced. |
 
-Cost is a string because floats do not round-trip a `Decimal` and drift when
-thousands are summed. Reparse with `Decimal(record["estimated_cost_usd"])`.
+## Costing a trace
+
+```bash
+uv run python scripts/llm_cost.py                      # today, by model
+uv run python scripts/llm_cost.py --date 2026-07-30
+uv run python scripts/llm_cost.py --interaction <uuid> # one chat question
+```
+
+Pricing at read time is a deliberate inversion of the obvious design. Cost adds no
+information a record does not already carry, and freezing it makes a rate that was
+wrong or absent at write time permanently wrong. Applying the table on read means
+**adding a rate re-prices the entire history** — which is the case that matters here,
+because the Berget-hosted models this project runs by default are unpriced today, so
+every record currently costs nothing that a frozen field could have captured.
+
+The script sums in `Decimal` and reports unpriced models explicitly rather than as
+zero, so a total is always labelled a floor when some calls could not be priced. Rates
+live in `ai/_pricing.py`; see [LLM pricing](/reference/llm-pricing.md).
+
+On GCS, pipe the objects in rather than copying them down:
+
+```bash
+gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl' \
+  | uv run python scripts/llm_cost.py --path -
+```
 
 ### A successful record whose response will not parse
 
@@ -113,26 +138,37 @@ fix the prompt.
 
 ## Storage layout
 
-Streams roll over daily, keyed `{LLM_TRACE_KEY_PREFIX}/{YYYY-MM-DD}` in UTC.
-The two backends lay a stream out differently because object stores cannot
-append, and the difference is hidden behind `add_json`/`iter_json`:
+Streams roll over daily. One flushed batch is one object, and the layout is
+**identical on both backends**:
 
-| Backend | Layout |
+```
+{LLM_TRACE_KEY_PREFIX}/{YYYY-MM-DD}/{YYYYMMDDTHHMMSSffffff}Z-{8 hex}.jsonl
+```
+
+| Backend | A day is |
 |---|---|
-| Local | One file per day: `{LOCAL_STORAGE_PATH}/llm-traces/2026-07-27.jsonl`, one record per line |
-| GCS | One object per record: `gs://{bucket}/llm-traces/2026-07-27/20260727T101533123456Z-3f9a1c2d.json` |
+| Local | `{LOCAL_STORAGE_PATH}/llm-traces/2026-07-30/` — a directory of `.jsonl` files |
+| GCS | `gs://{bucket}/llm-traces/2026-07-30/` — the same names, same bytes |
 
-**Records within a stream are unordered.** Key order approximates write order on
-GCS and completion order locally, and neither is a total order. Anything that
-cares sorts on `started_at`, not on the key.
+The recorder owns this layout, not the storage backend. It batches records and
+writes each batch as a whole object through the plain `store()` primitive, which
+is what lets `StorageBackend` stay a five-method blob store with no append, no
+JSON and no per-backend divergence — see [shared](/packages/shared.md).
 
-Local appends take an exclusive `flock`. `O_APPEND` is atomic only below
-`PIPE_BUF` (4096 bytes) and a record carrying a full decision runs to tens of
-kilobytes, so concurrent workers would otherwise interleave partial lines.
+**Batching is what makes the object-store path viable.** Embedding runs once per
+chunk over the whole corpus; one object per call would be hundreds of thousands
+of tiny billed writes and a `list_blobs` of the same size to read a single day.
+
+A batch closes at `LLM_TRACE_BATCH_SIZE` records or `LLM_TRACE_BATCH_SECONDS`,
+whichever comes first, and always on `flush()` and shutdown. A batch that
+straddles midnight is split so a record never lands under the wrong day.
+
+**Records are unordered.** Key order approximates flush order, not call order,
+and it never was a total order. Anything that cares sorts on `started_at`.
 
 Prompts are never truncated, so the streams are large: a full backfill of ~1073
 documents at roughly three calls each lands in the 100–300 MB range. The daily
-rollover is what keeps any one file openable.
+rollover keeps any one directory worth listing.
 
 ## Correlation — the wiring invariant
 
@@ -175,9 +211,18 @@ object-store round-trip would surface directly as first-token latency.
 Three consequences worth knowing:
 
 - **A bounded loss window.** On `SIGKILL` or a hard crash, whatever is still
-  queued is lost. Acceptable for cost telemetry, which is recomputable from
-  tokens and cross-checkable against the provider's dashboard. `flush()` covers
-  the cases that need certainty; an `atexit` hook flushes on clean shutdown.
+  queued *or sitting in an open batch* is lost — batching widens the window to
+  `LLM_TRACE_BATCH_SECONDS`. Acceptable for cost telemetry, which is
+  cross-checkable against the provider's dashboard. `flush()` covers the cases
+  that need certainty, and an `atexit` hook flushes on clean shutdown.
+- **`flush()` asks, it does not merely wait.** It puts a sentinel on the queue so
+  the writer closes the open batch immediately. Without it a partial batch would
+  sit until `LLM_TRACE_BATCH_SECONDS` elapsed, delaying every shutdown for no
+  reason. It waits on a written-record count rather than `Queue.join()`, because
+  with batching a record leaves the queue well before it reaches storage.
+- **A failed write still releases `flush()`.** The unwritten count drops whether
+  the write succeeded or not, so a permanently failing backend cannot leave a
+  process hanging at exit.
 - **A full queue drops rather than blocks.** Shedding records beats stalling an
   LLM call behind a slow writer. Drops are logged.
 - **Install never fails.** A backend that cannot be built leaves no recorder at
@@ -192,6 +237,8 @@ Three consequences worth knowing:
 | `LLM_TRACE_KEY_PREFIX` | `llm-traces` | Storage key prefix for the streams. |
 | `LLM_TRACE_QUEUE_SIZE` | `1000` | Records buffered before dropping. |
 | `LLM_TRACE_FLUSH_TIMEOUT` | `5.0` | Seconds `flush()` and shutdown will wait. |
+| `LLM_TRACE_BATCH_SIZE` | `100` | Records per object. Raising it means fewer, larger writes. |
+| `LLM_TRACE_BATCH_SECONDS` | `5.0` | How long a partial batch waits before being written. Also the loss window on a hard kill. |
 | `LLM_STREAM_USAGE` | `true` | Ask the provider for token usage on streams. Switchable because a host that rejects the parameter fails the whole call, and streaming is the user-facing chat path. |
 
 With `STORAGE_BACKEND=local` and the repo's `LOCAL_STORAGE_PATH=./data/pdfs`,
@@ -202,41 +249,45 @@ already-downloaded documents.
 ## What did this question cost
 
 Find the interaction id in the API log (`Chat interaction <uuid> for session
-…`), then sum its records:
+…`), then price its records:
 
 ```bash
-jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
-  | [.context.source, .usage.input_tokens, .usage.output_tokens,
-     .estimated_cost_usd] | @tsv' \
-  data/pdfs/llm-traces/$(date -u +%F).jsonl
+uv run python scripts/llm_cost.py --interaction <uuid>
+```
+
+To see the individual calls rather than a per-model total:
+
+```bash
+cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+  | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
+      | [.context.source, .model, .usage.input_tokens,
+         .usage.output_tokens] | @tsv'
 ```
 
 Expect at least four rows — `ai.decompose_query`, `ai.embed`,
 `ai.synthesize_answer`, plus `api.retriever.rerank` when reranking is on.
 
 The same shape answers the per-document ingestion question against
-`.context.document_id`, and the budget question across a whole day:
+`.context.document_id`, and `scripts/llm_cost.py` with no arguments answers the
+budget question for the whole day.
 
-```bash
-jq -s 'map(.estimated_cost_usd | select(. != null) | tonumber) | add' \
-  data/pdfs/llm-traces/$(date -u +%F).jsonl
-```
-
-> **Costs are null on the default configuration.** Only the two verified Gemini
-> rates are seeded; the Berget-hosted models this project runs by default are
-> unpriced, so their records carry tokens and a null cost. Sum the token columns
-> until rates are added — see [LLM pricing](/reference/llm-pricing.md).
+> **Costs are unpriced on the default configuration.** Only the two verified
+> Gemini rates are seeded; the Berget-hosted models this project runs by default
+> have no published rate here, so the script reports them as `unpriced` and
+> labels the total a floor. Adding a rate prices them **retroactively**, across
+> every trace already written — see [LLM pricing](/reference/llm-pricing.md).
 
 ## Where the code lives
 
 | Concern | Location |
 |---|---|
-| Hook: record type, recorder Protocol, `trace_context` | `llm-core`, `_tracing.py` |
+| Hook: record type, recorder Protocol, `trace_context`, `traced_call` | `llm-core`, `_tracing.py` |
 | Instrumentation of the four entry points | `llm-core`, `_service.py` |
 | Token/model mapping per provider | `llm-core`, `providers/` |
-| Append-style JSON streams | `shared`, `storage/` |
-| The file recorder and `install_file_tracing` | `ai`, `_observability.py` |
+| Blob `store`/`retrieve` — no JSON, no append | `shared`, `storage/` |
+| Batching, storage layout, serialization, `install_file_tracing` | `ai`, `_observability.py` |
 | Rate table and cost estimation | `ai`, `_pricing.py` |
+| Read-time costing CLI | `scripts/llm_cost.py` |
 
 llm-core carries the hook but never a writer, which is what lets it stay free of
 any dependency on the rest of the project. See

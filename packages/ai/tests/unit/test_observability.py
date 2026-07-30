@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,6 +29,10 @@ from ai._observability import (
 
 RFC3339_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 
+BATCH_KEY = re.compile(
+    r"^llm-traces/\d{4}-\d{2}-\d{2}/\d{8}T\d{9,}Z-[0-9a-f]{8}\.jsonl$"
+)
+
 EXPECTED_FIELDS = {
     "schema_version",
     "id",
@@ -42,7 +47,6 @@ EXPECTED_FIELDS = {
     "response_text",
     "response_tool_calls",
     "usage",
-    "estimated_cost_usd",
     "context",
 }
 
@@ -50,24 +54,28 @@ EXPECTED_FIELDS = {
 class FakeStorage:
     """In-memory StorageBackend.
 
-    Only the JSON stream methods are exercised; the blob methods exist to
-    satisfy the Protocol and fail loudly if anything reaches for them.
+    Only `store` is exercised; the rest exist to satisfy the Protocol and fail
+    loudly if anything reaches for them.
     """
 
     def __init__(self) -> None:
-        self.streams: dict[str, list[Mapping[str, Any]]] = {}
-
-    def add_json(self, key: str, record: Mapping[str, Any]) -> str:
-        self.streams.setdefault(key, []).append(record)
-        return f"memory://{key}"
-
-    def iter_json(self, prefix: str) -> Iterator[Mapping[str, Any]]:
-        for key in sorted(self.streams):
-            if key.startswith(prefix):
-                yield from self.streams[key]
+        self.objects: dict[str, bytes] = {}
 
     def store(self, key: str, data: bytes) -> str:
-        raise NotImplementedError
+        self.objects[key] = data
+        return f"memory://{key}"
+
+    def records(self) -> list[dict[str, Any]]:
+        """Every record written, across every object, in key order."""
+        return [
+            json.loads(line)
+            for key in sorted(self.objects)
+            for line in self.objects[key].splitlines()
+            if line.strip()
+        ]
+
+    def keys_for_day(self, day: str) -> list[str]:
+        return sorted(k for k in self.objects if k.startswith(f"llm-traces/{day}/"))
 
     def retrieve(self, key: str) -> bytes:
         raise NotImplementedError
@@ -83,7 +91,7 @@ class FakeStorage:
 
 
 class ExplodingStorage(FakeStorage):
-    def add_json(self, key: str, record: Mapping[str, Any]) -> str:
+    def store(self, key: str, data: bytes) -> str:
         raise RuntimeError("storage is down")
 
 
@@ -127,6 +135,17 @@ class TestSerializeRecord:
     def test_top_level_fields_are_exactly_the_contract(self) -> None:
         assert set(serialize_record(_make_record())) == EXPECTED_FIELDS
 
+    def test_cost_is_not_frozen_into_the_record(self) -> None:
+        """Cost is priced at read time from `model` and `usage`."""
+        serialized = serialize_record(_make_record())
+        assert "estimated_cost_usd" not in serialized
+        assert serialized["model"] == "gemini-2.5-flash-lite"
+        assert serialized["usage"] == {
+            "input_tokens": 1200,
+            "output_tokens": 350,
+            "total_tokens": 1550,
+        }
+
     def test_schema_version_is_stamped(self) -> None:
         assert serialize_record(_make_record())["schema_version"] == (
             TRACE_SCHEMA_VERSION
@@ -161,20 +180,8 @@ class TestSerializeRecord:
             {"id": "tc-1", "name": "search", "arguments": {"q": "kyrka"}}
         ]
 
-    def test_cost_is_a_string_never_a_float(self) -> None:
-        """Floats do not round-trip Decimal and drift when summed."""
-        serialized = serialize_record(_make_record())
-        assert serialized["estimated_cost_usd"] == "0.00026000"
-        assert isinstance(serialized["estimated_cost_usd"], str)
-
-    def test_unpriced_model_yields_null_cost_not_zero(self) -> None:
-        record = _make_record(model="zai-org/GLM-5.2")
-        assert serialize_record(record)["estimated_cost_usd"] is None
-
     def test_missing_usage_is_null_not_zero(self) -> None:
-        serialized = serialize_record(_make_record(usage=None))
-        assert serialized["usage"] is None
-        assert serialized["estimated_cost_usd"] is None
+        assert serialize_record(_make_record(usage=None))["usage"] is None
 
     def test_successful_record_has_no_error(self) -> None:
         assert serialize_record(_make_record())["error"] is None
@@ -205,42 +212,123 @@ class TestSerializeRecord:
 
 
 class TestFileTraceRecorder:
-    def test_record_is_written_to_a_daily_stream(self, recorder, storage) -> None:
+    def test_record_is_written_under_a_daily_batch_key(self, recorder, storage) -> None:
         recorder.record(_make_record())
         assert recorder.flush()
 
-        assert list(storage.streams) == ["llm-traces/2026-07-27"]
-        (written,) = storage.streams["llm-traces/2026-07-27"]
+        (key,) = storage.objects
+        assert BATCH_KEY.match(key)
+        assert key.startswith("llm-traces/2026-07-27/")
+
+        (written,) = storage.records()
         assert written["operation"] == "generate"
         assert written["response_text"] == "Svar"
 
+    def test_a_batch_becomes_one_object_not_one_per_record(
+        self, recorder, storage
+    ) -> None:
+        """The whole point: an object store must not get one write per call."""
+        for _ in range(25):
+            recorder.record(_make_record())
+        assert recorder.flush()
+
+        assert len(storage.objects) == 1
+        assert len(storage.records()) == 25
+
+    def test_batch_is_written_once_it_reaches_the_size_limit(self, storage) -> None:
+        recorder = FileTraceRecorder(
+            storage,
+            LLMTraceConfig(enabled=True, batch_max_records=5, batch_max_seconds=30.0),
+        )
+        try:
+            for _ in range(10):
+                recorder.record(_make_record())
+            assert recorder.flush()
+        finally:
+            recorder.close()
+
+        # Two size-triggered batches, not one time-triggered one.
+        assert len(storage.objects) == 2
+        assert len(storage.records()) == 10
+
+    def test_batch_is_written_once_the_time_limit_elapses(self, storage) -> None:
+        """A trickle of calls must not sit unwritten waiting for a full batch."""
+        recorder = FileTraceRecorder(
+            storage,
+            LLMTraceConfig(
+                enabled=True, batch_max_records=1000, batch_max_seconds=0.05
+            ),
+        )
+        try:
+            recorder.record(_make_record())
+            # No flush() — the elapsed-time path is what is under test.
+            deadline = datetime.now(UTC).timestamp() + 5
+            while not storage.objects and datetime.now(UTC).timestamp() < deadline:
+                pass
+        finally:
+            recorder.close()
+
+        assert len(storage.records()) == 1
+
+    def test_close_writes_a_partial_batch(self, storage) -> None:
+        recorder = FileTraceRecorder(
+            storage,
+            LLMTraceConfig(
+                enabled=True, batch_max_records=1000, batch_max_seconds=30.0
+            ),
+        )
+        recorder.record(_make_record())
+        recorder.close()
+
+        assert len(storage.records()) == 1
+
     def test_records_split_across_days(self, recorder, storage) -> None:
+        """One batch straddling midnight becomes one object per day."""
         recorder.record(_make_record())
         recorder.record(
             _make_record(started_at=datetime(2026, 7, 28, 1, 0, tzinfo=UTC))
         )
         assert recorder.flush()
 
-        assert sorted(storage.streams) == [
-            "llm-traces/2026-07-27",
-            "llm-traces/2026-07-28",
-        ]
+        assert len(storage.keys_for_day("2026-07-27")) == 1
+        assert len(storage.keys_for_day("2026-07-28")) == 1
 
     def test_every_record_gets_a_distinct_id(self, recorder, storage) -> None:
         recorder.record(_make_record())
         recorder.record(_make_record())
         assert recorder.flush()
 
-        written = storage.streams["llm-traces/2026-07-27"]
-        assert written[0]["id"] != written[1]["id"]
+        first, second = storage.records()
+        assert first["id"] != second["id"]
 
     def test_storage_failure_does_not_propagate(self, config) -> None:
         recorder = FileTraceRecorder(ExplodingStorage(), config)
         try:
             recorder.record(_make_record())  # must not raise
+            # flush() must still return rather than hang on a dead backend.
             assert recorder.flush()
         finally:
             recorder.close()
+
+    def test_an_unserializable_record_is_skipped_not_fatal(
+        self, recorder, storage
+    ) -> None:
+        """One bad record must not cost the rest of its batch."""
+
+        class Unserializable:
+            def __str__(self) -> str:
+                raise RuntimeError("cannot stringify")
+
+        recorder.record(_make_record(context={"bad": Unserializable()}))
+        recorder.record(_make_record())
+        assert recorder.flush()
+
+        written = storage.records()
+        assert len(written) == 1
+        assert written[0]["context"] == {
+            "source": "ai.decompose_query",
+            "interaction_id": "abc",
+        }
 
     def test_full_queue_drops_instead_of_blocking(self, storage) -> None:
         """An LLM call must never wait on a slow trace writer."""
@@ -257,7 +345,7 @@ class TestFileTraceRecorder:
 class TestAgainstRealStorage:
     """The path the workers actually take, with no fake in the way."""
 
-    def test_records_land_in_a_readable_jsonl_stream(self, tmp_path, config) -> None:
+    def test_records_land_in_a_readable_jsonl_object(self, tmp_path, config) -> None:
         storage = LocalStorageBackend(tmp_path)
         recorder = FileTraceRecorder(storage, config)
         try:
@@ -267,13 +355,33 @@ class TestAgainstRealStorage:
         finally:
             recorder.close()
 
-        assert (tmp_path / "llm-traces" / "2026-07-27.jsonl").is_file()
+        day = tmp_path / "llm-traces" / "2026-07-27"
+        (written_file,) = list(day.glob("*.jsonl"))
 
-        written = list(storage.iter_json("llm-traces/"))
-        assert len(written) == 2
-        assert written[0]["estimated_cost_usd"] == "0.00026000"
-        assert written[1]["estimated_cost_usd"] is None
-        assert written[0]["messages"][0]["content"] == "Vad gäller?"
+        records = [
+            json.loads(line)
+            for line in written_file.read_text(encoding="utf-8").splitlines()
+        ]
+        assert len(records) == 2
+        assert records[0]["messages"][0]["content"] == "Vad gäller?"
+        assert records[1]["model"] == "zai-org/GLM-5.2"
+
+    def test_swedish_characters_survive_the_round_trip(self, tmp_path, config) -> None:
+        storage = LocalStorageBackend(tmp_path)
+        recorder = FileTraceRecorder(storage, config)
+        try:
+            recorder.record(
+                _make_record(messages=(Message(role=Role.user, content="Växjö åäö"),))
+            )
+            assert recorder.flush()
+        finally:
+            recorder.close()
+
+        (written_file,) = list((tmp_path / "llm-traces" / "2026-07-27").glob("*.jsonl"))
+        raw = written_file.read_text(encoding="utf-8")
+
+        assert "Växjö åäö" in raw  # not \uXXXX-escaped
+        assert json.loads(raw)["messages"][0]["content"] == "Växjö åäö"
 
 
 class TestInstallFileTracing:

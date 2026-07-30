@@ -38,9 +38,10 @@ in one database:
   relational tables
 
 PDFs live in a GCS bucket, served via signed URLs. The same bucket also holds the
-append-only [LLM trace stream](/observability.md) — every prompt, response, token count
-and cost estimate, deliberately kept out of Postgres so the records stay cheap to write
-and easy to analyse offline. **Why a single Postgres?** At ~1000
+append-only [LLM trace stream](/observability.md) — every prompt, response and token
+count, written in batches as whole JSONL objects and deliberately kept out of Postgres
+so the records stay cheap to write and easy to analyse offline. Cost is not stored; it
+is derived from the model and tokens on read. **Why a single Postgres?** At ~1000
 docs this is not a scale problem — pgvector handles it trivially, and hybrid search
 (vector + full text + structured SQL filters) happens in one query with no separate
 vector DB (see the [architectural register](/decisions/architectural-register.md)).

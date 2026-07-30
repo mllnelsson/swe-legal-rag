@@ -58,7 +58,7 @@ async def decompose_query(
     }
     messages = render(QUERY_DECOMPOSITION, context)
     with trace_context(source=_SOURCE_DECOMPOSE, prompt=QUERY_DECOMPOSITION.name):
-        return await generate_structured(messages, DecomposeResult, provider=provider)  # type: ignore[return-value]
+        return await generate_structured(messages, DecomposeResult, provider=provider)
 
 
 async def extract_metadata(
@@ -69,7 +69,7 @@ async def extract_metadata(
     context = {"raw_text": raw_text}
     messages = render(METADATA_EXTRACTION, context)
     with trace_context(source=_SOURCE_METADATA, prompt=METADATA_EXTRACTION.name):
-        return await generate_structured(messages, MetadataResult, provider=provider)  # type: ignore[return-value]
+        return await generate_structured(messages, MetadataResult, provider=provider)
 
 
 async def extract_entities(
@@ -84,7 +84,7 @@ async def extract_entities(
     }
     messages = render(ENTITY_EXTRACTION, context)
     with trace_context(source=_SOURCE_ENTITIES, prompt=ENTITY_EXTRACTION.name):
-        return await generate_structured(messages, EntityResult, provider=provider)  # type: ignore[return-value]
+        return await generate_structured(messages, EntityResult, provider=provider)
 
 
 async def summarize_document(

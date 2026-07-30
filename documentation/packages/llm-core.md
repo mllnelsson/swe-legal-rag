@@ -30,8 +30,9 @@ lives in the [ai package](/packages/ai.md).
   with lazy-import dispatch: `"gemini"` → `GeminiProvider`, `"berget"` →
   `OpenAiCompatibleProvider`.
 - **`_tracing.py`** — the observability hook: `LLMOperation`, `LLMCallRecord`, the
-  `TraceRecorder` Protocol, `set_trace_recorder()`, and the ContextVar-backed
-  `trace_context()`. See [LLM Observability](/observability.md).
+  `TraceRecorder` Protocol, `set_trace_recorder()`, the ContextVar-backed
+  `trace_context()`, and the `traced_call()` context manager that opens and closes
+  exactly one record. See [LLM Observability](/observability.md).
 - **`providers/_gemini.py`** — Gemini implementation using the `google-genai` SDK (the
   unified SDK, not deprecated `google-generativeai`). Fully supported, selectable via
   `LLM_PROVIDER=gemini`.
@@ -45,7 +46,9 @@ lives in the [ai package](/packages/ai.md).
   output) and wraps SDK exceptions in `ProviderError`.
 - **`_service.py`** — the higher-level API: `generate()`, `generate_structured()`,
   `generate_stream()`, `tool_loop()` with optional callbacks. All four emit one trace
-  record per billed provider round-trip.
+  record per billed provider round-trip. `generate_structured[T: BaseModel]` is generic
+  in its `response_model`, so callers get the model they asked for and need no cast,
+  `assert isinstance`, or `type: ignore` to narrow it.
 
 Both providers map the token usage the SDK reports onto `Usage`, and record the model
 the API says it **served** rather than the one configured — hosts resolve aliases to
@@ -59,14 +62,43 @@ llm-core defines what a traced call looks like and where a recorder plugs in. It
 writes one. That is what lets the package stay free of any dependency on the rest of the
 project — the concrete recorder lives in [ai](/packages/ai.md).
 
+A trace is opened and closed by **one context manager**, never by hand:
+
+```python
+with traced_call(LLMOperation.generate, messages) as trace:
+    response = await provider.generate(messages)
+    trace_response(trace, response)
+```
+
+`traced_call()` owns the record's lifecycle — leaving the block cleanly marks the call
+successful, leaving by exception records the failure, and either way the record is handed
+over exactly once. It catches `BaseException`, not `Exception`: a consumer abandoning a
+stream closes the generator, which arrives as `GeneratorExit`, and that call is worth
+recording precisely because it was paid for and never delivered. The block only supplies
+the payload the provider returned, through one of three folds:
+
+| Fold | For |
+|---|---|
+| `trace_response(trace, response)` | a non-streaming `LLMResponse` |
+| `trace_chunk(trace, chunk)` | one `StreamChunk`, called per chunk |
+| `trace_outcome(trace, usage=…, model=…, provider=…)` | a call llm-core did not make |
+
+`trace_outcome()` is the extension point for callers that reach a provider directly —
+[embeddings](/packages/ai.md) — and so have usage and attribution but no `LLMResponse`.
+`traced_call()` also takes `model` and `provider` up front for callers that know them
+before the call, so a request that never returns is still attributed rather than blank.
+None never overwrites a value already recorded, so late and cumulative usage reports
+settle on the last one.
+
 `TraceRecorder.record` is **synchronous and must not raise**. A stream records from a
 `finally` that may be unwinding under `GeneratorExit`, where awaiting anything that
 suspends raises `RuntimeError`; and workers call `asyncio.run()` per message, which
 cancels pending tasks at teardown and would silently drop a fire-and-forget write. A
 recorder needing I/O hands off to its own thread.
 
-With no recorder installed the package behaves exactly as it did before tracing existed,
-at the cost of one global read per call.
+With no recorder installed `traced_call()` yields `None`, every fold no-ops, and the
+package behaves exactly as it did before tracing existed — at the cost of one global read
+per call.
 
 ## llm-core / ai boundary
 

@@ -1,12 +1,17 @@
-"""Write-time cost estimation from provider token counts.
+"""Read-time cost estimation from provider token counts.
 
-Rates are pinned here rather than fetched, so a trace records the price that
-was in effect when the call happened. Later rate changes apply to future calls
-only; nothing rewrites history. Token counts are the ground truth either way —
-cost can always be recomputed from them if a rate turns out wrong or missing.
+Cost is a pure function of the served model and the token counts, both of which
+a trace record already carries. Nothing here runs on the write path: pricing at
+read time costs nothing, and it means a rate that was wrong or missing when a
+call happened can be corrected across the whole history rather than only for
+future calls. Adding a rate below re-prices every trace ever written — which
+matters, because the models this project runs by default are currently unpriced.
+
+Token counts are the ground truth; this table is an interpretation of them.
 
 See [LLM Pricing Prerequisites](/reference/llm-pricing.md) for the source of
-truth, the verification rules, and the maintenance checklist.
+truth, the verification rules, and the maintenance checklist. The reader that
+applies this table is `scripts/llm_cost.py`.
 """
 
 from __future__ import annotations

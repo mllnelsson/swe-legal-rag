@@ -1,5 +1,15 @@
 # Documentation Update Log
 
+## 2026-07-30
+
+* **Update**: [llm-core](/packages/llm-core.md) — the trace lifecycle is now one `traced_call()` context manager instead of seven hand-driven functions. It owns success, failure and hand-off; callers only fold in the payload via `trace_response`, `trace_chunk` or `trace_outcome`. `start_trace`, `finish_trace`, `trace_failure`, `trace_result` and `trace_stream_completed` are gone from the public API.
+* **Update**: [ai](/packages/ai.md) — `BergetEmbeddingProvider` opens its trace with the same `traced_call()` rather than driving the lifecycle by hand, and seeds model/provider on entry so a failed call is still attributed.
+* **Update**: [shared](/packages/shared.md) — `StorageBackend` is a five-method blob store again. `add_json`/`iter_json` and the local `flock` machinery are gone: the trace recorder batches records and writes whole JSONL objects with `store()`, so an object store never has to append and the two backends no longer diverge. `iter_json` had no production caller.
+* **Update**: [LLM Observability](/observability.md) — one uniform storage layout across backends, `{prefix}/{date}/{timestamp}-{rand}.jsonl` per flushed batch, with the batching triggers, the widened loss window, and why `flush()` asks the writer rather than merely waiting.
+* **Update**: [LLM pricing](/reference/llm-pricing.md) — cost moves off the write path. Records no longer carry `estimated_cost_usd`; `scripts/llm_cost.py` applies the rate table on read, so adding a Berget rate prices the entire history retroactively instead of only future calls.
+* **Update**: [live testing](/playbooks/live-testing.md) and [local dev](/playbooks/local-dev.md) — trace paths are directory globs, cost verification runs the script, and the two batch env vars are listed.
+* **Update**: [llm-core](/packages/llm-core.md) — `generate_structured` is generic in `response_model` (`[T: BaseModel] -> T`) rather than returning a bare `BaseModel`. Removes three `type: ignore[return-value]` in `ai/services.py` and an `assert isinstance` in the API reranker.
+
 ## 2026-07-27
 
 * **Creation**: Established [LLM Observability](/observability.md) — every LLM and hosted-embedding call is captured to file storage with its full prompt, response, tokens and cost, correlated by `interaction_id` so one chat question can be costed as a sum over one key.

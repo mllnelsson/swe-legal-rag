@@ -128,6 +128,13 @@ implementing `EmbeddingProvider` could time the call but not see token usage, si
 recorded — they are chunk text already durable in Postgres — only their count and
 character total.
 
+Because the call bypasses llm-core's service layer, the provider opens its own trace with
+`traced_call()` and reports usage through `trace_outcome()` — the same context manager
+llm-core uses internally, so the lifecycle is not hand-rolled here. Model and provider are
+seeded on entry from config, which means a timeout is still attributed to the right model;
+whatever the API reports back overrides the seed. See
+[llm-core](/packages/llm-core.md).
+
 See the [embedding hosting](/decisions/embedding-hosting.md) decision. The width
 constraint and its startup verification (`verify_embedding_dimension`) are covered in
 [embedding dimension](/decisions/embedding-dimension.md).
@@ -143,11 +150,19 @@ makes LLM calls — the API lifespan and each of the four LLM workers. It never 
 backend it cannot build leaves no recorder at all, and llm-core treats that as tracing
 off. `trace_context` is re-exported here so callers need no direct llm-core dependency.
 
-Cost is estimated at write time from a `Decimal` table keyed by lowercased model-name
-prefix, matched longest-first against the model the provider **returned**. Unknown model
-means a null cost, never a guess. Only the two verified Gemini rates are seeded — the
-Berget models this project runs by default are unpriced, so their records carry tokens
-and a null cost until rates are added.
+The recorder owns the **storage layout**, which is why `shared`'s `StorageBackend` stayed
+a five-method blob store. Records are queued, batched, serialized as JSONL, and written
+as whole objects with `store()` — so an object store, which cannot append, never has to.
+Batching is what makes that path viable: embedding runs once per chunk over the whole
+corpus, and an object per call would be hundreds of thousands of tiny billed writes.
+
+Cost is **not** written into the record. `_pricing.py` holds a `Decimal` table keyed by
+lowercased model-name prefix, matched longest-first against the model the provider
+returned, and it runs at read time from `scripts/llm_cost.py`. Cost adds no information
+a record does not already carry in `model` and `usage`, and pricing on read means adding
+a rate re-prices all history — which matters, because only the two verified Gemini rates
+are seeded and the Berget models this project runs by default are unpriced today.
+Unknown model means unpriced, never a guess and never a zero.
 
 Full record schema, correlation keys and the wiring invariant:
 [LLM Observability](/observability.md). Rate rules: [LLM pricing](/reference/llm-pricing.md).

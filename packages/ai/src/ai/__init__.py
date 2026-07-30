@@ -1,6 +1,7 @@
 from llm_core import trace_context
 
 from ai._observability import LLMTraceConfig, install_file_tracing
+from ai._pricing import ModelPrice, estimate_cost_usd, find_model_price
 from ai.dtos import (
     ChunkContext,
     DateFilter,
@@ -40,6 +41,11 @@ __all__ = [
     "install_file_tracing",
     "LLMTraceConfig",
     "trace_context",
+    # Cost is priced at read time from the model and tokens in a trace record,
+    # never frozen into it — see ai/_pricing.py and scripts/llm_cost.py.
+    "estimate_cost_usd",
+    "find_model_price",
+    "ModelPrice",
     # Service functions
     "decompose_query",
     "extract_metadata",

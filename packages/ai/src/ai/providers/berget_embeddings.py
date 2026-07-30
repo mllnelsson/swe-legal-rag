@@ -4,15 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from llm_core import (
-    LLMOperation,
-    Usage,
-    finish_trace,
-    start_trace,
-    trace_context,
-    trace_failure,
-    trace_result,
-)
+from llm_core import LLMOperation, Usage, trace_context, trace_outcome, traced_call
 
 if TYPE_CHECKING:
     from ai.embedding import EmbeddingConfig
@@ -57,27 +49,25 @@ class BergetEmbeddingProvider:
         if not texts:
             return []
 
-        with trace_context(
-            source=SOURCE,
-            texts_count=len(texts),
-            input_chars=sum(len(text) for text in texts),
+        with (
+            trace_context(
+                source=SOURCE,
+                texts_count=len(texts),
+                input_chars=sum(len(text) for text in texts),
+            ),
+            # Attribution is known before the call, so a failure is still
+            # recorded against the right model rather than against nothing.
+            traced_call(
+                LLMOperation.embed, model=self._model, provider=self._provider_name
+            ) as trace,
         ):
-            trace = start_trace(LLMOperation.embed, [])
-            try:
-                response = await self._client.embeddings.create(
-                    model=self._model, input=texts
-                )
-            except BaseException as exc:
-                trace_failure(trace, exc)
-                finish_trace(trace)
-                raise
-
-            trace_result(
+            response = await self._client.embeddings.create(
+                model=self._model, input=texts
+            )
+            trace_outcome(
                 trace,
                 usage=_usage_from_embeddings(getattr(response, "usage", None)),
-                model=getattr(response, "model", None) or self._model,
-                provider=self._provider_name,
+                model=getattr(response, "model", None),
             )
-            finish_trace(trace)
 
         return [d.embedding for d in response.data]

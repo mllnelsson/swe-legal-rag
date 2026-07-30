@@ -253,37 +253,41 @@ All workers log to stdout. Key things to look for:
 ## Verifying LLM Traces
 
 With `LLM_TRACE_ENABLED=true`, every LLM and hosted-embedding call lands in a daily
-stream. After a pipeline run:
+directory of batched JSONL objects. After a pipeline run:
 
 ```bash
-ls data/pdfs/llm-traces/
-wc -l data/pdfs/llm-traces/$(date -u +%F).jsonl
+ls data/pdfs/llm-traces/$(date -u +%F)/
+cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl | wc -l
 
-jq -r '[.operation, .context.source, .model, .usage.total_tokens,
-        .estimated_cost_usd, .success] | @tsv' \
-  data/pdfs/llm-traces/$(date -u +%F).jsonl | head
+cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+  | jq -r '[.operation, .context.source, .model,
+            .usage.total_tokens, .success] | @tsv' | head
 ```
 
-Expect one `.jsonl` for today, at least one line per LLM-using worker that fired, a
-non-null `model` and `usage.total_tokens` on each, and `success` true.
+Expect a **small number** of `.jsonl` objects — records are batched, so this is nowhere
+near one file per call — at least one record per LLM-using worker that fired, a non-null
+`model` and `usage.total_tokens` on each, and `success` true.
 
-> `estimated_cost_usd` is **null** on the default Berget configuration — those models
-> are unpriced (see [LLM pricing](/reference/llm-pricing.md)). Null is not zero; sum the
-> token columns until rates are seeded.
+Then price them:
+
+```bash
+uv run python scripts/llm_cost.py
+```
+
+> Every model reports as **`unpriced`** on the default Berget configuration — no rate
+> for those is published in this repo (see [LLM pricing](/reference/llm-pricing.md)).
+> Unpriced is not zero, and the script labels the total a floor. Adding a rate later
+> prices these same records retroactively.
 
 To cost a single chat question, start the API, send one message, and note the
 `Chat interaction <uuid> for session …` line in the API log:
 
 ```bash
-jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
-  | [.context.source, .usage.input_tokens, .usage.output_tokens,
-     .estimated_cost_usd] | @tsv' \
-  data/pdfs/llm-traces/$(date -u +%F).jsonl
+uv run python scripts/llm_cost.py --interaction <uuid>
 ```
 
-Expect at least four rows — `ai.decompose_query`, `ai.embed`, `ai.synthesize_answer`,
-plus `api.retriever.rerank` when reranking is on. Summing the last column is the answer
-to "what did this question cost".
+Expect at least four calls — `ai.decompose_query`, `ai.embed`, `ai.synthesize_answer`,
+plus `api.retriever.rerank` when reranking is on.
 
 Closing the browser tab mid-answer should still leave an `ai.synthesize_answer` record,
 with `success: false`, `error.type` `GeneratorExit`, and the partial text that had been

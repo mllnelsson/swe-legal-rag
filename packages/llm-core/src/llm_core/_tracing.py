@@ -24,7 +24,7 @@ from enum import StrEnum
 from time import perf_counter
 from typing import Any, Protocol, runtime_checkable
 
-from llm_core._types import Message, ToolCall, Usage
+from llm_core._types import LLMResponse, Message, StreamChunk, ToolCall, Usage
 
 logger = logging.getLogger(__name__)
 
@@ -145,14 +145,54 @@ class TraceBuilder:
     has_response: bool = False
 
 
-def start_trace(
-    operation: LLMOperation, messages: list[Message] | tuple[Message, ...]
-) -> TraceBuilder | None:
-    """Begin a trace, or return None when tracing is off.
+@contextmanager
+def traced_call(
+    operation: LLMOperation,
+    messages: list[Message] | tuple[Message, ...] = (),
+    *,
+    model: str | None = None,
+    provider: str | None = None,
+) -> Iterator[TraceBuilder | None]:
+    """Trace one provider round-trip for the duration of the block.
 
-    Returning None rather than a no-op builder keeps the untraced path down to
-    a single global read, and lets callers skip accumulating stream text.
+    The block owns the call; this owns the record. Leaving cleanly marks the
+    call successful, leaving by exception records the failure, and either way
+    the record is handed over exactly once. Callers only supply the payload the
+    provider gave back — `trace_response`, `trace_chunk` or `trace_outcome`.
+
+    `model` and `provider` seed attribution for callers that know it up front;
+    anything the provider itself reports overrides them.
+
+    The yielded builder is None when tracing is off, which every fold function
+    treats as a no-op. That keeps the untraced path down to a single global
+    read and lets streams skip accumulating text they will never record.
     """
+    builder = _start(operation, messages, model=model, provider=provider)
+    try:
+        yield builder
+    except BaseException as exc:
+        # BaseException, not Exception: a consumer that abandons a stream closes
+        # the generator, which arrives here as GeneratorExit. That case is worth
+        # recording precisely because the answer was paid for and never
+        # delivered.
+        _record_failure(builder, exc)
+        raise
+    else:
+        if builder is not None:
+            builder.succeeded = True
+    finally:
+        # Synchronous by necessity: under GeneratorExit, awaiting anything that
+        # suspends would raise RuntimeError instead.
+        _finish(builder)
+
+
+def _start(
+    operation: LLMOperation,
+    messages: list[Message] | tuple[Message, ...],
+    *,
+    model: str | None,
+    provider: str | None,
+) -> TraceBuilder | None:
     if _recorder is None:
         return None
     return TraceBuilder(
@@ -160,47 +200,43 @@ def start_trace(
         messages=tuple(messages),
         started_at=datetime.now(UTC),
         started_perf=perf_counter(),
+        model=model,
+        provider=provider,
     )
 
 
-def trace_response(builder: TraceBuilder | None, response: Any) -> None:
-    """Record a successful non-streaming response."""
+def trace_response(builder: TraceBuilder | None, response: LLMResponse) -> None:
+    """Fold a non-streaming response into the trace."""
     if builder is None:
         return
-    builder.succeeded = True
     builder.has_response = True
     builder.text_parts.append(response.message.content)
     builder.response_tool_calls = response.message.tool_calls
-    builder.usage = response.usage
-    builder.model = response.model
-    builder.provider = response.provider
+    trace_outcome(
+        builder,
+        usage=response.usage,
+        model=response.model,
+        provider=response.provider,
+    )
 
 
-def trace_chunk(builder: TraceBuilder | None, chunk: Any) -> None:
+def trace_chunk(builder: TraceBuilder | None, chunk: StreamChunk) -> None:
     """Fold one stream chunk into the trace.
 
-    Usage arrives late and, on some providers, cumulatively — so the last
-    non-None report wins rather than the first.
+    A chunk carrying only usage still counts as a response: the stream produced
+    something, so `response_text` should be empty rather than absent.
     """
     if builder is None:
         return
     builder.has_response = True
     if chunk.text:
         builder.text_parts.append(chunk.text)
-    if chunk.usage is not None:
-        builder.usage = chunk.usage
-    if chunk.model is not None:
-        builder.model = chunk.model
-    if chunk.provider is not None:
-        builder.provider = chunk.provider
+    trace_outcome(
+        builder, usage=chunk.usage, model=chunk.model, provider=chunk.provider
+    )
 
 
-def trace_stream_completed(builder: TraceBuilder | None) -> None:
-    if builder is not None:
-        builder.succeeded = True
-
-
-def trace_result(
+def trace_outcome(
     builder: TraceBuilder | None,
     *,
     usage: Usage | None = None,
@@ -208,24 +244,28 @@ def trace_result(
     provider: str | None = None,
     response_text: str | None = None,
 ) -> None:
-    """Record a successful outcome reported piecemeal rather than as a response.
+    """Report token counts and attribution for a call this package did not make.
 
-    For callers outside this package that talk to a provider themselves —
-    embeddings, for instance — and so have token counts and attribution but no
-    `LLMResponse` to hand over.
+    The extension point for callers that reach a provider directly — embeddings,
+    for instance — and so have usage and attribution but no `LLMResponse`.
+
+    None never overwrites a value already recorded. Usage arrives late and, on
+    some providers, cumulatively, so the last report of each field wins.
     """
     if builder is None:
         return
-    builder.succeeded = True
-    builder.usage = usage
-    builder.model = model
-    builder.provider = provider
+    if usage is not None:
+        builder.usage = usage
+    if model is not None:
+        builder.model = model
+    if provider is not None:
+        builder.provider = provider
     if response_text is not None:
         builder.has_response = True
         builder.text_parts.append(response_text)
 
 
-def trace_failure(builder: TraceBuilder | None, error: BaseException) -> None:
+def _record_failure(builder: TraceBuilder | None, error: BaseException) -> None:
     if builder is None:
         return
     builder.succeeded = False
@@ -233,7 +273,7 @@ def trace_failure(builder: TraceBuilder | None, error: BaseException) -> None:
     builder.error_message = str(error)
 
 
-def finish_trace(builder: TraceBuilder | None) -> None:
+def _finish(builder: TraceBuilder | None) -> None:
     """Hand the finished record to the recorder. Never raises.
 
     Observability failing must never turn into an application failure, so every

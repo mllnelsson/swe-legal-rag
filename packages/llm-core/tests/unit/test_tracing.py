@@ -8,15 +8,13 @@ from llm_core._tracing import (
     LLMCallRecord,
     LLMOperation,
     current_trace_context,
-    finish_trace,
     get_trace_recorder,
     set_trace_recorder,
-    start_trace,
     trace_chunk,
     trace_context,
-    trace_failure,
+    trace_outcome,
     trace_response,
-    trace_stream_completed,
+    traced_call,
 )
 from llm_core._types import LLMResponse, Message, Role, StreamChunk, ToolCall, Usage
 
@@ -48,17 +46,17 @@ def _user_messages() -> list[Message]:
 
 def test_no_recorder_yields_no_builder() -> None:
     set_trace_recorder(None)
-    assert start_trace(LLMOperation.generate, _user_messages()) is None
+    with traced_call(LLMOperation.generate, _user_messages()) as trace:
+        assert trace is None
 
 
-def test_builder_functions_tolerate_a_missing_builder() -> None:
-    """The untraced path calls every helper with None; none may raise."""
+def test_fold_functions_tolerate_a_missing_builder() -> None:
+    """The untraced path calls every fold with None; none may raise."""
     set_trace_recorder(None)
-    trace_response(None, None)
-    trace_chunk(None, None)
-    trace_stream_completed(None)
-    trace_failure(None, RuntimeError("boom"))
-    finish_trace(None)
+    with traced_call(LLMOperation.generate, _user_messages()) as trace:
+        trace_response(trace, LLMResponse(message=Message(role=Role.assistant)))
+        trace_chunk(trace, StreamChunk(text="hej"))
+        trace_outcome(trace, usage=Usage(input_tokens=1))
 
 
 def test_set_and_get_recorder(recorder) -> None:
@@ -73,9 +71,8 @@ def test_successful_response_is_recorded(recorder) -> None:
         provider="berget",
     )
 
-    builder = start_trace(LLMOperation.generate, _user_messages())
-    trace_response(builder, response)
-    finish_trace(builder)
+    with traced_call(LLMOperation.generate, _user_messages()) as trace:
+        trace_response(trace, response)
 
     (record,) = recorder.records
     assert record.operation == LLMOperation.generate
@@ -95,17 +92,16 @@ def test_response_tool_calls_are_recorded(recorder) -> None:
         message=Message(role=Role.assistant, content="", tool_calls=(tool_call,))
     )
 
-    builder = start_trace(LLMOperation.tool_loop, _user_messages())
-    trace_response(builder, response)
-    finish_trace(builder)
+    with traced_call(LLMOperation.tool_loop, _user_messages()) as trace:
+        trace_response(trace, response)
 
     assert recorder.records[0].response_tool_calls == (tool_call,)
 
 
 def test_failure_is_recorded_with_type_and_message(recorder) -> None:
-    builder = start_trace(LLMOperation.generate, _user_messages())
-    trace_failure(builder, ValueError("upstream refused"))
-    finish_trace(builder)
+    with pytest.raises(ValueError):
+        with traced_call(LLMOperation.generate, _user_messages()):
+            raise ValueError("upstream refused")
 
     (record,) = recorder.records
     assert record.success is False
@@ -114,16 +110,37 @@ def test_failure_is_recorded_with_type_and_message(recorder) -> None:
     assert record.response_text is None
 
 
+def test_seeded_attribution_survives_a_failure(recorder) -> None:
+    """A call that never returns still names the model it was billed against."""
+    with pytest.raises(TimeoutError):
+        with traced_call(
+            LLMOperation.embed,
+            model="intfloat/multilingual-e5-large",
+            provider="berget",
+        ):
+            raise TimeoutError("gateway timeout")
+
+    (record,) = recorder.records
+    assert record.model == "intfloat/multilingual-e5-large"
+    assert record.provider == "berget"
+
+
+def test_provider_reported_attribution_overrides_the_seed(recorder) -> None:
+    with traced_call(LLMOperation.embed, model="e5-large", provider="berget") as trace:
+        trace_outcome(trace, model="intfloat/multilingual-e5-large-001")
+
+    assert recorder.records[0].model == "intfloat/multilingual-e5-large-001"
+    assert recorder.records[0].provider == "berget"
+
+
 def test_stream_chunks_accumulate_text_and_last_usage(recorder) -> None:
-    builder = start_trace(LLMOperation.generate_stream, _user_messages())
-    trace_chunk(builder, StreamChunk(text="Hej ", model="glm", provider="berget"))
-    trace_chunk(builder, StreamChunk(text="där"))
-    trace_chunk(builder, StreamChunk(text="", usage=Usage(input_tokens=5)))
-    trace_chunk(
-        builder, StreamChunk(text="", usage=Usage(input_tokens=5, total_tokens=9))
-    )
-    trace_stream_completed(builder)
-    finish_trace(builder)
+    with traced_call(LLMOperation.generate_stream, _user_messages()) as trace:
+        trace_chunk(trace, StreamChunk(text="Hej ", model="glm", provider="berget"))
+        trace_chunk(trace, StreamChunk(text="där"))
+        trace_chunk(trace, StreamChunk(text="", usage=Usage(input_tokens=5)))
+        trace_chunk(
+            trace, StreamChunk(text="", usage=Usage(input_tokens=5, total_tokens=9))
+        )
 
     (record,) = recorder.records
     assert record.response_text == "Hej där"
@@ -133,10 +150,11 @@ def test_stream_chunks_accumulate_text_and_last_usage(recorder) -> None:
 
 
 def test_abandoned_stream_records_partial_text(recorder) -> None:
-    builder = start_trace(LLMOperation.generate_stream, _user_messages())
-    trace_chunk(builder, StreamChunk(text="halvt "))
-    trace_failure(builder, GeneratorExit())
-    finish_trace(builder)
+    """GeneratorExit is a BaseException; the trace must still close on it."""
+    with pytest.raises(GeneratorExit):
+        with traced_call(LLMOperation.generate_stream, _user_messages()) as trace:
+            trace_chunk(trace, StreamChunk(text="halvt "))
+            raise GeneratorExit
 
     (record,) = recorder.records
     assert record.success is False
@@ -147,9 +165,8 @@ def test_abandoned_stream_records_partial_text(recorder) -> None:
 def test_recorder_exception_is_swallowed() -> None:
     set_trace_recorder(ExplodingRecorder())
     try:
-        builder = start_trace(LLMOperation.generate, _user_messages())
-        trace_response(builder, LLMResponse(message=Message(role=Role.assistant)))
-        finish_trace(builder)  # must not raise
+        with traced_call(LLMOperation.generate, _user_messages()) as trace:
+            trace_response(trace, LLMResponse(message=Message(role=Role.assistant)))
     finally:
         set_trace_recorder(None)
 
@@ -160,9 +177,8 @@ def test_trace_context_defaults_to_empty() -> None:
 
 def test_trace_context_is_attached_to_the_record(recorder) -> None:
     with trace_context(interaction_id="abc", source="api.chat"):
-        builder = start_trace(LLMOperation.generate, _user_messages())
-        trace_response(builder, LLMResponse(message=Message(role=Role.assistant)))
-        finish_trace(builder)
+        with traced_call(LLMOperation.generate, _user_messages()) as trace:
+            trace_response(trace, LLMResponse(message=Message(role=Role.assistant)))
 
     assert recorder.records[0].context == {
         "interaction_id": "abc",
@@ -173,9 +189,8 @@ def test_trace_context_is_attached_to_the_record(recorder) -> None:
 def test_nested_trace_context_merges_and_inner_wins(recorder) -> None:
     with trace_context(interaction_id="abc", source="api.chat"):
         with trace_context(source="api.retriever.rerank"):
-            builder = start_trace(LLMOperation.generate, _user_messages())
-            trace_response(builder, LLMResponse(message=Message(role=Role.assistant)))
-            finish_trace(builder)
+            with traced_call(LLMOperation.generate, _user_messages()) as trace:
+                trace_response(trace, LLMResponse(message=Message(role=Role.assistant)))
 
     assert recorder.records[0].context == {
         "interaction_id": "abc",
@@ -213,9 +228,8 @@ async def test_trace_context_survives_generator_closed_from_another_context(
                 while True:
                     await asyncio.sleep(0)
             finally:
-                builder = start_trace(LLMOperation.generate_stream, _user_messages())
-                trace_stream_completed(builder)
-                finish_trace(builder)
+                with traced_call(LLMOperation.generate_stream, _user_messages()):
+                    pass
 
     task = asyncio.create_task(streaming())
     await asyncio.sleep(0)
