@@ -3,7 +3,7 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-07-31T00:00:00Z
 ---
 
 # Architectural Decision Register
@@ -52,10 +52,11 @@ below are **Accepted**.
   as a way to give every worker its own container without each owning a private trace
   file. It solves neither half. What keeps the workers in one process is the `sync`
   queue, whose broker is a module-level singleton dispatching in-process — a proxy does
-  nothing for that. And traces were never the obstacle: one storage key plus an exclusive
-  `flock` per append already lets many processes share one stream. Against that, a proxy
-  adds a hop on the <5 s streaming chat path and diverges from Cloud Run, where each
-  service calls the provider directly. See [observability](/observability.md).
+  nothing for that. And traces were never the obstacle: the recorder batches records and
+  writes each batch as its own uniquely-named object, so many processes already share one
+  key prefix with no append and nothing to lock. Against that, a proxy adds a hop on the
+  <5 s streaming chat path and diverges from Cloud Run, where each service calls the
+  provider directly. See [observability](/observability.md).
 - **Local Postgres is platform-dependent, `DATABASE_URL` is not** — Compose on Linux,
   Homebrew `postgresql@17` on macOS, where Docker Desktop would only add a VM. Creating a
   `postgres` superuser role on the native install makes one connection string work

@@ -3,14 +3,14 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to file storage — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-07-27T00:00:00Z
+timestamp: 2026-07-31T00:00:00Z
 ---
 
 # LLM Observability
 
 Every call to a language model or a hosted embedding endpoint is written to file
 storage as a JSON record holding the full prompt, the full response, token
-counts, latency, and a cost estimate. Records go to the same
+counts, and latency. Records go to the same
 [`StorageBackend`](/packages/shared.md) that holds the PDFs, so local
 development and GCP behave identically.
 
@@ -177,6 +177,15 @@ rollover keeps any one directory worth listing.
 startup, and must set a `trace_context` at each unit-of-work boundary.** Without
 the context a record still lands, but nothing ties it to the work that caused
 it, and cost questions become unanswerable.
+
+`install_file_tracing()` is idempotent: a call after one has already succeeded
+returns the recorder already installed rather than building another. This is what
+lets [`scripts/run_pipeline.py`](/packages/overview.md) compose several workers'
+`main()` functions into one process — each calls `install_file_tracing()`
+independently, and only the first actually builds a `FileTraceRecorder`. Without
+this, each later call would replace the installed recorder with a fresh one,
+leaving a stray writer thread and `atexit` hook behind for every recorder that got
+discarded.
 
 | Key | Set by |
 |---|---|

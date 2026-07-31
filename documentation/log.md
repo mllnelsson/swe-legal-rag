@@ -1,5 +1,10 @@
 # Documentation Update Log
 
+## 2026-07-31
+
+* **Update**: [LLM Observability](/observability.md) — `install_file_tracing()` is idempotent: a call after one has already succeeded returns the recorder already installed. [`scripts/run_pipeline.py`](/playbooks/local-dev.md) composes six worker `main()`s into one process and four of them install tracing, which would otherwise leave a stray writer thread and `atexit` hook behind for every recorder the next call displaced.
+* **Update**: [architectural register](/decisions/architectural-register.md) — the "no LLM proxy container" entry no longer rests on `flock`-per-append, which is gone. Many processes share one key prefix because the recorder writes each batch as its own uniquely-named object; there is nothing to append to and nothing to lock.
+
 ## 2026-07-30
 
 * **Update**: [llm-core](/packages/llm-core.md) — the trace lifecycle is now one `traced_call()` context manager instead of seven hand-driven functions. It owns success, failure and hand-off; callers only fold in the payload via `trace_response`, `trace_chunk` or `trace_outcome`. `start_trace`, `finish_trace`, `trace_failure`, `trace_result` and `trace_stream_completed` are gone from the public API.
@@ -9,6 +14,7 @@
 * **Update**: [LLM pricing](/reference/llm-pricing.md) — cost leaves the codebase entirely. Records no longer carry `estimated_cost_usd`, and there is no rate table, no `estimate_cost_usd()` and no costing CLI: a record carries the served `model` and the provider's `usage`, which is the complete raw material, so pricing is an analysis step performed against this reference. The page is now dated reference data rather than a spec binding a module, and states the rules (prefix match longest-first, case-insensitive, unpriced ≠ zero, `usage: null` ≠ zero, failed calls still bill) for whoever applies them.
 * **Update**: [live testing](/playbooks/live-testing.md) and [local dev](/playbooks/local-dev.md) — trace paths are directory globs, cost verification runs the script, and the two batch env vars are listed.
 * **Update**: [llm-core](/packages/llm-core.md) — `generate_structured` is generic in `response_model` (`[T: BaseModel] -> T`) rather than returning a bare `BaseModel`. Removes three `type: ignore[return-value]` in `ai/services.py` and an `assert isinstance` in the API reranker.
+
 ## 2026-07-29
 
 * **Update**: [chunks](/data-model/chunks.md) — `embedding` is documented as nullable, which is what the rest of the stack always assumed: `ChunkCreate.embedding` defaults to `None`, `ChunkRead` types it optional, and vector search filters `WHERE embedding IS NOT NULL`. Migration `005` drops the `NOT NULL` that migration 001 imposed, which had made the chunk worker's own insert impossible.
