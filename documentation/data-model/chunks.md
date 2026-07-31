@@ -4,7 +4,7 @@ title: chunks
 description: The retrieval unit — chunk text, the contextual text that is embedded, the vector, the Swedish full-text vector, and which part of the source PDF it came from.
 resource: postgres://chunks
 tags: [data-model, table, chunks, retrieval, embedding]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-07-29T00:00:00Z
 ---
 
 # `chunks`
@@ -20,7 +20,7 @@ The retrieval layer. Each chunk is a unit of search and retrieval.
 | contextual_text | TEXT | Summary + chunk text. Used for embedding. Never shown to end users. |
 | section | VARCHAR | `body` \| `appendix` — which part of the source PDF this came from. NOT NULL, defaults to `body`. |
 | appendix_label | VARCHAR | Nullable. The `Bilaga A` label, when `section` is `appendix`. |
-| embedding | VECTOR(1024) | pgvector. Width is set by the embedding model — see [embedding dimension](/decisions/embedding-dimension.md) |
+| embedding | VECTOR(1024) | pgvector. **Nullable** — written by the [embed worker](/pipeline/embed.md) after chunking, so a chunk exists before its vector does. Width is set by the embedding model — see [embedding dimension](/decisions/embedding-dimension.md) |
 | tsv | TSVECTOR | Generated from `chunk_text` using the Swedish text search config. For BM25-style search. |
 | created_at | TIMESTAMPTZ | Row creation |
 

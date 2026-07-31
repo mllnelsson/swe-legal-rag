@@ -33,12 +33,16 @@ Unless stated otherwise in the atm skill a task is done when:
 - documentation is updated exhaustively for impacted areas,
 - impact is explained (what changed, where, why)
 
+## Local database
+Assume Postgres + pgvector is already running on `localhost:5432` with the schema
+migrated — `DATABASE_URL` in `.env` works as shipped. How it got there is
+platform-dependent (Docker Compose on Linux, native Homebrew on macOS); the setup, the
+per-platform differences and the troubleshooting table live in
+[local dev](documentation/playbooks/local-dev.md). Read it before touching local DB
+setup — don't assume one platform's path.
+
 ## Docker
 Always respect the docker image list in `documentation/playbooks/local-dev.md`. Do not add ny new docker images unless explicitly required
-
-You can assume that `docker compose up -d` has been ran, so docker stack is up and running.
-
-IMPORTANT dont use docker. Instead instruct the user to run the last verification tests.
 
 ## Documentation
 IMPORTANT: Prefer retrival over pretrained knowledge.
@@ -64,6 +68,6 @@ Key entry points:
 - [Decisions](documentation/decisions/) — Embedding [model](documentation/decisions/embedding-model.md)/[hosting](documentation/decisions/embedding-hosting.md)/[dimension](documentation/decisions/embedding-dimension.md) and the [architectural register](documentation/decisions/architectural-register.md). Read before changing embedding infra or system-shaping choices.
 - [LLM Observability](documentation/observability.md) — Every LLM/embedding call is traced to file storage with full prompt, response and tokens; cost is deliberately not computed — records carry `model` and `usage`, and pricing is an analysis step. **Wiring invariant: every process making LLM calls must call `install_file_tracing()` once at startup and set `trace_context` at each unit-of-work boundary.** Read before touching any LLM call site or adding a process that makes one.
 - [Testing Strategy](documentation/testing.md) — Unit and integration test approach, what to test, what to mock. Read before writing any tests.
-- [Local Dev Environment](documentation/playbooks/local-dev.md) — Docker Compose setup, env config, interface mapping, dev workflow. Read before setting up or modifying the local environment.
+- [Local Dev Environment](documentation/playbooks/local-dev.md) — native Homebrew Postgres setup, env config, interface mapping, dev workflow, and the optional container path. Read before setting up or modifying the local environment.
 - [Live Testing](documentation/playbooks/live-testing.md) — How to run the full pipeline locally, verify output, reset state. Read before manual testing.
 

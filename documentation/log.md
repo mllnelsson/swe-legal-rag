@@ -1,5 +1,10 @@
 # Documentation Update Log
 
+## 2026-07-31
+
+* **Update**: [LLM Observability](/observability.md) — `install_file_tracing()` is idempotent: a call after one has already succeeded returns the recorder already installed. [`scripts/run_pipeline.py`](/playbooks/local-dev.md) composes six worker `main()`s into one process and four of them install tracing, which would otherwise leave a stray writer thread and `atexit` hook behind for every recorder the next call displaced.
+* **Update**: [architectural register](/decisions/architectural-register.md) — the "no LLM proxy container" entry no longer rests on `flock`-per-append, which is gone. Many processes share one key prefix because the recorder writes each batch as its own uniquely-named object; there is nothing to append to and nothing to lock.
+
 ## 2026-07-30
 
 * **Update**: [llm-core](/packages/llm-core.md) — the trace lifecycle is now one `traced_call()` context manager instead of seven hand-driven functions. It owns success, failure and hand-off; callers only fold in the payload via `trace_response`, `trace_chunk` or `trace_outcome`. `start_trace`, `finish_trace`, `trace_failure`, `trace_result` and `trace_stream_completed` are gone from the public API.
@@ -10,8 +15,17 @@
 * **Update**: [live testing](/playbooks/live-testing.md) and [local dev](/playbooks/local-dev.md) — trace paths are directory globs, cost verification runs the script, and the two batch env vars are listed.
 * **Update**: [llm-core](/packages/llm-core.md) — `generate_structured` is generic in `response_model` (`[T: BaseModel] -> T`) rather than returning a bare `BaseModel`. Removes three `type: ignore[return-value]` in `ai/services.py` and an `assert isinstance` in the API reranker.
 
+## 2026-07-29
+
+* **Update**: [chunks](/data-model/chunks.md) — `embedding` is documented as nullable, which is what the rest of the stack always assumed: `ChunkCreate.embedding` defaults to `None`, `ChunkRead` types it optional, and vector search filters `WHERE embedding IS NOT NULL`. Migration `005` drops the `NOT NULL` that migration 001 imposed, which had made the chunk worker's own insert impossible.
+* **Update**: [local dev](/playbooks/local-dev.md) — getting Postgres is now documented per platform: Compose on Linux, native Homebrew `postgresql@17` + pgvector 0.8.5 on macOS. Covers the keg-only `PATH`, the `createuser -s postgres` step that keeps one `DATABASE_URL` working on both, and why `docker/init.sql` is belt-and-braces rather than load-bearing. "Running in Containers" is now scoped as a choice about application code, independent of where Postgres runs.
+* **Update**: [architectural register](/decisions/architectural-register.md) records two decisions — **no LLM proxy container** (the `sync` broker, not trace storage, is what keeps the workers in one process) and **platform-dependent local Postgres behind one `DATABASE_URL`**.
+* **Update**: [live testing](/playbooks/live-testing.md), [testing](/testing.md), [worker patterns](/pipeline/worker-patterns.md), [GCP layout](/reference/gcp-layout.md) and [packages overview](/packages/overview.md) — integration tests need *a* Postgres on `DATABASE_URL`, not a Docker one; troubleshooting gains the keg-only `PATH` and missing-`postgres`-role cases.
+
 ## 2026-07-27
 
+* **Update**: [local dev](/playbooks/local-dev.md) gains a "Running in Containers" section — one image, a one-shot `pipeline` service and an `api` service behind the `app` compose profile, the two env vars the containers override, and why the topology is one pipeline container rather than seven. The "application code runs on the host" claim is now a default rather than a constraint.
+* **Update**: [live testing](/playbooks/live-testing.md) and [packages overview](/packages/overview.md) — the full-pipeline run is `scripts/run_pipeline.py`, not `python -m worker_crawl`, which subscribes nothing and fails on its first publish.
 * **Creation**: Established [LLM Observability](/observability.md) — every LLM and hosted-embedding call is captured to file storage with its full prompt, response, tokens and cost, correlated by `interaction_id` so one chat question can be costed as a sum over one key.
 * **Update**: [LLM pricing](/reference/llm-pricing.md) no longer describes a Postgres `llm_traces` table — records are JSON in file storage, `estimated_cost_usd` is a string or null, and the queries are `jq`. Adds the explicit statement that no Berget rate is published in this repo, so default-configuration records carry tokens and a null cost.
 * **Update**: [shared](/packages/shared.md) — `StorageBackend` gains `add_json`/`iter_json` append-style JSON streams, with the deliberate local-`.jsonl` vs GCS-object-per-record divergence and the `flock` requirement documented.

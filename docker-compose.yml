@@ -10,6 +10,53 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    # The app services wait on this. Without it they start while Postgres is
+    # still initialising and die on a refused connection.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d overklagan"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # The whole ingestion chain in one container. Seven worker containers would
+  # not work: QUEUE_BACKEND=sync dispatches in-process, so each container would
+  # hold its own empty broker. See scripts/run_pipeline.py.
+  pipeline:
+    profiles: [app]
+    build: .
+    command: python scripts/run_pipeline.py
+    # One-shot: it crawls, ingests, exits. A rerun is a deliberate
+    # `docker compose run`, not a restart policy.
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # `localhost` inside a container is the container itself.
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/overklagan
+      # Absolute, and under the mount. Pointed at the host's own ./data/pdfs so
+      # a PDF downloaded on the host and one downloaded in the container
+      # resolve to the same file — storage keys are relative to this path.
+      LOCAL_STORAGE_PATH: /data/pdfs
+    volumes:
+      - ./data:/data
+
+  api:
+    profiles: [app]
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/overklagan
+      LOCAL_STORAGE_PATH: /data/pdfs
+    volumes:
+      - ./data:/data
 
   minio:
     image: minio/minio

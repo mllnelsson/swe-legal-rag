@@ -59,6 +59,10 @@ async def api_app(truncate_sessions) -> AsyncGenerator[Any, None]:
     app = create_app()
     app.state.embedding_provider = MagicMock()
     app.state.storage = MagicMock()
+    # The lifespan never runs under this fixture, so every provider the chat route
+    # reads off app.state has to be placed here by hand.
+    app.state.structured_llm_provider = MagicMock()
+    app.state.chat_llm_provider = MagicMock()
 
     async def _override_db() -> AsyncGenerator[AsyncSession, None]:
         async with factory() as s:

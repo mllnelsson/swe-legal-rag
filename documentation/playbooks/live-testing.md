@@ -12,7 +12,8 @@ How to run the system locally end-to-end for manual testing and verification.
 
 ## Prerequisites
 
-1. Docker running (`docker compose up -d` — starts Postgres with pgvector)
+1. Postgres 17 + pgvector running on `localhost:5432`, with the `postgres` role and the
+   `overklagan` database — see [local dev](/playbooks/local-dev.md)
 2. Dependencies installed: `uv sync --all-packages`
 3. Environment configured: `cp .env.example .env` and edit values (see below)
 4. Migrations applied: `uv run alembic upgrade head`
@@ -332,7 +333,9 @@ See the [testing strategy](/testing.md) for the full unit/integration split.
 | `ValidationError: crawl_api_key` | `CRAWL_API_KEY` not set in `.env` | Add the key to your `.env` — see [crawl source](/reference/crawl-source.md) |
 | `UnknownYearError: No decision tags found for ...` | Requested a year with no tag upstream | Check the available range in the message; use `--years all` to backfill everything |
 | Downloads all fail on a `302` | `follow_redirects` disabled in the download client | Decision URLs redirect to `/filer/...pdf`; the client must follow redirects |
-| `Connection refused` on port 5432 | Postgres not running | `docker compose up -d` |
+| `Connection refused` on port 5432 | Postgres not running | `docker compose up -d db` (Linux) or `brew services start postgresql@17` (macOS) |
+| `role "postgres" does not exist` | macOS only — Homebrew's initdb made your macOS user the superuser | `createuser -s postgres` — see [local dev](/playbooks/local-dev.md) |
+| `psql: command not found` | macOS only — `postgresql@17` is keg-only, so its `bin` is not linked onto `PATH` | Add `$(brew --prefix)/opt/postgresql@17/bin` to `PATH` in your shell profile |
 | `relation "documents" does not exist` | Migrations not applied | `uv run alembic upgrade head` |
 | `berget_api_key is required` (or `gemini_api_key is required`) | LLM/embedding provider key not set | Add `BERGET_API_KEY` (default provider) — or `GEMINI_API_KEY` if `LLM_PROVIDER=gemini` — to `.env` |
 | Crawl finds 0 new documents | All URLs already in DB | Reset state (see above) or use a different source URL |

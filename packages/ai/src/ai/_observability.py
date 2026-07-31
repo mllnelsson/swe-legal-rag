@@ -39,7 +39,12 @@ from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
 
-from llm_core import LLMCallRecord, Message, set_trace_recorder
+from llm_core import (
+    LLMCallRecord,
+    Message,
+    get_trace_recorder,
+    set_trace_recorder,
+)
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from shared.config import StorageSettings
@@ -304,7 +309,17 @@ def install_file_tracing(
     Call once at startup, before any LLM call. Failing to install leaves no
     recorder at all, which llm-core handles as "tracing off" — observability
     must never be able to stop a worker or the API from starting.
+
+    Calling it twice returns the recorder already installed rather than building
+    a second one. Composing several worker `main()`s into one process
+    (`scripts/run_pipeline.py`) does exactly that, and a second recorder would
+    mean a second writer thread and a second `atexit` hook with nothing left
+    feeding the first.
     """
+    installed = get_trace_recorder()
+    if isinstance(installed, FileTraceRecorder):
+        return installed
+
     config = config or LLMTraceConfig()
     if not config.enabled:
         logger.info("LLM tracing disabled (LLM_TRACE_ENABLED=false)")

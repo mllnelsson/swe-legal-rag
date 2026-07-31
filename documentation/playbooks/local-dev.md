@@ -1,9 +1,9 @@
 ---
 type: Playbook
 title: Local Development Environment
-description: How to run the whole system locally by swapping GCP dependencies for local equivalents via environment variables.
-tags: [local-dev, docker, environment, workflow]
-timestamp: 2026-07-27T00:00:00Z
+description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
+tags: [local-dev, postgres, homebrew, docker, environment, workflow]
+timestamp: 2026-07-29T00:00:00Z
 ---
 
 # Local Development Environment
@@ -11,23 +11,89 @@ timestamp: 2026-07-27T00:00:00Z
 ## Principle
 
 Every GCP dependency has a local equivalent. Swapping between local and GCP is a config
-change via environment variables — no code changes. Docker Compose manages the
-infrastructure services; application code runs directly on the host via `uv`.
+change via environment variables — no code changes.
 
-## Docker Compose Services
+Postgres is the only required dependency. **How you get it is platform-dependent** — a
+container on Linux, a native install on macOS — but everything above the
+`DATABASE_URL` is identical either way. Application code always runs directly on the
+host via `uv`.
 
-### Postgres + pgvector
+## Postgres + pgvector
 
-The only required service. Runs the same SQL interface as Cloud SQL.
+The only required dependency. Runs the same SQL interface as Cloud SQL.
 
-- Image: `ankane/pgvector`
-- Port: `5432`
-- Persistent volume for data across restarts
-- Initialized with pgvector extension enabled
+- Postgres **17**, pgvector **0.8.5**, on `localhost:5432`
 - Swedish text search config available out of the box (built into Postgres)
 - Application code connects via `asyncpg` (async driver); Alembic migrations use the
   sync `psycopg` driver. Both are configured automatically by `shared/db.py` — the
   `DATABASE_URL` env var may use any `postgresql://` scheme.
+
+Pick the path for your platform. Both end at the same place: a server on
+`localhost:5432` owning an `overklagan` database that
+`postgresql://postgres:postgres@localhost:5432/overklagan` reaches. Do not run both —
+they contend for port 5432.
+
+### Linux — Docker Compose
+
+```bash
+docker compose up -d db     # ankane/pgvector, healthchecked, persistent volume
+```
+
+The image's entrypoint applies `docker/init.sql`, which enables the extension. The
+`postgres` role and the `overklagan` database come from the image's own environment, so
+`.env.example`'s `DATABASE_URL` works with no further setup.
+
+### macOS — Homebrew (native)
+
+Docker Desktop on macOS runs Postgres inside a VM, which buys nothing here and costs
+bind-mount performance. Install natively instead:
+
+```bash
+brew install postgresql@17 pgvector
+brew services start postgresql@17
+```
+
+`pgvector` is a separate formula — installing `postgresql@17` alone does not provide it.
+The 0.8.5 bottle builds against both `postgresql@17` and `postgresql@18`, so either
+Postgres version works.
+
+`postgresql@17` is a **keg-only** versioned formula, so Homebrew does not link its `bin`
+onto `PATH` and `psql`, `createdb` and `pg_config` are not found. Add it to your shell
+profile once — Intel Macs use the `/usr/local` prefix, Apple Silicon `/opt/homebrew`:
+
+```bash
+echo 'export PATH="/usr/local/opt/postgresql@17/bin:$PATH"' >> ~/.zshrc
+```
+
+Homebrew's `initdb` makes **your macOS user** the superuser, so the `postgres` role does
+not exist. Creating it is what lets `DATABASE_URL` stay exactly as `.env.example` ships
+it, identical to the Linux path:
+
+```bash
+createuser -s postgres
+createdb -O postgres overklagan
+```
+
+Local connections use trust authentication, so the password in
+`postgresql://postgres:postgres@localhost:5432/overklagan` is never checked — only the
+role has to exist. That keeps one `DATABASE_URL` working across platforms, the optional
+containers, and the integration-test default in `shared/tests/integration/conftest.py`.
+
+### Migrations (both platforms)
+
+```bash
+uv run alembic upgrade head
+```
+
+`alembic/versions/001_initial_schema.py` runs `CREATE EXTENSION IF NOT EXISTS vector`
+itself, so the extension needs no separate step — which is also why `docker/init.sql` is
+belt-and-braces rather than load-bearing. Verify with `psql -d overklagan -c '\dx'`,
+which must list `vector | 0.8.5`.
+
+## Optional Docker Compose Services
+
+These have no native equivalent set up and are only reachable through Docker. Both are
+optional, and neither is needed for ordinary development.
 
 ### MinIO (optional)
 
@@ -46,15 +112,18 @@ synchronous queue implementation is faster to work with and easier to debug.
 - Image: `redis:7-alpine`
 - Port: `6379`
 
-## What Runs Outside Compose
+## What Runs on the Host
 
-Application code runs on the host, not in containers. This keeps iteration fast — no
-rebuilds, no container restarts.
+Application code runs on the host, against the Homebrew Postgres. This keeps iteration
+fast — no rebuilds, no container restarts.
 
 - **API server:** `uv run` the FastAPI app directly with hot reload
 - **Workers:** `uv run` each worker as a standalone process, or invoke the service layer
   directly from a script/REPL
-- **Migrations:** `uv run alembic upgrade head` against the Docker Postgres instance
+- **Migrations:** `uv run alembic upgrade head`
+
+This is the default, not a constraint. The same code also runs in containers behind the
+`app` compose profile — see [Running in Containers](#running-in-containers).
 
 ## Environment Config
 
@@ -185,6 +254,68 @@ uv run --package worker-embed python -m worker_embed
   use, so the first embed (and the first API query, if the API is also configured for
   `local`) is slow. Subsequent runs use the cached model.
 
+## Running in Containers
+
+**Optional, and separate from the `db` service above.** Running *application code* in
+containers is a different choice from running Postgres in one: a macOS setup with native
+Postgres never needs this, and a Linux setup using `docker compose up -d db` still runs
+its application code on the host by default. This path exists for CI, for a
+container-parity check, and because the repo-root `Dockerfile` is the closest thing to a
+Cloud Run image.
+
+Two compose services run application code from a single image built by the repo-root
+`Dockerfile` (`python:3.12-slim` + `uv sync --all-packages`). Both sit behind the `app`
+profile, so plain `docker compose up -d` starts Postgres only.
+
+| Service | Command | Shape |
+|---|---|---|
+| `pipeline` | `python scripts/run_pipeline.py` | One-shot: crawl → … → embed, then exits. `restart: "no"` |
+| `api` | `uvicorn api.main:app --host 0.0.0.0 --port 8000` | Long-running, published on host port 8000 |
+
+**One image, two services — and one pipeline container, not seven.** A container per
+worker cannot work while `QUEUE_BACKEND=sync`: the broker is a module-level singleton and
+a publish is a direct call into a handler registered in the *same* process, so each
+worker container would hold an empty broker and fail on its first publish. Seven
+containers matching the Cloud Run topology need a real queue backend first — that is
+[story 12 / GCP layout](/reference/gcp-layout.md) territory.
+
+```bash
+docker compose build
+docker compose up -d db                                  # healthcheck gates the rest
+docker compose run --rm pipeline alembic upgrade head    # dev group carries alembic
+
+docker compose run --rm pipeline                                          # current year
+docker compose run --rm pipeline python scripts/run_pipeline.py --years all
+
+docker compose --profile app up -d api                   # http://localhost:8000
+docker compose --profile app down
+```
+
+### Environment the containers override
+
+`.env` is loaded via `env_file`, then these two are overridden in `docker-compose.yml`
+because the host values are wrong inside a container:
+
+| Variable | Host value | Container value | Why |
+|---|---|---|---|
+| `DATABASE_URL` | `…@localhost:5432/…` | `…@db:5432/…` | `localhost` in a container is the container |
+| `LOCAL_STORAGE_PATH` | `./data/pdfs` | `/data/pdfs` | Relative to CWD otherwise; must be absolute and match the mount |
+
+`./data:/data` is a single bind mount carrying both the PDF tree and the trace stream.
+`LOCAL_STORAGE_PATH` is set to the same `pdfs` subdirectory the host uses, so storage
+keys resolve to the same files either way — a PDF downloaded on the host is readable by
+a container run, and traces from host, `pipeline` and `api` all land under
+`data/pdfs/llm-traces/{date}/`.
+
+Traces need nothing special from the mount. `./data` is a *directory* bind mount, and the
+recorder writes one **new** `.jsonl` object per flushed batch rather than appending to a
+shared file — so new objects appear on the host as they are written, a batch that
+straddles UTC midnight splits into the right day, and host, `pipeline` and `api` never
+contend over the same file. See [observability](/observability.md) for the layout.
+
+The image is for local development only. It installs the dev dependency group (that is
+where `alembic` comes from) and the whole workspace; a Cloud Run image wants neither.
+
 ## Interface Mapping
 
 | Concern | Env var | Local value | GCP value |
@@ -216,19 +347,31 @@ processes.
 ## First-time Setup
 
 ```bash
-cp .env.example .env        # copy config template
+# 1. Postgres — see "Postgres + pgvector" above; one of:
+docker compose up -d db                              # Linux
+brew install postgresql@17 pgvector && \
+  brew services start postgresql@17 && \
+  createuser -s postgres && createdb -O postgres overklagan   # macOS
+
+# 2. The rest is identical on both
+cp .env.example .env        # copy config template — DATABASE_URL needs no edit
 uv sync --all-packages      # install all workspace packages
-docker compose up -d        # start Postgres
-uv run alembic upgrade head # apply migrations
+uv run alembic upgrade head # apply migrations; also creates the vector extension
 ```
+
+Verify before going further — `psql -d overklagan -c '\dx'` lists `vector | 0.8.5`, and
+`psql -d overklagan -c '\d chunks'` shows `embedding | vector(1024)` with the
+`ix_chunks_embedding_hnsw` and `ix_chunks_tsv_gin` indexes.
 
 ## Typical Dev Workflow
 
-1. `docker compose up -d` — starts Postgres (and optionally MinIO/Redis)
-2. `uv run alembic upgrade head` — apply migrations
-3. Start the API: `uv run --package api uvicorn api.main:app --reload`
-4. Run a worker: `uv run --package worker-crawl python -m worker_crawl`
-5. Iterate — code changes reflect immediately, no container rebuilds
+Postgres runs in the background either way — a Compose service or a `brew services`
+daemon — so there is nothing to start each day.
+
+1. `uv run alembic upgrade head` — apply any new migrations
+2. Start the API: `uv run --package api uvicorn api.main:app --reload`
+3. Run the pipeline: `uv run python scripts/run_pipeline.py`
+4. Iterate — code changes reflect immediately, no container rebuilds
 
 ## Data Seeding
 
@@ -238,8 +381,10 @@ the local database with realistic data for frontend and retrieval development.
 
 ## Approved Docker Images
 
-Only the images listed below are approved for use in this project. Pin to the tags shown
-— do not use `latest` or switch to alternative images without discussion.
+Applies wherever containers are used — the Linux `db` service, the optional
+[container path](#running-in-containers). A macOS native setup uses none of them. Only
+the images listed below are approved for use in this project. Pin to the tags shown — do
+not use `latest` or switch to alternative images without discussion.
 
 | Service | Image | Tag | Purpose |
 |---|---|---|---|

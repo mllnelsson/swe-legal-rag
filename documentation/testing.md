@@ -20,7 +20,7 @@ interface boundaries defined in [`shared`](/packages/shared.md) and
 [`ai`](/packages/ai.md). Fast, no I/O.
 
 **Integration tests** — exercise a full module top-to-bottom. Use real local
-replacements (Docker Postgres, local filesystem). Validate wiring, not just logic.
+replacements (a local Postgres, local filesystem). Validate wiring, not just logic.
 
 ## What to Test
 
@@ -100,8 +100,11 @@ and those call sites are the ones under test/mocked.
 One level up. Exercise a full module's service layer with real local dependencies.
 
 **Setup:**
-- Docker Postgres with pgvector (same `ankane/pgvector` image as
-  [local dev](/playbooks/local-dev.md))
+- A Postgres with pgvector on `DATABASE_URL` — the Homebrew install from
+  [local dev](/playbooks/local-dev.md). The conftest reads `DATABASE_URL` and does not
+  care how the server got there
+- Migrations applied (`uv run alembic upgrade head`), so the schema matches production
+  rather than whatever `Base.metadata.create_all()` happens to produce
 - Local filesystem for storage (no MinIO needed at this level)
 - Real `ai` interfaces with recorded fixtures or a cheap live model call where cost is
   negligible
@@ -161,7 +164,7 @@ packages/
 # All unit tests (fast, no infra needed)
 uv run pytest -m "not integration"
 
-# Everything, including integration tests (requires Docker Postgres running)
+# Everything, including integration tests (requires a local Postgres on DATABASE_URL)
 uv run pytest
 
 # Single package
