@@ -403,6 +403,18 @@ class TestInstallFileTracing:
         finally:
             set_trace_recorder(None)
 
+    def test_installing_twice_reuses_the_first_recorder(self, storage, config) -> None:
+        """One process, one writer thread — however many main()s composed it."""
+        set_trace_recorder(None)
+        try:
+            first = install_file_tracing(storage, config)
+            second = install_file_tracing(FakeStorage(), config)
+
+            assert second is first
+            assert get_trace_recorder() is first
+        finally:
+            set_trace_recorder(None)
+
     def test_unbuildable_backend_leaves_tracing_off_rather_than_failing(
         self, monkeypatch
     ) -> None:
