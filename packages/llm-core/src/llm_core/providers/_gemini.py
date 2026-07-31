@@ -12,12 +12,35 @@ from llm_core._types import (
     StreamChunk,
     ToolCall,
     ToolDefinition,
+    Usage,
 )
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from llm_core._config import LLMConfig
+
+
+def _usage_from_gemini(usage_metadata: Any) -> Usage | None:
+    if usage_metadata is None:
+        return None
+
+    candidates = getattr(usage_metadata, "candidates_token_count", None)
+    thoughts = getattr(usage_metadata, "thoughts_token_count", None)
+
+    # Thinking tokens bill at the output rate but are excluded from
+    # candidates_token_count, so folding them in is what keeps the cost
+    # estimate honest on the 2.5 models.
+    if candidates is None and thoughts is None:
+        output_tokens = None
+    else:
+        output_tokens = (candidates or 0) + (thoughts or 0)
+
+    return Usage(
+        input_tokens=getattr(usage_metadata, "prompt_token_count", None),
+        output_tokens=output_tokens,
+        total_tokens=getattr(usage_metadata, "total_token_count", None),
+    )
 
 
 class GeminiProvider:
@@ -31,6 +54,7 @@ class GeminiProvider:
         self._model = config.model
         self._temperature = config.temperature
         self._max_tokens = config.max_tokens
+        self._provider_name = config.provider
 
     def _split_system(
         self, messages: list[Message]
@@ -112,7 +136,21 @@ class GeminiProvider:
         else:
             msg = Message(role=Role.assistant, content="".join(text_parts))
 
-        return LLMResponse(message=msg, raw=response)
+        return LLMResponse(
+            message=msg,
+            raw=response,
+            usage=_usage_from_gemini(getattr(response, "usage_metadata", None)),
+            model=self._response_model(response),
+            provider=self._provider_name,
+        )
+
+    def _response_model(self, response: Any) -> str:
+        """The model version the API says it served, not the one we asked for.
+
+        A name like "gemini-2.5-flash" resolves to a dated build, and cost must
+        be attributed to what actually ran.
+        """
+        return getattr(response, "model_version", None) or self._model
 
     async def generate(
         self,
@@ -185,7 +223,18 @@ class GeminiProvider:
     async def _iter_stream(self, sdk_stream: Any) -> AsyncGenerator[StreamChunk, None]:
         try:
             async for chunk in sdk_stream:
-                if chunk.text:
-                    yield StreamChunk(text=chunk.text, raw=chunk)
+                usage = _usage_from_gemini(getattr(chunk, "usage_metadata", None))
+                # Usage rides along cumulatively and the final report often
+                # arrives on a chunk with no text; yielding a text-less chunk is
+                # how those counts reach the trace. Consumers skip empty text.
+                if not chunk.text and usage is None:
+                    continue
+                yield StreamChunk(
+                    text=chunk.text or "",
+                    raw=chunk,
+                    usage=usage,
+                    model=self._response_model(chunk),
+                    provider=self._provider_name,
+                )
         except Exception as exc:
             raise ProviderError(str(exc), exc) from exc

@@ -16,6 +16,12 @@ from shared.config import StorageSettings
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Storage first, then tracing, then anything that makes an API call — the
+    # dimension probe below is a real billed embedding and should be recorded
+    # like any other.
+    app.state.storage = shared.create_storage_backend(StorageSettings())
+    ai.install_file_tracing(app.state.storage)
+
     embedding_provider = ai.create_embedding_provider()
 
     # Verifying here moves the model load off the first user query and onto startup,
@@ -27,7 +33,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.embedding_provider = embedding_provider
     app.state.structured_llm_provider = create_structured_llm_provider()
     app.state.chat_llm_provider = create_chat_llm_provider()
-    app.state.storage = shared.create_storage_backend(StorageSettings())
     yield
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +10,13 @@ from pydantic import BaseModel
 from llm_core._config import LLMConfig, create_provider
 from llm_core._exceptions import MaxIterationsError, ToolExecutionError
 from llm_core._protocol import LLMProvider
+from llm_core._tracing import (
+    LLMOperation,
+    trace_chunk,
+    trace_context,
+    trace_response,
+    traced_call,
+)
 from llm_core._types import LLMResponse, Message, Role, ToolCall, ToolDefinition
 
 ToolExecutor = Callable[..., Awaitable[Any]]
@@ -35,24 +42,56 @@ def _resolve_provider(
     return create_provider(config)
 
 
+async def _generate_traced(
+    p: LLMProvider,
+    messages: list[Message],
+    operation: LLMOperation,
+    *,
+    tools: list[ToolDefinition] | None = None,
+    response_schema: type[BaseModel] | None = None,
+) -> LLMResponse:
+    """One provider round-trip, traced whether it succeeds or fails."""
+    with traced_call(operation, messages) as trace:
+        response = await p.generate(
+            messages, tools=tools, response_schema=response_schema
+        )
+        trace_response(trace, response)
+        return response
+
+
 async def generate(
     messages: list[Message],
     *,
     provider: LLMProvider | None = None,
     config: LLMConfig | None = None,
 ) -> LLMResponse:
-    return await _resolve_provider(provider, config).generate(messages)
+    p = _resolve_provider(provider, config)
+    return await _generate_traced(p, messages, LLMOperation.generate)
 
 
-async def generate_structured(
+async def generate_structured[T: BaseModel](
     messages: list[Message],
-    response_model: type[BaseModel],
+    response_model: type[T],
     *,
     provider: LLMProvider | None = None,
     config: LLMConfig | None = None,
-) -> BaseModel:
+) -> T:
+    """Generate and parse into `response_model`, whose type flows to the caller.
+
+    Generic so callers get the model they asked for rather than a bare
+    `BaseModel` they must re-narrow with a cast or an assert.
+    """
     p = _resolve_provider(provider, config)
-    response = await p.generate(messages, response_schema=response_model)
+    response = await _generate_traced(
+        p,
+        messages,
+        LLMOperation.generate_structured,
+        response_schema=response_model,
+    )
+    # The trace is already closed and marked successful: the call was made and
+    # billed, and a schema violation below is a caller-side failure, not a
+    # provider one. The record holds the exact text that failed to parse, which
+    # is the only thing worth having when debugging it.
     return response_model.model_validate_json(response.message.content)
 
 
@@ -61,10 +100,16 @@ async def generate_stream(
     *,
     provider: LLMProvider | None = None,
     config: LLMConfig | None = None,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str, None]:
     p = _resolve_provider(provider, config)
-    async for chunk in await p.generate_stream(messages):
-        yield chunk.text
+    with traced_call(LLMOperation.generate_stream, messages) as trace:
+        stream = await p.generate_stream(messages)
+        async for chunk in stream:
+            trace_chunk(trace, chunk)
+            # Usage arrives on a text-less chunk; forwarding it would surface
+            # as an empty token to the consumer.
+            if chunk.text:
+                yield chunk.text
 
 
 async def tool_loop(
@@ -82,7 +127,13 @@ async def tool_loop(
     history = list(messages)
 
     for iteration in range(1, max_iterations + 1):
-        response = await p.generate(history, tools=tools)
+        # One record per iteration: every pass through the loop is its own
+        # billed API call, and collapsing them would hide the cost of a loop
+        # that took ten turns to answer.
+        with trace_context(tool_loop_iteration=iteration):
+            response = await _generate_traced(
+                p, history, LLMOperation.tool_loop, tools=tools
+            )
 
         if not response.message.tool_calls:
             history.append(response.message)

@@ -16,6 +16,17 @@ from llm_core._service import (
     generate_structured,
     tool_loop,
 )
+from llm_core._tracing import (
+    LLMCallRecord,
+    LLMOperation,
+    TraceRecorder,
+    current_trace_context,
+    get_trace_recorder,
+    set_trace_recorder,
+    trace_context,
+    trace_outcome,
+    traced_call,
+)
 from llm_core._types import (
     LLMResponse,
     Message,
@@ -23,6 +34,7 @@ from llm_core._types import (
     StreamChunk,
     ToolCall,
     ToolDefinition,
+    Usage,
 )
 
 __all__ = [
@@ -35,6 +47,18 @@ __all__ = [
     "ToolDefinition",
     "LLMResponse",
     "StreamChunk",
+    "Usage",
+    "LLMOperation",
+    "LLMCallRecord",
+    "TraceRecorder",
+    "set_trace_recorder",
+    "get_trace_recorder",
+    "trace_context",
+    "current_trace_context",
+    # For callers that reach a provider themselves — embeddings, say — and so
+    # trace a call this package never makes.
+    "traced_call",
+    "trace_outcome",
     "generate",
     "generate_stream",
     "generate_structured",

@@ -6,6 +6,7 @@ import signal
 
 from dotenv import load_dotenv
 
+from ai import install_file_tracing, trace_context
 from ai.providers.roles import create_summarize_llm_provider
 from shared.config import get_settings
 from shared.db import get_async_session
@@ -18,11 +19,16 @@ from worker_chunk.service import process_chunking
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Attribution for traces from this worker; inner calls name themselves.
+_SOURCE = "worker-chunk"
+
 
 def main() -> None:
     load_dotenv()
     settings = get_settings()
     chunk_settings = get_chunk_settings()
+
+    install_file_tracing()
     llm_provider = create_summarize_llm_provider()
 
     publisher = create_queue_publisher(settings.queue)
@@ -43,7 +49,15 @@ def main() -> None:
                     llm_provider=llm_provider,
                 )
 
-        asyncio.run(_handle())
+        # Set outside asyncio.run: the runner copies the current context when
+        # it builds the loop, so everything inside inherits it. The document id
+        # is what ties this worker's cost back to the document that caused it.
+        with trace_context(
+            document_id=str(message.document_id),
+            task_id=str(message.task_id),
+            source=_SOURCE,
+        ):
+            asyncio.run(_handle())
 
     subscriber.subscribe(chunk_settings.chunk_topic, handle_message)
 

@@ -6,7 +6,12 @@ import signal
 
 from dotenv import load_dotenv
 
-from ai import create_embedding_provider, verify_embedding_dimension
+from ai import (
+    create_embedding_provider,
+    install_file_tracing,
+    trace_context,
+    verify_embedding_dimension,
+)
 from shared.config import get_settings
 from shared.db import get_async_session
 from shared.queue import create_queue_subscriber
@@ -18,12 +23,18 @@ from worker_embed.service import process_embedding
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Attribution for traces from this worker; inner calls name themselves.
+_SOURCE = "worker-embed"
+
 
 def main() -> None:
     load_dotenv()
     settings = get_settings()
     embed_settings = get_embed_settings()
 
+    # Before the provider is built, so the dimension probe below — a real
+    # billed embedding on a hosted provider — is recorded like any other call.
+    install_file_tracing()
     embedding_provider = create_embedding_provider()
 
     # Fail before consuming the queue rather than once per document. Also warms the
@@ -45,7 +56,15 @@ def main() -> None:
                     session=session,
                 )
 
-        asyncio.run(_handle())
+        # Set outside asyncio.run: the runner copies the current context when
+        # it builds the loop, so everything inside inherits it. The document id
+        # is what ties this worker's cost back to the document that caused it.
+        with trace_context(
+            document_id=str(message.document_id),
+            task_id=str(message.task_id),
+            source=_SOURCE,
+        ):
+            asyncio.run(_handle())
 
     subscriber.subscribe(embed_settings.embed_topic, handle_message)
 

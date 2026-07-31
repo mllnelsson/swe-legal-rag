@@ -13,6 +13,7 @@ from llm_core._types import (
     StreamChunk,
     ToolCall,
     ToolDefinition,
+    Usage,
 )
 
 if TYPE_CHECKING:
@@ -24,6 +25,16 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from llm_core._config import LLMConfig
+
+
+def _usage_from_openai(usage: Any) -> Usage | None:
+    if usage is None:
+        return None
+    return Usage(
+        input_tokens=getattr(usage, "prompt_tokens", None),
+        output_tokens=getattr(usage, "completion_tokens", None),
+        total_tokens=getattr(usage, "total_tokens", None),
+    )
 
 
 class OpenAiCompatibleProvider:
@@ -48,6 +59,8 @@ class OpenAiCompatibleProvider:
         self._model = config.model
         self._temperature = config.temperature
         self._max_tokens = config.max_tokens
+        self._provider_name = config.provider
+        self._stream_usage = config.stream_usage
 
     def _to_openai_message(self, msg: Message) -> dict[str, Any]:
         match msg.role:
@@ -120,7 +133,21 @@ class OpenAiCompatibleProvider:
             content=message.content or "",
             tool_calls=tuple(tool_calls),
         )
-        return LLMResponse(message=msg, raw=raw)
+        return LLMResponse(
+            message=msg,
+            raw=raw,
+            usage=_usage_from_openai(getattr(raw, "usage", None)),
+            model=self._response_model(raw),
+            provider=self._provider_name,
+        )
+
+    def _response_model(self, raw: Any) -> str:
+        """The model the API says it served, not the one we asked for.
+
+        Hosts routinely resolve an alias to a dated build, and cost must be
+        attributed to what actually ran.
+        """
+        return getattr(raw, "model", None) or self._model
 
     async def generate(
         self,
@@ -176,6 +203,7 @@ class OpenAiCompatibleProvider:
                 model=self._model,
                 messages=openai_messages,
                 stream=True,
+                stream_options={"include_usage": True} if self._stream_usage else omit,
                 temperature=self._temperature,
                 max_tokens=self._max_tokens if self._max_tokens is not None else omit,
             )
@@ -187,10 +215,28 @@ class OpenAiCompatibleProvider:
     async def _iter_stream(self, sdk_stream: Any) -> AsyncGenerator[StreamChunk, None]:
         try:
             async for chunk in sdk_stream:
+                usage = _usage_from_openai(getattr(chunk, "usage", None))
+                # The usage report arrives in a final chunk that carries no
+                # choices. Skipping every choice-less chunk would throw away the
+                # only token counts the stream ever reports.
                 if not chunk.choices:
+                    if usage is not None:
+                        yield StreamChunk(
+                            text="",
+                            raw=chunk,
+                            usage=usage,
+                            model=self._response_model(chunk),
+                            provider=self._provider_name,
+                        )
                     continue
                 delta = chunk.choices[0].delta
                 if delta.content:
-                    yield StreamChunk(text=delta.content, raw=chunk)
+                    yield StreamChunk(
+                        text=delta.content,
+                        raw=chunk,
+                        usage=usage,
+                        model=self._response_model(chunk),
+                        provider=self._provider_name,
+                    )
         except Exception as exc:
             raise ProviderError(str(exc), exc) from exc

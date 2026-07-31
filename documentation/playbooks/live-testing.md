@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -47,6 +47,7 @@ LLM_MODEL_CHAT=zai-org/GLM-5.2
 EMBEDDING_PROVIDER=berget
 EMBEDDING_MODEL=intfloat/multilingual-e5-large
 EMBEDDING_DIMENSION=1024
+LLM_TRACE_ENABLED=true
 ```
 
 To run on Gemini instead, set `LLM_PROVIDER=gemini`, provide `GEMINI_API_KEY`, and set
@@ -249,6 +250,46 @@ All workers log to stdout. Key things to look for:
 - `Metadata extracted for <id>` — metadata step complete
 - Any `ERROR` lines — failures to investigate
 
+## Verifying LLM Traces
+
+With `LLM_TRACE_ENABLED=true`, every LLM and hosted-embedding call lands in a daily
+directory of batched JSONL objects. After a pipeline run:
+
+```bash
+ls data/pdfs/llm-traces/$(date -u +%F)/
+cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl | wc -l
+
+cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+  | jq -r '[.operation, .context.source, .model,
+            .usage.total_tokens, .success] | @tsv' | head
+```
+
+Expect a **small number** of `.jsonl` objects — records are batched, so this is nowhere
+near one file per call — at least one record per LLM-using worker that fired, a non-null
+`model` and `usage.total_tokens` on each, and `success` true.
+
+> **Cost is answered in tokens, not currency.** No rate table lives in this repo and no
+> Berget rate is published here (see [LLM pricing](/reference/llm-pricing.md)). The
+> records carry `model` and `usage`; pricing them is an analysis step, and a rate
+> obtained later applies to these same records.
+
+To cost a single chat question, start the API, send one message, and note the
+`Chat interaction <uuid> for session …` line in the API log:
+
+```bash
+cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+  | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
+      | [.context.source, .model, .usage.input_tokens,
+         .usage.output_tokens] | @tsv'
+```
+
+Expect at least four calls — `ai.decompose_query`, `ai.embed`, `ai.synthesize_answer`,
+plus `api.retriever.rerank` when reranking is on.
+
+Closing the browser tab mid-answer should still leave an `ai.synthesize_answer` record,
+with `success: false`, `error.type` `GeneratorExit`, and the partial text that had been
+delivered. Full schema and query recipes: [LLM Observability](/observability.md).
+
 ## Resetting State
 
 To re-run the pipeline from scratch:
@@ -263,6 +304,9 @@ uv run alembic upgrade head
 # Clear downloaded PDFs
 rm -rf ./data/pdfs/*
 ```
+
+> This also wipes `data/pdfs/llm-traces/`, since traces share the storage root. Copy
+> that directory first if the cost history from the run matters — nothing else holds it.
 
 ## Running Tests
 

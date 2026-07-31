@@ -16,6 +16,10 @@ class LLMConfig(BaseSettings):
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     berget_api_key: str | None = Field(default=None, alias="BERGET_API_KEY")
     base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
+    # Asking for token usage on a stream is an extra request parameter, and a
+    # host that rejects it fails the whole call. Streaming is the user-facing
+    # chat path, so this stays switchable without a code change.
+    stream_usage: bool = Field(default=True, alias="LLM_STREAM_USAGE")
 
 
 def create_provider(config: LLMConfig | None = None) -> LLMProvider:

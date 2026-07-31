@@ -6,13 +6,27 @@ from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from ai import SynthesizeRequest, decompose_query, synthesize_answer, trace_context
 from fastapi.testclient import TestClient
+from llm_core import (
+    LLMResponse,
+    Message,
+    Role,
+    StreamChunk,
+    generate_structured,
+    set_trace_recorder,
+)
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.main import create_app
 from api.routes.chat import _format_sse, _get_db
 from api.services.answerer import DoneEvent, SourcesEvent, TokenEvent
 from shared.dtos.session import SessionRead
+
+
+class _RankStub(BaseModel):
+    ranked_indices: list[int] = []
 
 
 def _make_session(session_id: uuid.UUID | None = None) -> SessionRead:
@@ -319,3 +333,140 @@ class TestHealthz:
             response = client.get("/healthz")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+
+class TestChatTracing:
+    """One question, one interaction id — the basis for costing a question.
+
+    The trace context is entered inside the SSE generator, which Starlette
+    drives after the route handler has already returned. These tests exist to
+    prove that context still reaches every nested call, including the streaming
+    synthesis that outlives the handler body.
+    """
+
+    def setup_method(self):
+        self.chat_session = _make_session()
+        self.app, self.client = _make_client()
+        self.records = []
+
+        class Recording:
+            def record(inner, record):
+                self.records.append(record)
+
+        set_trace_recorder(Recording())
+
+    def teardown_method(self):
+        set_trace_recorder(None)
+        self.app.dependency_overrides.clear()
+
+    def _answer_query_making_real_calls(self):
+        """Stands in for the retrieval pipeline, making the calls it would make."""
+
+        async def _gen(*args, **kwargs):
+            structured = AsyncMock()
+            structured.generate = AsyncMock(
+                return_value=LLMResponse(
+                    message=Message(
+                        role=Role.assistant,
+                        content=(
+                            '{"categories": [], "entity_refs": [],'
+                            ' "semantic_query": "kyrka"}'
+                        ),
+                    )
+                )
+            )
+            await decompose_query("Vad gäller?", provider=structured)
+
+            with trace_context(source="api.retriever.rerank"):
+                await generate_structured(
+                    [Message(role=Role.user, content="rank")],
+                    _RankStub,
+                    provider=structured,
+                )
+
+            async def _stream(*_args, **_kwargs):
+                for text in ["Sva", "r"]:
+                    yield StreamChunk(text=text)
+
+            chat = AsyncMock()
+            chat.generate_stream = AsyncMock(side_effect=_stream)
+            request = SynthesizeRequest(question="Vad gäller?", chunks=[])
+            async for token in synthesize_answer(request, provider=chat):
+                yield TokenEvent(text=token)
+
+            yield SourcesEvent(sources=[])
+            yield DoneEvent()
+
+        return _gen
+
+    def test_every_call_shares_one_interaction_id(self):
+        with (
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch(
+                "api.routes.chat.answer_query",
+                self._answer_query_making_real_calls(),
+            ),
+        ):
+            response = self.client.post("/api/chat", json={"message": "Vad gäller?"})
+
+        assert response.status_code == 200
+        assert len(self.records) == 3
+        assert len({r.context["interaction_id"] for r in self.records}) == 1
+        assert {r.context["source"] for r in self.records} == {
+            "ai.decompose_query",
+            "api.retriever.rerank",
+            "ai.synthesize_answer",
+        }
+
+    def test_records_carry_the_session_id(self):
+        with (
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch(
+                "api.routes.chat.answer_query",
+                self._answer_query_making_real_calls(),
+            ),
+        ):
+            self.client.post("/api/chat", json={"message": "Vad gäller?"})
+
+        assert {r.context["session_id"] for r in self.records} == {
+            str(self.chat_session.id)
+        }
+
+    def test_streamed_answer_is_captured_whole(self):
+        """The streaming call outlives the handler; its record must still land."""
+        with (
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch(
+                "api.routes.chat.answer_query",
+                self._answer_query_making_real_calls(),
+            ),
+        ):
+            self.client.post("/api/chat", json={"message": "Vad gäller?"})
+
+        synthesis = [
+            r for r in self.records if r.context["source"] == "ai.synthesize_answer"
+        ]
+        assert len(synthesis) == 1
+        assert synthesis[0].response_text == "Svar"
+        assert synthesis[0].success is True
+
+    def test_two_questions_get_two_interaction_ids(self):
+        with (
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch(
+                "api.routes.chat.answer_query",
+                self._answer_query_making_real_calls(),
+            ),
+        ):
+            self.client.post("/api/chat", json={"message": "Första frågan"})
+            self.client.post("/api/chat", json={"message": "Andra frågan"})
+
+        assert len({r.context["interaction_id"] for r in self.records}) == 2

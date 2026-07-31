@@ -4,7 +4,7 @@ title: shared Package
 description: The single source of truth for data and database access — models, DTOs, enums, errors, the task envelope, config, and the storage/queue infrastructure abstractions.
 resource: packages/shared
 tags: [package, shared, models, dtos, infrastructure]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # shared Package (`packages/shared/`)
@@ -111,10 +111,24 @@ concern is a Protocol, a set of backend implementations, and a factory selecting
 backend from env vars — making local ↔ GCP a config change (see
 [GCP layout](/reference/gcp-layout.md)).
 
-**Storage** — `StorageBackend` Protocol (`store`, `retrieve`, `exists`, `delete`,
-`get_url`). `LocalStorageBackend` (under `LOCAL_STORAGE_PATH`) and `GCSStorageBackend`
+**Storage** — `StorageBackend` Protocol: `store`, `retrieve`, `exists`, `delete`,
+`get_url`. `LocalStorageBackend` (under `LOCAL_STORAGE_PATH`) and `GCSStorageBackend`
 (wraps `google-cloud-storage`, needs `GCS_BUCKET`). `create_storage_backend(settings)`
 lazy-imports GCS libs. Optional dep: `uv add 'shared[gcs]'`.
+
+### Why it is only a blob store
+
+The Protocol is deliberately five methods wide. It carries no notion of appending, of
+JSON, or of a record — a key maps to a blob of bytes and nothing more, so the two
+backends have no behaviour to diverge on and a third would have nothing extra to
+implement.
+
+The pressure to widen it came from LLM trace capture, which wants an append-style
+stream. That belongs to the writer, not the storage layer: the trace recorder batches
+records, serializes the batch as JSONL, and writes it with `store` under a key it
+chooses itself. An object store cannot append, but it never has to — a batch is a whole
+object. Local and GCS therefore hold byte-identical contents under identical keys. See
+[LLM Observability](/observability.md).
 
 **Queue** — `QueueMessage(task_id, document_id, payload)` maps 1:1 to task rows;
 `QueuePublisher.publish(topic, message)` and `QueueSubscriber.subscribe/start/shutdown`
