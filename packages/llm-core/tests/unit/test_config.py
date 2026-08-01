@@ -1,3 +1,9 @@
+"""`create_provider`'s dispatch is ours; `LLMConfig`'s env reading is
+pydantic-settings. The Berget base URL asserted below lives nowhere else in the
+codebase, which is the reason these patch-and-assert-called tests earn their
+keep.
+"""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -5,49 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from llm_core._config import LLMConfig, create_provider
-
-
-def test_llmconfig_defaults() -> None:
-    config = LLMConfig()
-    assert config.provider == "berget"
-    assert config.model == "gemini-2.0-flash"
-    assert config.temperature == 0.0
-    assert config.max_tokens is None
-    assert config.gemini_api_key is None
-    assert config.berget_api_key is None
-    assert config.base_url is None
-
-
-def test_llmconfig_reads_env_vars() -> None:
-    env = {
-        "LLM_PROVIDER": "gemini",
-        "LLM_MODEL": "gemini-1.5-pro",
-        "LLM_TEMPERATURE": "0.7",
-        "LLM_MAX_TOKENS": "1000",
-        "GEMINI_API_KEY": "my-test-key",
-    }
-    with patch.dict("os.environ", env):
-        config = LLMConfig()
-    assert config.provider == "gemini"
-    assert config.model == "gemini-1.5-pro"
-    assert config.temperature == 0.7
-    assert config.max_tokens == 1000
-    assert config.gemini_api_key == "my-test-key"
-
-
-def test_llmconfig_reads_berget_env_vars() -> None:
-    env = {
-        "LLM_PROVIDER": "berget",
-        "LLM_MODEL": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
-        "BERGET_API_KEY": "my-berget-key",
-        "LLM_BASE_URL": "https://example.test/v1",
-    }
-    with patch.dict("os.environ", env):
-        config = LLMConfig()
-    assert config.provider == "berget"
-    assert config.model == "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
-    assert config.berget_api_key == "my-berget-key"
-    assert config.base_url == "https://example.test/v1"
 
 
 def test_create_provider_unknown_raises() -> None:

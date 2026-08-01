@@ -12,7 +12,10 @@ def create_storage_backend(settings: StorageSettings) -> StorageBackend:
         case StorageBackendType.GCS:
             from shared.storage.gcs import GCSStorageBackend
 
-            return GCSStorageBackend(settings.gcs_bucket)  # type: ignore[arg-type]
+            # `StorageSettings`' model_validator rejects the gcs backend without a
+            # bucket, so settings could not have been constructed at all.
+            assert settings.gcs_bucket is not None
+            return GCSStorageBackend(settings.gcs_bucket)
         case _:
             raise BackendConfigError(
                 f"Unknown storage backend: {settings.storage_backend}"

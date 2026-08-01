@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from ai.prompts import (
     ANSWER_SYNTHESIS,
     DOCUMENT_SUMMARIZATION,
@@ -37,22 +39,36 @@ def _has_placeholder(text: str) -> bool:
     return bool(_PLACEHOLDER_RE.search(text))
 
 
+_ALL_TEMPLATES = [
+    (
+        QUERY_DECOMPOSITION,
+        {"question": _QUESTION, "conversation_history": _CONVERSATION},
+    ),
+    (
+        ANSWER_SYNTHESIS,
+        {
+            "question": _QUESTION,
+            "chunks": _CHUNKS,
+            "conversation_history": _CONVERSATION,
+        },
+    ),
+    (METADATA_EXTRACTION, {"raw_text": _LEGAL_TEXT}),
+    (ENTITY_EXTRACTION, {"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER}),
+    (DOCUMENT_SUMMARIZATION, {"raw_text": _LEGAL_TEXT}),
+]
+
+
+@pytest.mark.parametrize(("template", "context"), _ALL_TEMPLATES)
+def test_render_produces_a_system_then_user_pair(template, context):
+    """The shape every template shares. Per-template content is asserted below."""
+    messages = render(template, context)
+
+    assert len(messages) == 2
+    assert messages[0].role == Role.system
+    assert messages[1].role == Role.user
+
+
 class TestQueryDecomposition:
-    def test_render_returns_two_messages(self):
-        messages = render(
-            QUERY_DECOMPOSITION,
-            {"question": _QUESTION, "conversation_history": _CONVERSATION},
-        )
-        assert len(messages) == 2
-
-    def test_render_roles(self):
-        messages = render(
-            QUERY_DECOMPOSITION,
-            {"question": _QUESTION, "conversation_history": _CONVERSATION},
-        )
-        assert messages[0].role == Role.system
-        assert messages[1].role == Role.user
-
     def test_no_unrendered_placeholders_in_user_message(self):
         messages = render(
             QUERY_DECOMPOSITION,
@@ -82,29 +98,6 @@ class TestQueryDecomposition:
 
 
 class TestAnswerSynthesis:
-    def test_render_returns_two_messages(self):
-        messages = render(
-            ANSWER_SYNTHESIS,
-            {
-                "question": _QUESTION,
-                "chunks": _CHUNKS,
-                "conversation_history": _CONVERSATION,
-            },
-        )
-        assert len(messages) == 2
-
-    def test_render_roles(self):
-        messages = render(
-            ANSWER_SYNTHESIS,
-            {
-                "question": _QUESTION,
-                "chunks": _CHUNKS,
-                "conversation_history": _CONVERSATION,
-            },
-        )
-        assert messages[0].role == Role.system
-        assert messages[1].role == Role.user
-
     def test_no_unrendered_placeholders_in_user_message(self):
         messages = render(
             ANSWER_SYNTHESIS,
@@ -130,15 +123,6 @@ class TestAnswerSynthesis:
 
 
 class TestMetadataExtraction:
-    def test_render_returns_two_messages(self):
-        messages = render(METADATA_EXTRACTION, {"raw_text": _LEGAL_TEXT})
-        assert len(messages) == 2
-
-    def test_render_roles(self):
-        messages = render(METADATA_EXTRACTION, {"raw_text": _LEGAL_TEXT})
-        assert messages[0].role == Role.system
-        assert messages[1].role == Role.user
-
     def test_no_unrendered_placeholders_in_user_message(self):
         messages = render(METADATA_EXTRACTION, {"raw_text": _LEGAL_TEXT})
         assert not _has_placeholder(messages[1].content)
@@ -161,19 +145,6 @@ class TestMetadataExtraction:
 
 
 class TestEntityExtraction:
-    def test_render_returns_two_messages(self):
-        messages = render(
-            ENTITY_EXTRACTION, {"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER}
-        )
-        assert len(messages) == 2
-
-    def test_render_roles(self):
-        messages = render(
-            ENTITY_EXTRACTION, {"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER}
-        )
-        assert messages[0].role == Role.system
-        assert messages[1].role == Role.user
-
     def test_no_unrendered_placeholders_in_user_message(self):
         messages = render(
             ENTITY_EXTRACTION, {"raw_text": _LEGAL_TEXT, "case_number": _CASE_NUMBER}
@@ -195,15 +166,6 @@ class TestEntityExtraction:
 
 
 class TestDocumentSummarization:
-    def test_render_returns_two_messages(self):
-        messages = render(DOCUMENT_SUMMARIZATION, {"raw_text": _LEGAL_TEXT})
-        assert len(messages) == 2
-
-    def test_render_roles(self):
-        messages = render(DOCUMENT_SUMMARIZATION, {"raw_text": _LEGAL_TEXT})
-        assert messages[0].role == Role.system
-        assert messages[1].role == Role.user
-
     def test_no_unrendered_placeholders_in_user_message(self):
         messages = render(DOCUMENT_SUMMARIZATION, {"raw_text": _LEGAL_TEXT})
         assert not _has_placeholder(messages[1].content)

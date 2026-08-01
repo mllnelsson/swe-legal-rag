@@ -74,6 +74,7 @@ def _make_deps(
 
     task_repo = MagicMock()
     task_repo.get_by_id = AsyncMock(return_value=task)
+    task_repo.get_by_document_and_step = AsyncMock(return_value=None)
     task_repo.update_status = AsyncMock()
     if document is not None:
         task_repo.create = AsyncMock(

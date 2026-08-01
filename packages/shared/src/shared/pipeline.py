@@ -26,7 +26,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.dtos.task import TaskCreate, TaskStatusUpdate
+from shared.dtos.task import TaskCreate, TaskRead, TaskStatusUpdate
 from shared.enums import PipelineStep, TaskStatus
 from shared.queue.base import QueueMessage, QueuePublisher
 from shared.repositories import TaskRepo
@@ -34,6 +34,38 @@ from shared.repositories import TaskRepo
 __all__ = ["StepInputError", "run_pipeline_step"]
 
 logger = logging.getLogger(__name__)
+
+
+async def _pending_next_task(
+    session: AsyncSession,
+    task_repo: TaskRepo,
+    document_id: UUID,
+    next_step: PipelineStep,
+) -> TaskRead:
+    """The next step's task, pending and ready to publish.
+
+    `tasks` holds at most one row per (document, step), so handing a document on
+    for the second time — a re-driven step, a redelivered message — has to reuse
+    the row that is already there. Creating a second one violates
+    `uq_tasks_document_id_step` and fails the step that had just succeeded.
+    """
+    existing = await task_repo.get_by_document_and_step(session, document_id, next_step)
+    if existing is None:
+        return await task_repo.create(
+            session,
+            TaskCreate(
+                document_id=document_id,
+                step=next_step,
+                status=TaskStatus.PENDING,
+            ),
+        )
+
+    reset = await task_repo.update_status(
+        session, existing.id, TaskStatusUpdate(status=TaskStatus.PENDING)
+    )
+    # `existing` was just read inside this transaction, so the row is there.
+    assert reset is not None
+    return reset
 
 
 class StepInputError(Exception):
@@ -85,13 +117,8 @@ async def run_pipeline_step(
             # A publishing step must supply a publisher; a terminal step (embed)
             # passes next_step=None and no publisher.
             assert queue_publisher is not None, "next_step requires a queue_publisher"
-            next_task = await task_repo.create(
-                session,
-                TaskCreate(
-                    document_id=document_id,
-                    step=next_step,
-                    status=TaskStatus.PENDING,
-                ),
+            next_task = await _pending_next_task(
+                session, task_repo, document_id, next_step
             )
             await session.commit()
             queue_publisher.publish(

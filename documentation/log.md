@@ -1,5 +1,13 @@
 # Documentation Update Log
 
+## 2026-08-01
+
+* **Update**: [testing](/testing.md) — integration tests run against their own `overklagan_test` database, resolved from `TEST_DATABASE_URL` or derived from `DATABASE_URL`, and collection aborts rather than truncating if the two name the same database. Schema comes from `alembic upgrade head` via an `-x db_url=` override, not `create_all`. The `integration` marker is applied by directory rather than by hand, and a bare `uv run pytest` is unit-only so an agent cannot reach a database by accident.
+* **Update**: [worker patterns](/pipeline/worker-patterns.md) — the integration fixtures live once in `shared.testing.fixtures` as a pytest plugin; a package's conftest declares only its `next_topic`. Rerunning a step re-drives the existing task row, because `tasks` holds one row per (document, step).
+* **Update**: [repositories](/data-model/repositories.md) — integration tests inject the repo modules unchanged, the same way production does. `bind_repo` is gone; there is one call convention with `session` first.
+* **Update**: [local dev](/playbooks/local-dev.md) — creating `overklagan_test` is part of first-time setup on both platforms, `docker/init.sql` creates it on a fresh volume, and the fixtures migrate it themselves.
+* **Update**: [live testing](/playbooks/live-testing.md) — the command table matches [testing](/testing.md), and troubleshooting covers a missing test database and the same-database guard.
+
 ## 2026-07-31
 
 * **Update**: [LLM Observability](/observability.md) — `install_file_tracing()` is idempotent: a call after one has already succeeded returns the recorder already installed. [`scripts/run_pipeline.py`](/playbooks/local-dev.md) composes six worker `main()`s into one process and four of them install tracing, which would otherwise leave a stray writer thread and `atexit` hook behind for every recorder the next call displaced.

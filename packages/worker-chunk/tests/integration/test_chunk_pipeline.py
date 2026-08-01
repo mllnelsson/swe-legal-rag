@@ -8,10 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai.dtos import SummarizeResult
 from shared.dtos.document import DocumentCreate, DocumentUpdate
 from shared.dtos.task import TaskCreate
+from shared.testing.pipeline import redrive_task
 from shared.queue.sync import SyncQueuePublisher
 from worker_chunk.service import process_chunking
-
-pytestmark = pytest.mark.integration
 
 _SWEDISH_LEGAL_TEXT = """
 Överklagandenämnden för Svenska kyrkan
@@ -293,19 +292,11 @@ class TestChunkPipelineIdempotency:
             await chunk_repo.get_by_document_id(session, document_with_text.id)
         )
 
-        from shared.dtos.task import TaskCreate
-
-        second_task = await task_repo.create(
-            session,
-            TaskCreate(
-                document_id=document_with_text.id, step="chunk", status="pending"
-            ),
-        )
-        await session.commit()
+        await redrive_task(session, task_repo, chunk_task.id)
 
         await _run_chunking(
             document_with_text.id,
-            second_task.id,
+            chunk_task.id,
             document_repo,
             chunk_repo,
             task_repo,
@@ -343,19 +334,11 @@ class TestChunkPipelineIdempotency:
             for c in await chunk_repo.get_by_document_id(session, document_with_text.id)
         }
 
-        from shared.dtos.task import TaskCreate
-
-        second_task = await task_repo.create(
-            session,
-            TaskCreate(
-                document_id=document_with_text.id, step="chunk", status="pending"
-            ),
-        )
-        await session.commit()
+        await redrive_task(session, task_repo, chunk_task.id)
 
         await _run_chunking(
             document_with_text.id,
-            second_task.id,
+            chunk_task.id,
             document_repo,
             chunk_repo,
             task_repo,

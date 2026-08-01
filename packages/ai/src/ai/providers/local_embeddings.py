@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import numpy
+
 from ai.embedding import EmbeddingConfig
 
 if TYPE_CHECKING:
@@ -36,4 +38,7 @@ class LocalEmbeddingProvider:
         model = self._get_model()
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(None, model.encode, texts)
-        return embeddings.tolist()
+        # `encode` is declared as a union covering its tensor-returning modes; the
+        # default one hands back an ndarray. Going through `asarray` states the
+        # array we require rather than assuming which member we got.
+        return numpy.asarray(embeddings, dtype=float).tolist()

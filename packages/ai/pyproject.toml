@@ -8,6 +8,10 @@ dependencies = [
     "pydantic-settings>=2.0",
     "sentence-transformers>=3.0",
     "openai>=1.0",
+    # Imported directly to normalise the local provider's encode output. Arrives
+    # transitively via sentence-transformers too, but a direct import is a direct
+    # dependency. The Intel Mac ceiling is pinned in the root pyproject.
+    "numpy",
 ]
 
 [tool.uv.sources]

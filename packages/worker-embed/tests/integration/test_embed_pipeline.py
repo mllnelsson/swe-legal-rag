@@ -11,10 +11,9 @@ from shared.config import EMBEDDING_DIMENSION
 from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentCreate
 from shared.dtos.task import TaskCreate
+from shared.testing.pipeline import redrive_task
 from shared.models.chunk import Chunk
 from worker_embed.service import process_embedding
-
-pytestmark = pytest.mark.integration
 
 _SWEDISH_TEXT = "Nämnden beslutade att avslå överklagandet."
 _CONTEXTUAL_TEXT = "Kyrkoherden överklagade beslutet.\n\n---\n\n" + _SWEDISH_TEXT
@@ -319,17 +318,14 @@ class TestEmbedPipelineIdempotency:
             session=session,
         )
 
-        task2 = await task_repo.create(
-            session, TaskCreate(document_id=document_id, step="embed", status="pending")
-        )
-        await session.commit()
+        await redrive_task(session, task_repo, task1.id)
 
         second_vectors = [[0.999] * EMBEDDING_DIMENSION for _ in chunks]
         provider2 = MagicMock()
         provider2.embed = AsyncMock(return_value=second_vectors)
         await process_embedding(
             document_id=document_id,
-            task_id=task2.id,
+            task_id=task1.id,
             chunk_repo=chunk_repo,
             task_repo=task_repo,
             embedding_provider=provider2,
@@ -366,15 +362,12 @@ class TestEmbedPipelineIdempotency:
             session=session,
         )
 
-        task2 = await task_repo.create(
-            session, TaskCreate(document_id=document_id, step="embed", status="pending")
-        )
-        await session.commit()
+        await redrive_task(session, task_repo, task1.id)
 
         provider2 = _make_mock_embedding_provider(len(chunks))
         await process_embedding(
             document_id=document_id,
-            task_id=task2.id,
+            task_id=task1.id,
             chunk_repo=chunk_repo,
             task_repo=task_repo,
             embedding_provider=provider2,

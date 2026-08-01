@@ -2,7 +2,6 @@ from shared.enums import PipelineStep
 import ctypes
 import io
 
-import pytest
 import pypdfium2 as pdfium
 import pypdfium2.raw as r
 from sqlalchemy import select
@@ -40,7 +39,6 @@ def _make_pdf_bytes(text: str) -> bytes:
     return pdf_bytes
 
 
-@pytest.mark.integration
 async def test_parse_flow_populates_raw_text_and_completes_task(
     session: AsyncSession,
     document_repo,

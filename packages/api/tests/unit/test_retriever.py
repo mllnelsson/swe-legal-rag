@@ -14,11 +14,26 @@ from shared.dtos.search import ChunkSearchResult, DocumentFilter
 from shared.enums import ChunkSection
 
 
-def _settings(**kwargs) -> RetrievalSettings:
-    defaults = dict(
-        retrieval_top_k=4, retrieval_search_limit=10, retrieval_rerank_enabled=False
+def _settings(
+    *,
+    retrieval_top_k: int = 4,
+    retrieval_search_limit: int = 10,
+    retrieval_rerank_enabled: bool = False,
+    retrieval_include_appendices: bool = False,
+) -> RetrievalSettings:
+    """Retrieval settings with test defaults.
+
+    Spelled out rather than `**kwargs` into a dict splat: the splat matched every
+    keyword-only parameter on `BaseSettings.__init__` (`_env_file`,
+    `_cli_settings_source`, …), which is 27 type errors and no protection against
+    a misspelled field name.
+    """
+    return RetrievalSettings(
+        retrieval_top_k=retrieval_top_k,
+        retrieval_search_limit=retrieval_search_limit,
+        retrieval_rerank_enabled=retrieval_rerank_enabled,
+        retrieval_include_appendices=retrieval_include_appendices,
     )
-    return RetrievalSettings(**{**defaults, **kwargs})
 
 
 def _plan(query: str = "kyrkorätt", **filter_kwargs) -> QueryPlan:

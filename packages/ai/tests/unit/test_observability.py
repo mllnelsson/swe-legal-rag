@@ -385,8 +385,23 @@ class TestAgainstRealStorage:
 
 
 class TestInstallFileTracing:
-    def test_disabled_installs_nothing(self, storage) -> None:
+    @pytest.fixture(autouse=True)
+    def _close_whatever_got_installed(self):
+        """Install leaves a writer thread and an `atexit` hook behind.
+
+        Resetting the module global is not enough — an unclosed recorder outlives
+        the test that made it, so the suite accumulates one thread per install.
+        """
         set_trace_recorder(None)
+        yield
+        recorder = get_trace_recorder()
+        # `get_trace_recorder` is typed to the protocol, which has no `close` —
+        # only the file recorder owns a thread that needs shutting down.
+        if isinstance(recorder, FileTraceRecorder):
+            recorder.close()
+        set_trace_recorder(None)
+
+    def test_disabled_installs_nothing(self, storage) -> None:
         result = install_file_tracing(
             storage, LLMTraceConfig(enabled=False, key_prefix="llm-traces")
         )
@@ -395,31 +410,23 @@ class TestInstallFileTracing:
         assert get_trace_recorder() is None
 
     def test_enabled_installs_the_recorder(self, storage, config) -> None:
-        set_trace_recorder(None)
-        try:
-            recorder = install_file_tracing(storage, config)
-            assert recorder is not None
-            assert get_trace_recorder() is recorder
-        finally:
-            set_trace_recorder(None)
+        recorder = install_file_tracing(storage, config)
+
+        assert recorder is not None
+        assert get_trace_recorder() is recorder
 
     def test_installing_twice_reuses_the_first_recorder(self, storage, config) -> None:
         """One process, one writer thread — however many main()s composed it."""
-        set_trace_recorder(None)
-        try:
-            first = install_file_tracing(storage, config)
-            second = install_file_tracing(FakeStorage(), config)
+        first = install_file_tracing(storage, config)
+        second = install_file_tracing(FakeStorage(), config)
 
-            assert second is first
-            assert get_trace_recorder() is first
-        finally:
-            set_trace_recorder(None)
+        assert second is first
+        assert get_trace_recorder() is first
 
     def test_unbuildable_backend_leaves_tracing_off_rather_than_failing(
         self, monkeypatch
     ) -> None:
         """Observability must never stop a process from starting."""
-        set_trace_recorder(None)
         monkeypatch.setattr(
             "ai._observability.create_storage_backend",
             lambda settings: (_ for _ in ()).throw(RuntimeError("no bucket")),
@@ -432,11 +439,8 @@ class TestInstallFileTracing:
 
     def test_a_backend_that_fails_at_write_time_still_installs(self, config) -> None:
         """Writes fail silently in the background; the process is unaffected."""
-        set_trace_recorder(None)
-        try:
-            recorder = install_file_tracing(ExplodingStorage(), config)
-            assert recorder is not None
-            recorder.record(_make_record())
-            assert recorder.flush()
-        finally:
-            set_trace_recorder(None)
+        recorder = install_file_tracing(ExplodingStorage(), config)
+
+        assert recorder is not None
+        recorder.record(_make_record())
+        assert recorder.flush()

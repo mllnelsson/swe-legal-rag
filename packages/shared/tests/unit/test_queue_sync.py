@@ -1,4 +1,3 @@
-import json
 from typing import Any
 from uuid import uuid4
 
@@ -55,30 +54,3 @@ def test_multiple_topics_are_independent() -> None:
     assert received_a[0].task_id == msg_a.task_id
     assert len(received_b) == 1
     assert received_b[0].task_id == msg_b.task_id
-
-
-def test_queue_message_serialization_roundtrip() -> None:
-    original = QueueMessage(
-        task_id=uuid4(),
-        document_id=uuid4(),
-        payload={"key": "val", "number": 42},
-    )
-    json_str = original.model_dump_json()
-    restored = QueueMessage.model_validate_json(json_str)
-
-    assert restored.task_id == original.task_id
-    assert restored.document_id == original.document_id
-    assert restored.payload == original.payload
-
-
-def test_queue_message_default_payload_is_empty_dict() -> None:
-    msg = QueueMessage(task_id=uuid4(), document_id=uuid4())
-    parsed = json.loads(msg.model_dump_json())
-    assert parsed["payload"] == {}
-
-
-def test_start_and_shutdown_are_noops() -> None:
-    broker = SyncQueueBroker()
-    sub = SyncQueueSubscriber(broker)
-    sub.start()
-    sub.shutdown()

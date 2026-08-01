@@ -3,7 +3,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
-import pytest
 import respx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +40,6 @@ def _make_kwargs(
     )
 
 
-@pytest.mark.integration
 async def test_full_download_stores_pdf_and_updates_document(
     session: AsyncSession,
     document_repo,
@@ -92,7 +90,6 @@ async def test_full_download_stores_pdf_and_updates_document(
     assert published_messages[0].document_id == doc.id
 
 
-@pytest.mark.integration
 async def test_download_idempotent_rerun(
     session: AsyncSession,
     document_repo,

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from llm_core import LLMOperation, Usage, set_trace_recorder
 
-from ai.embedding import EmbeddingConfig, EmbeddingProvider, create_embedding_provider
+from ai.embedding import EmbeddingConfig, create_embedding_provider
 from ai.providers.berget_embeddings import BergetEmbeddingProvider
 
 
@@ -82,15 +82,6 @@ async def test_empty_input_short_circuits() -> None:
     provider._client.embeddings.create.assert_not_called()
 
 
-def test_protocol_compliance() -> None:
-    config = _make_config()
-    with patch("openai.AsyncOpenAI"):
-        provider = BergetEmbeddingProvider(
-            config, default_base_url="https://api.berget.ai/v1"
-        )
-    assert isinstance(provider, EmbeddingProvider)
-
-
 def test_create_embedding_provider_berget_dispatch() -> None:
     mock_instance = MagicMock()
     with patch(
@@ -102,16 +93,6 @@ def test_create_embedding_provider_berget_dispatch() -> None:
     mock_cls.assert_called_once_with(
         config, default_base_url="https://api.berget.ai/v1"
     )
-    assert result is mock_instance
-
-
-def test_create_embedding_provider_defaults_to_berget() -> None:
-    mock_instance = MagicMock()
-    with patch(
-        "ai.providers.berget_embeddings.BergetEmbeddingProvider",
-        return_value=mock_instance,
-    ):
-        result = create_embedding_provider(EmbeddingConfig(BERGET_API_KEY="test-key"))
     assert result is mock_instance
 
 

@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-07-27T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -312,17 +312,24 @@ rm -rf ./data/pdfs/*
 ## Running Tests
 
 ```bash
-# All unit tests (fast, no infra needed)
-uv run pytest -m "not integration"
+# Unit tests — the default. Fast, hermetic, needs no infrastructure.
+uv run pytest
 
-# Integration tests (requires Postgres running)
+# Integration tests alone. Needs Postgres and the overklagan_test database.
 uv run pytest -m integration
+
+# Everything.
+uv run pytest -m ""
 
 # Single package
 uv run pytest packages/worker-crawl/tests/
 uv run pytest packages/worker-parse/tests/
 uv run pytest packages/worker-metadata/tests/
 ```
+
+Integration tests run against `overklagan_test`, never the `overklagan` database this
+playbook fills — so a test run cannot destroy a live pipeline corpus, and a
+misconfigured `TEST_DATABASE_URL` aborts the run rather than truncating.
 
 See the [testing strategy](/testing.md) for the full unit/integration split.
 
@@ -337,6 +344,8 @@ See the [testing strategy](/testing.md) for the full unit/integration split.
 | `role "postgres" does not exist` | macOS only — Homebrew's initdb made your macOS user the superuser | `createuser -s postgres` — see [local dev](/playbooks/local-dev.md) |
 | `psql: command not found` | macOS only — `postgresql@17` is keg-only, so its `bin` is not linked onto `PATH` | Add `$(brew --prefix)/opt/postgresql@17/bin` to `PATH` in your shell profile |
 | `relation "documents" does not exist` | Migrations not applied | `uv run alembic upgrade head` |
+| `database "overklagan_test" does not exist` on `-m integration` | The test database was never created | `createdb -O postgres overklagan_test` — see [local dev](/playbooks/local-dev.md) |
+| `Integration tests would run against the development database` | `TEST_DATABASE_URL` names the same database as `DATABASE_URL` | Unset it to use the derived `_test` default, or point it elsewhere. Nothing was truncated |
 | `berget_api_key is required` (or `gemini_api_key is required`) | LLM/embedding provider key not set | Add `BERGET_API_KEY` (default provider) — or `GEMINI_API_KEY` if `LLM_PROVIDER=gemini` — to `.env` |
 | Crawl finds 0 new documents | All URLs already in DB | Reset state (see above) or use a different source URL |
 | Permission denied writing PDFs | `LOCAL_STORAGE_PATH` dir missing | `mkdir -p ./data/pdfs` |
