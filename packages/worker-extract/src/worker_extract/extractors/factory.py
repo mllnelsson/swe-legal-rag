@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from enum import StrEnum, auto
 
-from ai.providers.roles import create_structured_llm_provider
+from ai.providers.roles import LLMRole, create_llm_provider
 from shared.segmentation import DocumentSegments
 from worker_extract.entities import deduplicate_entities
 from worker_extract.extractors.base import ExtractionStrategy
@@ -56,7 +56,7 @@ def _merge_results(
 class _FallbackStrategy:
     def __init__(self) -> None:
         self._rule_based = RuleBasedStrategy()
-        self._llm = LLMStrategy(create_structured_llm_provider())
+        self._llm = LLMStrategy(create_llm_provider(LLMRole.STRUCTURED))
 
     async def extract(
         self, segments: DocumentSegments, case_number: str | None = None
@@ -79,6 +79,6 @@ def get_extraction_strategy() -> ExtractionStrategy:
         case ExtractStrategyMode.RULE_BASED:
             return RuleBasedStrategy()
         case ExtractStrategyMode.LLM:
-            return LLMStrategy(create_structured_llm_provider())
+            return LLMStrategy(create_llm_provider(LLMRole.STRUCTURED))
         case ExtractStrategyMode.RULE_BASED_WITH_LLM_FALLBACK:
             return _FallbackStrategy()

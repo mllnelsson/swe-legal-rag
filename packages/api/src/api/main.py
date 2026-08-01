@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import shared
-from ai.providers.roles import create_chat_llm_provider, create_structured_llm_provider
+from ai.providers.roles import LLMRole, create_llm_provider
 from api.config import AppSettings
 from api.routes.chat import router as chat_router
 from shared.config import StorageSettings
@@ -31,8 +31,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ai.verify_embedding_dimension(embedding_provider)
 
     app.state.embedding_provider = embedding_provider
-    app.state.structured_llm_provider = create_structured_llm_provider()
-    app.state.chat_llm_provider = create_chat_llm_provider()
+    app.state.structured_llm_provider = create_llm_provider(LLMRole.STRUCTURED)
+    app.state.chat_llm_provider = create_llm_provider(LLMRole.CHAT)
     yield
 
 

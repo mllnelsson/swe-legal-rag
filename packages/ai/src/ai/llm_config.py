@@ -2,8 +2,9 @@
 
 Which model and which provider each task uses is a deployment decision that
 changes far more often than the code around it, so it lives in one checked-in
-file rather than being spread across a dozen environment variables. Adding a
-task with its own model is a YAML edit; no Python change is required.
+file rather than being spread across a dozen environment variables. Swapping a
+task's model is a YAML edit; adding a task also needs an `LLMRole` member in
+`ai.providers.roles`, which is what makes a misspelled role a type error.
 
 The file declares providers once and lets roles reference them by name, so a
 base URL and an API key variable are stated in exactly one place and shared by
@@ -245,7 +246,13 @@ def get_llm_config() -> LLMConfigDocument:
 def resolve_role_config(
     role: str, document: LLMConfigDocument | None = None
 ) -> LLMConfig:
-    """Build the `llm_core.LLMConfig` for a named role, applying precedence."""
+    """Build the `llm_core.LLMConfig` for a named role, applying precedence.
+
+    `role` is a plain string because this resolves a key out of the file, where
+    role names are arbitrary. The closed set lives one layer up as
+    `ai.providers.roles.LLMRole`, which is what code asks for — the same split
+    as a provider's `kind` (a `ProviderKind`) versus the name the file gives it.
+    """
     document = document if document is not None else get_llm_config()
 
     spec = document.roles.get(role)

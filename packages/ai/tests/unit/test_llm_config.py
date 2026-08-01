@@ -23,6 +23,7 @@ from ai.errors import (
     UnknownLLMRoleError,
     UnsupportedEmbeddingBackendError,
 )
+from ai.providers.roles import LLMRole
 from ai.llm_config import (
     CONFIG_FILENAME,
     CONFIG_PATH_ENV,
@@ -352,9 +353,11 @@ class TestRoles:
         assert "rerank" in str(excinfo.value)
         assert "structured" in str(excinfo.value)
 
-    def test_a_role_added_to_the_file_needs_no_code_change(
+    def test_the_resolver_accepts_any_role_key_in_the_file(
         self, tmp_path: Path
     ) -> None:
+        """The resolver works on file keys, which are arbitrary. Restricting the
+        set to `LLMRole` is the job of `create_llm_provider` one layer up."""
         document = {
             **_DOCUMENT,
             "roles": {**_DOCUMENT["roles"], "rerank": {"model": "rerank-model"}},
@@ -423,8 +426,15 @@ class TestEmbedding:
 
 
 class TestShippedConfig:
-    def test_the_repo_config_loads_and_declares_the_roles_in_use(self) -> None:
-        """The one test that reads the real file — it must at least be valid."""
+    def test_the_repo_config_loads_and_declares_every_role_code_asks_for(self) -> None:
+        """The one test that reads the real file.
+
+        A role has two halves — an `LLMRole` member and a `roles:` entry — and
+        nothing but this test makes them agree. Deriving the expected set from
+        the enum rather than restating it means adding a member without a YAML
+        entry fails here, at build time, instead of at the first call that asks
+        for that provider.
+        """
         document = load_config_document(find_config_path())
 
-        assert {"structured", "summarize", "chat"} <= set(document.roles)
+        assert {role.value for role in LLMRole} <= set(document.roles)

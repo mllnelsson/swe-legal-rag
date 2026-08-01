@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import install_file_tracing, worker_trace_scope
-from ai.providers.roles import create_structured_llm_provider
+from ai.providers.roles import LLMRole, create_llm_provider
 from ai.services import extract_metadata as _ai_extract_metadata
 from llm_core import LLMProvider
 from shared.config import get_settings
@@ -57,7 +57,7 @@ def subscribe() -> QueueSubscriber:
     metadata_settings = get_metadata_settings()
 
     install_file_tracing()
-    llm_extractor = _make_llm_extractor(create_structured_llm_provider())
+    llm_extractor = _make_llm_extractor(create_llm_provider(LLMRole.STRUCTURED))
 
     publisher = create_queue_publisher(settings.queue)
 

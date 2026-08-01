@@ -43,15 +43,7 @@ from ai.llm_config import (
     resolve_embedding_config,
     resolve_role_config,
 )
-from ai.providers.roles import (
-    ROLE_CHAT,
-    ROLE_STRUCTURED,
-    ROLE_SUMMARIZE,
-    create_chat_llm_provider,
-    create_llm_provider,
-    create_structured_llm_provider,
-    create_summarize_llm_provider,
-)
+from ai.providers.roles import LLMRole, create_llm_provider
 from ai.services import (
     decompose_query,
     extract_entities,
@@ -74,16 +66,10 @@ __all__ = [
     "extract_entities",
     "summarize_document",
     "synthesize_answer",
-    # Per-task model assignment, resolved from llm_config.yaml. A role is a
-    # name declared in that file; the three constants are the ones with call
-    # sites, not the whole set.
+    # Per-task model assignment. A role is an LLMRole member plus a matching
+    # entry under `roles:` in llm_config.yaml; both halves are required.
     "create_llm_provider",
-    "create_structured_llm_provider",
-    "create_summarize_llm_provider",
-    "create_chat_llm_provider",
-    "ROLE_STRUCTURED",
-    "ROLE_SUMMARIZE",
-    "ROLE_CHAT",
+    "LLMRole",
     # Configuration
     "LLMConfigDocument",
     "EmbeddingBackend",

@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import install_file_tracing, worker_trace_scope
-from ai.providers.roles import create_summarize_llm_provider
+from ai.providers.roles import LLMRole, create_llm_provider
 from shared.config import get_settings
 from shared.queue import create_queue_publisher
 from shared.queue.base import QueueMessage, QueueSubscriber
@@ -27,7 +27,7 @@ def subscribe() -> QueueSubscriber:
     chunk_settings = get_chunk_settings()
 
     install_file_tracing()
-    llm_provider = create_summarize_llm_provider()
+    llm_provider = create_llm_provider(LLMRole.SUMMARIZE)
 
     publisher = create_queue_publisher(settings.queue)
 
