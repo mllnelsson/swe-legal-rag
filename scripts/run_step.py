@@ -34,7 +34,7 @@ the immediate downstream task row is cleared first (the services create the next
 step's task in the same transaction, which would otherwise hit the
 ``uq_tasks_document_id_step`` unique constraint on a second run).
 
-See documentation/design/LIVE_TESTING.md.
+See documentation/playbooks/live-testing.md.
 """
 
 from __future__ import annotations
@@ -278,6 +278,7 @@ async def _run_step(
     publisher = NoopPublisher()
     repos = ctx.repos
     session = ctx.session
+    storage = create_storage_backend(settings.storage)
 
     # Mirrors the workers: every LLM/embedding call this script makes is
     # billed, so it is attributed to the document that caused it.
@@ -297,7 +298,7 @@ async def _run_step(
                     session=session,
                     document_repo=repos.document,
                     task_repo=repos.task,
-                    storage=create_storage_backend(settings.storage),
+                    storage=storage,
                     queue_publisher=publisher,
                     timeout=ds.download_request_timeout,
                     max_retries=ds.download_max_retries,
@@ -311,7 +312,7 @@ async def _run_step(
                 await process_parse(
                     document_id=document_id,
                     task_id=task_id,
-                    storage=create_storage_backend(settings.storage),
+                    storage=storage,
                     document_repo=repos.document,
                     task_repo=repos.task,
                     queue_publisher=publisher,
@@ -320,9 +321,11 @@ async def _run_step(
                     next_topic=_next_topic(PipelineStep.PARSE),
                 )
             case PipelineStep.METADATA:
-                from worker_metadata.__main__ import _no_llm_extractor
                 from worker_metadata.patterns import extract_metadata_rule_based
-                from worker_metadata.service import process_metadata
+                from worker_metadata.service import (
+                    no_llm_extractor,
+                    process_metadata,
+                )
 
                 await process_metadata(
                     document_id=document_id,
@@ -331,7 +334,7 @@ async def _run_step(
                     task_repo=repos.task,
                     queue_publisher=publisher,
                     rule_extractor=extract_metadata_rule_based,
-                    llm_extractor=_no_llm_extractor,
+                    llm_extractor=no_llm_extractor,
                     session=session,
                     next_topic=_next_topic(PipelineStep.METADATA),
                 )
@@ -499,19 +502,22 @@ async def _dispatch(args: argparse.Namespace) -> None:
         os.environ.setdefault("DATABASE_URL", "postgresql://unused@localhost/unused")
     settings = get_settings()
     async with open_ctx(args) as ctx:
-        if args.command == "docs":
-            await _list_docs(ctx)
-        elif args.command == "seed":
-            await _seed(ctx, args.json_file)
-        elif args.command == "crawl":
-            await _run_crawl(ctx, args.years)
-        elif args.command == "chain":
-            until = PipelineStep(args.until) if args.until is not None else None
-            await _run_chain(ctx, settings, UUID(args.document_id), until)
-        else:
-            await _run_step(
-                ctx, settings, PipelineStep(args.command), UUID(args.document_id)
-            )
+        match args.command:
+            case "docs":
+                await _list_docs(ctx)
+            case "seed":
+                await _seed(ctx, args.json_file)
+            case "crawl":
+                await _run_crawl(ctx, args.years)
+            case "chain":
+                until = PipelineStep(args.until) if args.until is not None else None
+                await _run_chain(ctx, settings, UUID(args.document_id), until)
+            case step:
+                # Every remaining subcommand is named after a PipelineStep —
+                # `main()` builds one parser per entry in PIPELINE.
+                await _run_step(
+                    ctx, settings, PipelineStep(step), UUID(args.document_id)
+                )
 
 
 def main() -> None:

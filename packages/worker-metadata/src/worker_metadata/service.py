@@ -20,6 +20,21 @@ logger = logging.getLogger(__name__)
 # is_complete() ignores it for the same reason.
 _METADATA_FIELDS = ("case_number", "decision_date", "decision_outcome", "category")
 
+# What the LLM half of metadata extraction looks like. The rule-based pass runs
+# first and this fills only what it left blank.
+type LLMMetadataExtractor = Callable[[str], Awaitable[MetadataResult]]
+
+
+async def no_llm_extractor(raw_text: str) -> MetadataResult:
+    """An extractor that declines, for callers with no provider wired up.
+
+    Public because `scripts/run_step.py` runs the metadata step without
+    reaching a model; it used to import this from `worker_metadata.__main__`,
+    which meant a script depending on another package's entry point.
+    """
+    logger.info("No LLM configured; returning empty metadata")
+    return MetadataResult()
+
 
 async def process_metadata(
     document_id: UUID,
@@ -28,7 +43,7 @@ async def process_metadata(
     task_repo: TaskRepo,
     queue_publisher: QueuePublisher,
     rule_extractor: Callable[[str], MetadataResult],
-    llm_extractor: Callable[[str, list[str]], Awaitable[MetadataResult]],
+    llm_extractor: LLMMetadataExtractor,
     session: AsyncSession,
     next_topic: PipelineStep = PipelineStep.EXTRACT,
 ) -> None:
@@ -51,7 +66,7 @@ async def process_metadata(
             # outcome and diarienummer, and the LLM cannot tell them apart.
             body = split_document(document.raw_text).body
             try:
-                llm_result = await llm_extractor(body, missing)
+                llm_result = await llm_extractor(body)
                 for field in missing:
                     llm_value = getattr(llm_result, field)
                     if llm_value is not None:

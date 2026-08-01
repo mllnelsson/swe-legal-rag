@@ -185,9 +185,12 @@ async def test_partial_rule_based_llm_fills_gaps() -> None:
         llm_extractor,
     )
 
-    llm_extractor.assert_called_once_with(
-        _SWEDISH_TEXT, ["decision_outcome", "category"]
-    )
+    # The extractor gets the body and nothing else. It used to also receive the
+    # list of missing fields, but no implementation ever read it — the prompt
+    # asks for all four regardless — so the argument was dropped rather than
+    # left as a promise the extractors do not keep. The missing list is still
+    # logged, which is where it was actually doing work.
+    llm_extractor.assert_called_once_with(_SWEDISH_TEXT)
 
     _session, _doc_id, update_dto = doc_repo.update.call_args[0]
     assert update_dto.case_number == "2023-0042"

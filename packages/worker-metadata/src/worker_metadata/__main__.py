@@ -17,7 +17,7 @@ from shared.repositories import document, task
 from shared.worker import serve, subscribe_step
 from worker_metadata.config import get_metadata_settings
 from worker_metadata.patterns import MetadataResult, extract_metadata_rule_based
-from worker_metadata.service import process_metadata
+from worker_metadata.service import LLMMetadataExtractor, process_metadata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,30 +25,34 @@ logger = logging.getLogger(__name__)
 NAME = "worker-metadata"
 
 
-def _make_llm_extractor(provider: LLMProvider):
-    async def _llm_extractor(
-        raw_text: str, missing_fields: list[str]
-    ) -> MetadataResult:
+def _make_llm_extractor(provider: LLMProvider) -> LLMMetadataExtractor:
+    async def extract(raw_text: str) -> MetadataResult:
         ai_result = await _ai_extract_metadata(raw_text, provider=provider)
-        decision_date: datetime.date | None = None
-        if ai_result.decision_date:
-            try:
-                decision_date = datetime.date.fromisoformat(ai_result.decision_date)
-            except ValueError:
-                pass
         return MetadataResult(
             case_number=ai_result.case_number,
-            decision_date=decision_date,
+            decision_date=_parse_decision_date(ai_result.decision_date),
             decision_outcome=ai_result.decision_outcome,
             category=ai_result.category,
         )
 
-    return _llm_extractor
+    return extract
 
 
-async def _no_llm_extractor(raw_text: str, missing_fields: list[str]) -> MetadataResult:
-    logger.info("No LLM Configured, returning empty Metdata values")
-    return MetadataResult()
+def _parse_decision_date(raw: str | None) -> datetime.date | None:
+    """The model returns a date as free text, so it may not be one.
+
+    A malformed date leaves the field unset rather than failing the document —
+    the rule-based pass may already have found it, and one bad field is not
+    worth discarding the other three. Logged because a model that has started
+    returning a new format is worth noticing.
+    """
+    if not raw:
+        return None
+    try:
+        return datetime.date.fromisoformat(raw)
+    except ValueError:
+        logger.warning("LLM returned an unparseable decision_date: %r", raw)
+        return None
 
 
 def subscribe() -> QueueSubscriber:
