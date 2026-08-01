@@ -25,8 +25,24 @@ def _make_config(
 
 def test_missing_api_key_raises() -> None:
     config = _make_config(api_key=None)
-    with pytest.raises(ValueError, match="berget_api_key is required"):
+    with pytest.raises(ValueError, match="An API key is required"):
         BergetEmbeddingProvider(config, default_base_url="https://api.berget.ai/v1")
+
+
+def test_resolved_api_key_is_accepted() -> None:
+    """The config loader resolves the key from the variable a provider names,
+    so it arrives in the host-agnostic field rather than the Berget-named one."""
+    config = EmbeddingConfig(
+        EMBEDDING_MODEL="intfloat/multilingual-e5-large",
+        EMBEDDING_PROVIDER="openai_compatible",
+        LLM_API_KEY="resolved-key",
+    )
+
+    provider = BergetEmbeddingProvider(
+        config, default_base_url="https://api.berget.ai/v1"
+    )
+
+    assert provider._client.api_key == "resolved-key"
 
 
 def test_uses_default_base_url_when_unset() -> None:

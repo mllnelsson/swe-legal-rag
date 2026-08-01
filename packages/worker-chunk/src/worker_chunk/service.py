@@ -18,11 +18,6 @@ from worker_chunk.chunker import build_contextual_text, split_document_into_chun
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_PROMPT = (
-    "Summarize this Swedish legal decision in 2-3 sentences. "
-    "Focus on the legal issue, the ruling, and the key reasoning."
-)
-
 
 async def process_chunking(
     document_id: UUID,

@@ -6,6 +6,8 @@ dependencies = [
     "shared",
     "llm-core",
     "pydantic-settings>=2.0",
+    # Reads llm_config.yaml — the per-task model/provider assignment.
+    "pyyaml>=6.0",
     "sentence-transformers>=3.0",
     "openai>=1.0",
     # Imported directly to normalise the local provider's encode output. Arrives

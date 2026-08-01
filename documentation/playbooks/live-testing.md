@@ -41,20 +41,26 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/overklagan
 STORAGE_BACKEND=local
 LOCAL_STORAGE_PATH=./data/pdfs
 QUEUE_BACKEND=sync
-LLM_PROVIDER=berget
-LLM_MODEL_STRUCTURED=mistralai/Mistral-Small-3.2-24B-Instruct-2506
-LLM_MODEL_SUMMARIZE=mistralai/Mistral-Medium-3.5-128B
-LLM_MODEL_CHAT=zai-org/GLM-5.2
-EMBEDDING_PROVIDER=berget
-EMBEDDING_MODEL=intfloat/multilingual-e5-large
 EMBEDDING_DIMENSION=1024
 LLM_TRACE_ENABLED=true
 ```
 
-To run on Gemini instead, set `LLM_PROVIDER=gemini`, provide `GEMINI_API_KEY`, and set
-the three `LLM_MODEL_*` vars to valid live Gemini models (e.g. `gemini-2.5-flash-lite` —
-`gemini-2.0-flash` was shut down, see [LLM pricing](/reference/llm-pricing.md)). Set
-`EMBEDDING_PROVIDER=local` for a fully offline embedding path.
+**Which model and provider each task uses is not set here.** It lives in
+`llm_config.yaml` at the repo root — see
+[llm_config.yaml](/reference/llm-config.md), which is the single source of truth and
+carries the full env-var registry. Only secrets belong in `.env`.
+
+This block used to restate the model assignment, and it drifted from the real defaults
+once already (see [the log](/log.md)); it is now deliberately short.
+
+To run a task on Gemini instead, give that role `provider: gemini` and a live Gemini
+model in `llm_config.yaml` (e.g. `gemini-2.5-flash-lite` — `gemini-2.0-flash` was shut
+down, see [LLM pricing](/reference/llm-pricing.md)) and provide `GEMINI_API_KEY`. Set
+`embedding.provider: local` for a fully offline embedding path.
+
+Note that `LLM_PROVIDER` in `.env` overrides **every** role's provider and so defeats a
+per-role choice; leave it unset unless that is what you want. `ai` logs a warning when
+it masks one.
 
 ## Pipeline Overview
 
@@ -308,6 +314,34 @@ rm -rf ./data/pdfs/*
 
 > This also wipes `data/pdfs/llm-traces/`, since traces share the storage root. Copy
 > that directory first if the cost history from the run matters — nothing else holds it.
+
+## Re-embedding after an embedding-config change
+
+Stored vectors are only comparable to queries embedded the same way. Changing any of
+`embedding.model`, `embedding.query_prefix` or `embedding.passage_prefix` in
+[`llm_config.yaml`](/reference/llm-config.md) **invalidates every stored embedding** —
+retrieval keeps working, silently and badly, so nothing will tell you.
+
+This is not hypothetical: the `passage_prefix` was previously never applied even though
+queries were prefixed, so any corpus embedded before that fix must be rebuilt.
+
+```bash
+# 1. Clear the vectors, keeping documents, chunks and everything upstream
+psql "$DATABASE_URL" -c "UPDATE chunks SET embedding = NULL;"
+
+# 2. Reset the embed task so the step will run again
+psql "$DATABASE_URL" -c "UPDATE tasks SET status = 'pending', error_message = NULL, started_at = NULL, completed_at = NULL WHERE step = 'embed';"
+
+# 3. Re-run the embed step for each document
+uv run python scripts/run_step.py docs                 # list document ids
+uv run python scripts/run_step.py embed <document_id>  # once per document
+```
+
+Then confirm: `SELECT count(*) FROM chunks WHERE embedding IS NULL;` should be `0`, and a
+query that previously returned a known document should still return it. A change in
+`embedding.dimension` additionally requires a migration recreating the `chunks.embedding`
+column at the new width — see
+[embedding dimension](/decisions/embedding-dimension.md).
 
 ## Running Tests
 

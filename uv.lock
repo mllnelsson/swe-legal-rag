@@ -44,6 +44,7 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "openai" },
     { name = "pydantic-settings" },
+    { name = "pyyaml" },
     { name = "sentence-transformers" },
     { name = "shared" },
 ]
@@ -54,6 +55,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "sentence-transformers", specifier = ">=3.0" },
     { name = "shared", editable = "packages/shared" },
 ]

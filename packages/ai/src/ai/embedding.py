@@ -1,31 +1,39 @@
 """Embedding provider abstraction for the ai package.
 
-Default model is `intfloat/multilingual-e5-large` (1024 dims) — this must stay
-in sync with `shared.config.EMBEDDING_DIMENSION` (default 1024) and the
-`chunks.embedding` column size baked into the existing migrations.
-To switch models, update EMBEDDING_MODEL **and** EMBEDDING_DIMENSION together
-and provide a new database migration.
+Model, dimension and retrieval prefixes are configured in `llm_config.yaml`
+under `embedding` — see `ai.llm_config` for the resolution rules.
 
-`EMBEDDING_MODEL` is passed verbatim to `SentenceTransformer(...)`, so it must
-be a resolvable HuggingFace model id — not a friendly alias.
+The model and its dimension must always change together, and the
+`chunks.embedding` column must be recreated at the new width by a migration.
+`verify_embedding_dimension` enforces the first half of that at startup.
+
+`model` is passed verbatim to the provider, so for the local provider it must be
+a resolvable HuggingFace model id — not a friendly alias.
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from llm_core import BERGET_BASE_URL
 
 from ai.errors import EmbeddingDimensionMismatchError
+from ai.llm_config import (
+    EmbeddingBackend,
+    EmbeddingConfig,
+    resolve_embedding_config,
+)
 from shared.config import EMBEDDING_DIMENSION
-
-# Selected for Swedish retrieval quality (Scandinavian Embedding Benchmark);
-# see ARCHITECTURE.md §7. Produces 1024-dim vectors.
-DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 
 # Short throwaway input used only to observe the model's output width.
 _DIMENSION_PROBE_TEXT = "dimensionskontroll"
+
+__all__ = [
+    "EmbeddingConfig",
+    "EmbeddingProvider",
+    "create_embedding_provider",
+    "verify_embedding_dimension",
+]
 
 
 @runtime_checkable
@@ -33,46 +41,54 @@ class EmbeddingProvider(Protocol):
     async def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
-class EmbeddingConfig(BaseSettings):
-    model_config = SettingsConfigDict(populate_by_name=True)
-
-    provider: str = Field(default="berget", alias="EMBEDDING_PROVIDER")
-    model: str = Field(default=DEFAULT_EMBEDDING_MODEL, alias="EMBEDDING_MODEL")
-    berget_api_key: str | None = Field(default=None, alias="BERGET_API_KEY")
-    base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
-
-
 def create_embedding_provider(
     config: EmbeddingConfig | None = None,
 ) -> EmbeddingProvider:
     if config is None:
-        config = EmbeddingConfig()
+        config = resolve_embedding_config()
 
     match config.provider:
-        case "local":
+        case EmbeddingBackend.LOCAL:
             from ai.providers.local_embeddings import LocalEmbeddingProvider
 
             return LocalEmbeddingProvider(config)
-        case "berget":
+        case EmbeddingBackend.OPENAI_COMPATIBLE | EmbeddingBackend.BERGET:
             from ai.providers.berget_embeddings import BergetEmbeddingProvider
 
-            return BergetEmbeddingProvider(
-                config, default_base_url="https://api.berget.ai/v1"
-            )
+            return BergetEmbeddingProvider(config, default_base_url=BERGET_BASE_URL)
         case _:
             raise ValueError(f"Unknown embedding provider: {config.provider!r}")
 
 
-async def verify_embedding_dimension(provider: EmbeddingProvider) -> int:
-    """Check the provider's actual output width against `EMBEDDING_DIMENSION`.
+async def verify_embedding_dimension(
+    provider: EmbeddingProvider, config: EmbeddingConfig | None = None
+) -> int:
+    """Check that every declaration of the embedding width agrees.
 
-    Call once at process startup. Embeds a single throwaway string, so for the local
-    provider this also forces the model to load eagerly rather than on first use.
+    Call once at process startup. Embeds a single throwaway string, so for the
+    local provider this also forces the model to load eagerly rather than on
+    first use.
 
-    Returns the observed dimension. Raises `EmbeddingDimensionMismatchError` if it
-    disagrees with the configured value — which would otherwise corrupt or reject
-    every write to `chunks.embedding`.
+    The width is declared in three uncoordinated places — `llm_config.yaml`,
+    `shared.config.EMBEDDING_DIMENSION` (which the workers validate against), and
+    the `chunks.embedding` column baked into the migration. Nothing links them,
+    so this compares all three reachable values against what the model actually
+    produces. Without it a mismatch only surfaces after the pipeline has done its
+    expensive work, or as a failed user query on the API.
+
+    Returns the observed dimension.
     """
+    if config is None:
+        config = resolve_embedding_config()
+
+    if config.dimension != EMBEDDING_DIMENSION:
+        raise EmbeddingDimensionMismatchError(
+            f"Configured embedding dimension disagrees with itself: "
+            f"llm_config.yaml says {config.dimension}, EMBEDDING_DIMENSION is "
+            f"{EMBEDDING_DIMENSION}. These must match, and the chunks.embedding "
+            f"column must be recreated at that width."
+        )
+
     vectors = await provider.embed([_DIMENSION_PROBE_TEXT])
     if not vectors:
         raise EmbeddingDimensionMismatchError(
@@ -80,11 +96,11 @@ async def verify_embedding_dimension(provider: EmbeddingProvider) -> int:
         )
 
     actual_dimension = len(vectors[0])
-    if actual_dimension != EMBEDDING_DIMENSION:
+    if actual_dimension != config.dimension:
         raise EmbeddingDimensionMismatchError(
-            f"Embedding model produces {actual_dimension}-dim vectors but "
-            f"EMBEDDING_DIMENSION is {EMBEDDING_DIMENSION}. EMBEDDING_MODEL and "
-            f"EMBEDDING_DIMENSION must change together, and the chunks.embedding "
-            f"column must be recreated at the new width."
+            f"Embedding model {config.model!r} produces {actual_dimension}-dim "
+            f"vectors but the configured dimension is {config.dimension}. The "
+            f"model and the dimension must change together, and the "
+            f"chunks.embedding column must be recreated at the new width."
         )
     return actual_dimension

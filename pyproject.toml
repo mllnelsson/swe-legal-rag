@@ -62,6 +62,30 @@ api = { workspace = true }
 target-version = "py312"
 src = ["packages/*/src"]
 
+[tool.ty.environment]
+python-version = "3.12"
+
+# The GCP client libraries are deliberately optional — local dev runs
+# STORAGE_BACKEND=local and QUEUE_BACKEND=sync, so google-cloud-storage and
+# google-cloud-pubsub are not dev dependencies. Both adapters guard their import
+# with try/except ImportError and raise an install message at construction time;
+# ty cannot see through that, so it reports the missing module and then reports
+# every attribute on the `None` fallback binding.
+#
+# Scoped to these two files on purpose. Ignoring unresolved-import repo-wide
+# would hide a genuinely misspelled import anywhere else, and this is the only
+# place the pattern is used. Installing the two packages would also silence it —
+# at the cost of adding heavyweight GCP deps to every local install.
+[[tool.ty.overrides]]
+include = [
+    "packages/shared/src/shared/queue/pubsub.py",
+    "packages/shared/src/shared/storage/gcs.py",
+]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # Integration tests are excluded by default: they need a Postgres and they

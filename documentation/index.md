@@ -24,4 +24,4 @@ An OKF knowledge bundle for a Swedish-language semantic search and chat tool ove
 * [Frontend](frontend/) - The V1 streaming chat UI.
 * [Decisions](decisions/) - Architecture decision records.
 * [Playbooks](playbooks/) - Operational procedures for local dev and live testing.
-* [Reference](reference/) - Crawl source, GCP layout, cost, and LLM pricing reference material.
+* [Reference](reference/) - Crawl source, GCP layout, LLM/embedding configuration, cost, and LLM pricing reference material.

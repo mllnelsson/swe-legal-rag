@@ -47,10 +47,13 @@ class GeminiProvider:
     def __init__(self, config: LLMConfig) -> None:
         from google import genai
 
-        if not config.gemini_api_key:
-            raise ValueError("gemini_api_key is required for GeminiProvider")
+        api_key = config.api_key or config.gemini_api_key
+        if not api_key:
+            raise ValueError(
+                "An API key is required for GeminiProvider (api_key or gemini_api_key)"
+            )
 
-        self._client = genai.Client(api_key=config.gemini_api_key)
+        self._client = genai.Client(api_key=api_key)
         self._model = config.model
         self._temperature = config.temperature
         self._max_tokens = config.max_tokens

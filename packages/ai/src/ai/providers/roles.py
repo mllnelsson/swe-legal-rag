@@ -1,59 +1,47 @@
-"""Per-task LLM model assignment.
+"""Per-task LLM provider construction.
 
-`llm_core.LLMConfig` carries a single `model` field — one process-wide model
-for every call. This project needs three different models for three
-different cost/quality profiles instead of one model for everything:
+`llm_core.LLMConfig` carries a single `model` — one process-wide model for every
+call. This project wants a different model per task, and sometimes a different
+*provider* per task, so the assignment lives in `llm_config.yaml` under `roles`
+and is resolved by `ai.llm_config`.
 
-- structured: high-volume, JSON-schema output (query decomposition, metadata
-  and entity extraction, reranking) — a cheap, JSON-schema-capable model.
-- summarize: one call per ingested document, no structured output, may see
-  long documents — a larger-context model.
-- chat: low-volume, streaming, user-facing answer synthesis — a stronger
-  model, since it's not run at ingestion scale.
+A role is just a name. Declaring one in the YAML is enough to use it; the three
+constants below exist because they have call sites, not because the set is
+closed. See documentation/reference/llm-config.md.
 
-Each `create_*_llm_provider()` below builds an `LLMConfig` that only
-overrides `model`; `provider`/API key/`base_url`/temperature still resolve
-from the environment exactly as `llm_core.create_provider()` would use them
-normally.
-
-The defaults here are Berget model IDs. Switching `LLM_PROVIDER` back to
-"gemini" also requires overriding `LLM_MODEL_STRUCTURED`, `LLM_MODEL_SUMMARIZE`,
-and `LLM_MODEL_CHAT` to valid Gemini model names — these defaults will not
-resolve against Gemini's API.
+Each composition root constructs the role-appropriate provider(s) once at startup
+and threads them into the call sites via the `provider=` keyword — there is no
+hidden global default in production.
 """
 
 from __future__ import annotations
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from llm_core import LLMProvider, create_provider
 
-from llm_core import LLMConfig, LLMProvider, create_provider
+from ai.llm_config import LLMConfigDocument, resolve_role_config
+
+ROLE_STRUCTURED = "structured"
+ROLE_SUMMARIZE = "summarize"
+ROLE_CHAT = "chat"
 
 
-class LLMRoleConfig(BaseSettings):
-    model_config = SettingsConfigDict(populate_by_name=True)
+def create_llm_provider(
+    role: str, document: LLMConfigDocument | None = None
+) -> LLMProvider:
+    """Build the provider `llm_config.yaml` assigns to `role`.
 
-    model_structured: str = Field(
-        default="mistralai/Mistral-Small-3.2-24B-Instruct-2506",
-        alias="LLM_MODEL_STRUCTURED",
-    )
-    model_summarize: str = Field(
-        default="mistralai/Mistral-Medium-3.5-128B",
-        alias="LLM_MODEL_SUMMARIZE",
-    )
-    model_chat: str = Field(
-        default="zai-org/GLM-5.2",
-        alias="LLM_MODEL_CHAT",
-    )
+    Raises `UnknownLLMRoleError` if the role is not declared.
+    """
+    return create_provider(resolve_role_config(role, document))
 
 
 def create_structured_llm_provider() -> LLMProvider:
-    return create_provider(LLMConfig(model=LLMRoleConfig().model_structured))
+    return create_llm_provider(ROLE_STRUCTURED)
 
 
 def create_summarize_llm_provider() -> LLMProvider:
-    return create_provider(LLMConfig(model=LLMRoleConfig().model_summarize))
+    return create_llm_provider(ROLE_SUMMARIZE)
 
 
 def create_chat_llm_provider() -> LLMProvider:
-    return create_provider(LLMConfig(model=LLMRoleConfig().model_chat))
+    return create_llm_provider(ROLE_CHAT)

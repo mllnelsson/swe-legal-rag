@@ -167,28 +167,14 @@ GCS_BUCKET=                     # required when STORAGE_BACKEND=gcs
 QUEUE_BACKEND=sync
 PUBSUB_PROJECT_ID=              # required when QUEUE_BACKEND=pubsub
 
-# AI — provider keys, model selection
-# "berget" is the default LLM provider (OpenAI-compatible, https://api.berget.ai/v1).
-# "gemini" remains fully supported — set LLM_PROVIDER=gemini and GEMINI_API_KEY,
-# and also override the three LLM_MODEL_* vars below to valid Gemini model names.
-LLM_PROVIDER=berget
-BERGET_API_KEY=                # required for LLM_PROVIDER=berget and/or EMBEDDING_PROVIDER=berget
-LLM_BASE_URL=                   # optional override; defaults to https://api.berget.ai/v1
-GEMINI_API_KEY=                 # required only if LLM_PROVIDER=gemini
+# AI — secrets only. Which model and provider each task uses lives in
+# llm_config.yaml at the repo root; see /reference/llm-config.md for the file
+# format, the precedence rules, and the full list of variables that override it.
+BERGET_API_KEY=                 # required unless every provider is gemini/local
+GEMINI_API_KEY=                 # required if any role uses provider: gemini
 
-# Per-task model assignment (see /packages/ai.md — per-task model selection).
-# Defaults are Berget model IDs; override all three if switching LLM_PROVIDER=gemini.
-LLM_MODEL_STRUCTURED=mistralai/Mistral-Small-3.2-24B-Instruct-2506
-LLM_MODEL_SUMMARIZE=mistralai/Mistral-Medium-3.5-128B
-LLM_MODEL_CHAT=zai-org/GLM-5.2
-
-# "berget" is the default embedding provider (Berget-hosted, same model as "local").
-# "local" runs sentence-transformers in-process — no API key, no network access.
-EMBEDDING_PROVIDER=berget
-# Passed verbatim to the provider (Berget model id, or SentenceTransformer() for "local")
-EMBEDDING_MODEL=intfloat/multilingual-e5-large
-
-# Must match the model's output width (e5-large=1024, e5-base=768)
+# Must match embedding.dimension in llm_config.yaml and the chunks.embedding
+# column width (e5-large=1024, e5-base=768). Checked at startup.
 EMBEDDING_DIMENSION=1024
 
 # LLM trace capture (see /observability.md). On by default; traces land under
@@ -266,8 +252,9 @@ uv run --package worker-embed python -m worker_embed
 **worker-chunk notes:**
 - Requires `BERGET_API_KEY` in `.env` by default — summary generation calls the
   `summarize`-role model (Mistral Medium 3.5 by default) via Berget, through the
-  [ai package](/packages/ai.md). If `LLM_PROVIDER=gemini`, requires `GEMINI_API_KEY` and
-  a valid Gemini model in `LLM_MODEL_SUMMARIZE` instead.
+  [ai package](/packages/ai.md). If the `summarize` role is pointed at
+  `provider: gemini`, requires `GEMINI_API_KEY` and a valid Gemini model on that role
+  instead.
 
 **worker-embed notes:**
 - Default `EMBEDDING_PROVIDER=berget` calls Berget's hosted
@@ -351,9 +338,9 @@ where `alembic` comes from) and the whole workspace; a Cloud Run image wants nei
 | Queue | `QUEUE_BACKEND` | `sync` (in-process) | `pubsub` |
 | Queue project | `PUBSUB_PROJECT_ID` | *(not needed)* | GCP project ID |
 | Secrets | — | `.env` file | Secret Manager |
-| Embedding dim | `EMBEDDING_DIMENSION` | `1024` | `1024` — must match `EMBEDDING_MODEL` in both environments |
-| LLM provider | `LLM_PROVIDER` | `berget` (default) or `gemini` | Same — no local/GCP distinction, just a config choice |
-| Embedding provider | `EMBEDDING_PROVIDER` | `berget` (default) or `local` | Same — `local` is an offline dev/test fallback, not a GCP-vs-local split |
+| Embedding dim | `EMBEDDING_DIMENSION` | `1024` | `1024` — must match `embedding.model` in both environments |
+| LLM provider | `llm_config.yaml` `roles.*.provider` | `berget` (default) or `gemini`, per role | Same — no local/GCP distinction, just a config choice |
+| Embedding provider | `llm_config.yaml` `embedding.provider` | `berget` (default) or `local` | Same — `local` is an offline dev/test fallback, not a GCP-vs-local split |
 
 Development defaults: `STORAGE_BACKEND=local` and `QUEUE_BACKEND=sync`. No GCS or Pub/Sub
 credentials required for local development. The full local↔GCP mapping and the

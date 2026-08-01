@@ -26,6 +26,9 @@ COPY packages/ ./packages/
 RUN uv sync --frozen --all-packages
 
 COPY alembic.ini ./
+# Which model and provider each task uses. Read at startup by every process
+# that makes LLM or embedding calls, so a missing copy fails the container.
+COPY llm_config.yaml ./
 COPY alembic/ ./alembic/
 COPY scripts/ ./scripts/
 

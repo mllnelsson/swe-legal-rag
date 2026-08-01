@@ -3,7 +3,7 @@ type: Reference
 title: LLM Pricing Prerequisites
 description: Verified per-token rates and the rules for applying them when analyzing LLM trace records. Reference data, not implemented anywhere in the repo.
 tags: [observability, cost, pricing, llm]
-timestamp: 2026-07-27T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # LLM Pricing Prerequisites
@@ -43,20 +43,25 @@ Prices come from Google's official Gemini API pricing page:
   batch calls are ever adopted, the rules here must be extended first.
 - Re-verify **whenever the configured Gemini model changes**, and record the date below.
 
-These rates apply when `LLM_PROVIDER=gemini`.
+These rates apply to whichever roles use a `kind: gemini` provider — which can now be
+some roles and not others, so a single run's traces may mix priced and unpriced models.
 
 ## Berget rates are not known
 
-The default provider is Berget (see [local dev](/playbooks/local-dev.md)), and **no
-Berget rate is published in this repo**. Guessing one would be worse than reporting
+The default provider is Berget (see [llm_config.yaml](/reference/llm-config.md)), and
+**no Berget rate is published in this repo**. Guessing one would be worse than reporting
 nothing, so the four models this project runs by default have no rate here:
 
 | Model | Role |
 |---|---|
-| `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | `LLM_MODEL_STRUCTURED` |
-| `mistralai/Mistral-Medium-3.5-128B` | `LLM_MODEL_SUMMARIZE` |
-| `zai-org/GLM-5.2` | `LLM_MODEL_CHAT` |
-| `intfloat/multilingual-e5-large` | Berget-hosted embeddings |
+| `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | `roles.structured` |
+| `mistralai/Mistral-Medium-3.5-128B` | `roles.summarize` |
+| `zai-org/GLM-5.2` | `roles.chat` |
+| `intfloat/multilingual-e5-large` | `embedding` (Berget-hosted) |
+
+Which model fills each role is configurable, so confirm against `llm_config.yaml` (and
+any `LLM_MODEL_<ROLE>` override in the environment) before pricing a run. The trace
+records the model the provider **says it served**, which is the authoritative value.
 
 **Consequence:** on the out-of-the-box configuration, cost questions are answerable in
 *tokens* only. Tokens are always recorded, so obtaining a Berget rate later prices every
@@ -132,8 +137,8 @@ When changing the model (do these in the same change):
 
 1. Check the pricing page; add the rate and the date checked to the table above.
 2. Confirm the model has no context-length pricing tiers; note it here if it does.
-3. Update the model defaults in `.env.example` and the
-   [local dev](/playbooks/local-dev.md) env listing if the default changes.
+3. Change the role's `model:` in [`llm_config.yaml`](/reference/llm-config.md) — that is
+   the only place a default model is written down.
 4. After the first live call, confirm the record's `model` and `usage` are non-null and
    that tokens are plausible against the provider's usage dashboard.
 
