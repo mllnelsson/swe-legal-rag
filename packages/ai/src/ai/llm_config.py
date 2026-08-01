@@ -34,12 +34,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from llm_core import LLMConfig
+from llm_core import LLMConfig, ProviderKind
 
 from ai.errors import (
     LLMConfigInvalidError,
     LLMConfigNotFoundError,
     UnknownLLMRoleError,
+    UnsupportedEmbeddingBackendError,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,27 +55,22 @@ SUPPORTED_VERSION = 1
 _ROLE_MODEL_ENV_TEMPLATE = "LLM_MODEL_{role}"
 
 
-class ProviderKind(StrEnum):
-    """The client implementation a provider entry maps onto."""
-
-    OPENAI_COMPATIBLE = "openai_compatible"
-    GEMINI = "gemini"
-
-
 class EmbeddingBackend(StrEnum):
     """What `create_embedding_provider` dispatches on.
 
-    `embedding.provider` names an entry under `providers`, and resolution turns
-    that into the host's kind. LOCAL is the exception: it runs
-    sentence-transformers in-process, so it has no host, no base URL and no key,
-    and is written literally rather than declared as a provider.
+    Deliberately a subset of `ProviderKind` plus `LOCAL`, and the shared members
+    take their values *from* `ProviderKind` so the two cannot drift. Not every
+    LLM host has an embeddings endpoint wired up here, so a kind absent from
+    this enum is rejected by `resolve_embedding_config` — at config-resolution
+    time, naming the offending YAML key, rather than at dispatch.
+
+    LOCAL has no `ProviderKind` counterpart: it runs sentence-transformers
+    in-process, so it has no host, no base URL and no key, and is written
+    literally under `embedding.provider` instead of being declared as a provider.
     """
 
     LOCAL = "local"
-    OPENAI_COMPATIBLE = "openai_compatible"
-    # Pre-dates configuring hosts by kind. Still accepted so an existing
-    # EMBEDDING_PROVIDER=berget environment keeps resolving.
-    BERGET = "berget"
+    OPENAI_COMPATIBLE = ProviderKind.OPENAI_COMPATIBLE.value
 
 
 class ProviderSpec(BaseModel):
@@ -183,11 +179,12 @@ class EmbeddingConfig(BaseSettings):
 
     model_config = SettingsConfigDict(populate_by_name=True)
 
-    provider: str = Field(default="berget", alias="EMBEDDING_PROVIDER")
+    provider: EmbeddingBackend = Field(
+        default=EmbeddingBackend.OPENAI_COMPATIBLE, alias="EMBEDDING_PROVIDER"
+    )
     model: str = Field(default="", alias="EMBEDDING_MODEL")
     dimension: int = Field(default=1024, alias="EMBEDDING_DIMENSION")
     api_key: str | None = Field(default=None, alias="LLM_API_KEY")
-    berget_api_key: str | None = Field(default=None, alias="BERGET_API_KEY")
     base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
 
 
@@ -264,7 +261,7 @@ def resolve_role_config(
     _warn_if_env_masks_role_provider(role, spec, provider.kind)
 
     inherited = {
-        "provider": provider.kind.value,
+        "provider": provider.kind,
         "base_url": provider.base_url,
         "api_key": os.environ.get(provider.api_key_env),
         "temperature": _first_set(spec.temperature, defaults.temperature),
@@ -289,7 +286,7 @@ def resolve_embedding_config(
     spec = document.embedding
 
     values: dict[str, Any] = {
-        "provider": EmbeddingBackend.LOCAL.value,
+        "provider": EmbeddingBackend.LOCAL,
         "model": spec.model,
         "dimension": spec.dimension,
     }
@@ -298,11 +295,30 @@ def resolve_embedding_config(
     # file happens to give it, so a second OpenAI-compatible host needs no code.
     if spec.provider != EmbeddingBackend.LOCAL:
         provider = document.providers[spec.provider]
-        values["provider"] = provider.kind.value
+        values["provider"] = _embedding_backend_for(spec.provider, provider.kind)
         values["base_url"] = provider.base_url
         values["api_key"] = os.environ.get(provider.api_key_env)
 
     return EmbeddingConfig(**_without_env_overrides(EmbeddingConfig, values))
+
+
+def _embedding_backend_for(name: str, kind: ProviderKind) -> EmbeddingBackend:
+    """The embedding backend for a provider entry, or a refusal naming the key.
+
+    Not every `ProviderKind` has an embeddings client here. Rejecting at
+    resolution time points at the YAML key that is wrong; deferring to dispatch
+    would report it as a mystery at the first embed call instead.
+    """
+    match kind:
+        case ProviderKind.OPENAI_COMPATIBLE:
+            return EmbeddingBackend.OPENAI_COMPATIBLE
+        case ProviderKind.GEMINI:
+            raise UnsupportedEmbeddingBackendError(
+                f"embedding.provider names {name!r}, whose kind is "
+                f"{kind.value!r} — no embeddings client is wired up for it. Use "
+                f"an {ProviderKind.OPENAI_COMPATIBLE.value!r} host or "
+                f"{EmbeddingBackend.LOCAL.value!r}."
+            )
 
 
 def get_embedding_prefixes(

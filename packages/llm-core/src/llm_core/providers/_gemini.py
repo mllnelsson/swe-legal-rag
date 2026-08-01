@@ -4,7 +4,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from llm_core._exceptions import ProviderError
+from llm_core._exceptions import MissingCredentialError, ProviderError
 from llm_core._types import (
     LLMResponse,
     Message,
@@ -47,13 +47,13 @@ class GeminiProvider:
     def __init__(self, config: LLMConfig) -> None:
         from google import genai
 
-        api_key = config.api_key or config.gemini_api_key
-        if not api_key:
-            raise ValueError(
-                "An API key is required for GeminiProvider (api_key or gemini_api_key)"
+        if not config.api_key:
+            raise MissingCredentialError(
+                "An API key is required for GeminiProvider. Set it via the "
+                "provider's api_key_env in llm_config.yaml, or LLM_API_KEY."
             )
 
-        self._client = genai.Client(api_key=api_key)
+        self._client = genai.Client(api_key=config.api_key)
         self._model = config.model
         self._temperature = config.temperature
         self._max_tokens = config.max_tokens

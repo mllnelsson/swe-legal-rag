@@ -11,6 +11,10 @@ class ProviderError(LLMError):
         self.__cause__ = cause
 
 
+class MissingCredentialError(LLMError):
+    """A provider was constructed without the API key or base URL it needs."""
+
+
 class ToolExecutionError(LLMError):
     def __init__(
         self, tool_name: str, message: str, cause: Exception | None = None

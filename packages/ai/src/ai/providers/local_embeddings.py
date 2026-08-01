@@ -4,7 +4,7 @@ Deliberately not traced: this makes no API call, so it contributes exactly zero
 to what a question cost, and a local checkpoint has no token accounting to
 report. A record per chunk would be noise answering no question. A future
 *remote* provider does need tracing — copy the pattern in
-`berget_embeddings.py`.
+`openai_compatible_embeddings.py`.
 """
 
 from __future__ import annotations

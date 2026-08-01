@@ -21,6 +21,7 @@ from ai.errors import (
     LLMConfigInvalidError,
     LLMConfigNotFoundError,
     UnknownLLMRoleError,
+    UnsupportedEmbeddingBackendError,
 )
 from ai.llm_config import (
     CONFIG_FILENAME,
@@ -187,8 +188,11 @@ class TestEnvironmentPrecedence:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Env winning is intended; doing it invisibly is not."""
-        monkeypatch.setenv("LLM_PROVIDER", "berget")
+        """Env winning is intended; doing it invisibly is not.
+
+        The `elsewhere` role asks for the gemini host by name, so any other kind
+        in the environment masks it."""
+        monkeypatch.setenv("LLM_PROVIDER", "openai_compatible")
         document = load_config_document(_write(tmp_path))
 
         with caplog.at_level("WARNING"):
@@ -228,6 +232,20 @@ class TestValidation:
 
         with pytest.raises(LLMConfigInvalidError, match="nope"):
             load_config_document(_write(tmp_path, document))
+
+    def test_embedding_host_without_an_embeddings_client_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """Gemini is a declarable LLM host but has no embeddings client wired
+        up. The refusal names the YAML key so the fix is obvious; deferring it
+        to dispatch would surface as a mystery at the first embed call."""
+        document = {
+            **_DOCUMENT,
+            "embedding": {**_DOCUMENT["embedding"], "provider": "gemini"},
+        }
+
+        with pytest.raises(UnsupportedEmbeddingBackendError, match="gemini"):
+            resolve_embedding_config(load_config_document(_write(tmp_path, document)))
 
     def test_embedding_provider_may_be_local(self, tmp_path: Path) -> None:
         document = {

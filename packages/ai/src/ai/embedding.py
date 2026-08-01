@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from llm_core import BERGET_BASE_URL
-
 from ai.errors import EmbeddingDimensionMismatchError
 from ai.llm_config import (
     EmbeddingBackend,
@@ -47,17 +45,19 @@ def create_embedding_provider(
     if config is None:
         config = resolve_embedding_config()
 
+    # No fallback case: `EmbeddingBackend` is a closed set, and a host whose kind
+    # has no embeddings client was already rejected by `resolve_embedding_config`.
     match config.provider:
         case EmbeddingBackend.LOCAL:
             from ai.providers.local_embeddings import LocalEmbeddingProvider
 
             return LocalEmbeddingProvider(config)
-        case EmbeddingBackend.OPENAI_COMPATIBLE | EmbeddingBackend.BERGET:
-            from ai.providers.berget_embeddings import BergetEmbeddingProvider
+        case EmbeddingBackend.OPENAI_COMPATIBLE:
+            from ai.providers.openai_compatible_embeddings import (
+                OpenAiCompatibleEmbeddingProvider,
+            )
 
-            return BergetEmbeddingProvider(config, default_base_url=BERGET_BASE_URL)
-        case _:
-            raise ValueError(f"Unknown embedding provider: {config.provider!r}")
+            return OpenAiCompatibleEmbeddingProvider(config)
 
 
 async def verify_embedding_dimension(

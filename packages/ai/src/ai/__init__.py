@@ -31,9 +31,12 @@ from ai.errors import (
     LLMConfigError,
     LLMConfigInvalidError,
     LLMConfigNotFoundError,
+    MissingApiKeyError,
     UnknownLLMRoleError,
+    UnsupportedEmbeddingBackendError,
 )
 from ai.llm_config import (
+    EmbeddingBackend,
     LLMConfigDocument,
     get_embedding_prefixes,
     get_llm_config,
@@ -81,6 +84,7 @@ __all__ = [
     "ROLE_CHAT",
     # Configuration
     "LLMConfigDocument",
+    "EmbeddingBackend",
     "get_llm_config",
     "resolve_role_config",
     "resolve_embedding_config",
@@ -93,6 +97,8 @@ __all__ = [
     # Errors
     "AiError",
     "EmbeddingDimensionMismatchError",
+    "UnsupportedEmbeddingBackendError",
+    "MissingApiKeyError",
     "LLMConfigError",
     "LLMConfigNotFoundError",
     "LLMConfigInvalidError",
