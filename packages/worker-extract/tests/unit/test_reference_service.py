@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from shared.dtos.document import DocumentRead
 from shared.dtos.document_reference import DocumentReferenceRead
 from shared.dtos.unresolved_reference import UnresolvedReferenceRead
-from worker_extract.models import ExtractedReference
+from ai.dtos import ExtractedReference
 from worker_extract.services.reference_service import (
     process_references,
     reconcile_references,

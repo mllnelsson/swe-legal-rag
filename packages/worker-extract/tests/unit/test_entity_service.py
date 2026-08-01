@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from shared.dtos.entity import EntityRead
 from worker_extract.entities import deduplicate_entities, normalize_entity_name
-from worker_extract.models import EntityType, ExtractedEntity, EntityRelevance
+from ai.dtos import ExtractedEntity
+from shared.enums import EntityRelevance, EntityType
 from worker_extract.services.entity_service import persist_entities
 
 # Sentinel standing in for the AsyncSession handle threaded to the repo functions.

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from shared.dtos.document import DocumentRead
 from shared.dtos.task import TaskRead
 from shared.queue.base import QueueMessage
-from worker_extract.models import ExtractionResult
+from ai.dtos import EntityResult
 from worker_extract.services.extraction_service import process_extraction
 
 
@@ -111,7 +111,7 @@ def _make_repos(
     )
 
 
-_EMPTY_RESULT = ExtractionResult(entities=[], references=[])
+_EMPTY_RESULT = EntityResult(entities=[], references=[])
 
 
 async def _call(
@@ -126,25 +126,22 @@ async def _call(
     unresolved_repo: MagicMock,
     publisher: MagicMock,
     next_topic: PipelineStep = PipelineStep.CHUNK,
-    strategy_result: ExtractionResult = _EMPTY_RESULT,
+    strategy_result: EntityResult = _EMPTY_RESULT,
 ) -> None:
-    with patch(
-        "worker_extract.services.extraction_service.get_extraction_strategy",
-        return_value=MagicMock(extract=AsyncMock(return_value=strategy_result)),
-    ):
-        await process_extraction(
-            document_id=document_id,
-            task_id=task_id,
-            document_repo=doc_repo,
-            task_repo=task_repo,
-            entity_repo=entity_repo,
-            doc_entity_repo=doc_entity_repo,
-            ref_repo=ref_repo,
-            unresolved_repo=unresolved_repo,
-            queue_publisher=publisher,
-            session=session,
-            next_topic=next_topic,
-        )
+    await process_extraction(
+        document_id=document_id,
+        task_id=task_id,
+        document_repo=doc_repo,
+        task_repo=task_repo,
+        entity_repo=entity_repo,
+        doc_entity_repo=doc_entity_repo,
+        ref_repo=ref_repo,
+        unresolved_repo=unresolved_repo,
+        queue_publisher=publisher,
+        session=session,
+        strategy=AsyncMock(return_value=strategy_result),
+        next_topic=next_topic,
+    )
 
 
 class TestWorkerProcessesDocument:
@@ -229,33 +226,23 @@ class TestWorkerProcessesDocument:
         entity_repo.upsert = AsyncMock(side_effect=RuntimeError("db error"))
 
         with patch(
-            "worker_extract.services.extraction_service.get_extraction_strategy",
-            return_value=MagicMock(
-                extract=AsyncMock(
-                    return_value=ExtractionResult(
-                        entities=[],
-                        references=[],
-                    )
-                )
-            ),
+            "worker_extract.services.extraction_service.persist_entities",
+            AsyncMock(side_effect=RuntimeError("db error")),
         ):
-            with patch(
-                "worker_extract.services.extraction_service.persist_entities",
-                AsyncMock(side_effect=RuntimeError("db error")),
-            ):
-                await process_extraction(
-                    document_id=doc.id,
-                    task_id=task.id,
-                    document_repo=doc_repo,
-                    task_repo=task_repo,
-                    entity_repo=entity_repo,
-                    doc_entity_repo=doc_entity_repo,
-                    ref_repo=ref_repo,
-                    unresolved_repo=unresolved_repo,
-                    queue_publisher=publisher,
-                    session=session,
-                    next_topic=PipelineStep.CHUNK,
-                )
+            await process_extraction(
+                document_id=doc.id,
+                task_id=task.id,
+                document_repo=doc_repo,
+                task_repo=task_repo,
+                entity_repo=entity_repo,
+                doc_entity_repo=doc_entity_repo,
+                ref_repo=ref_repo,
+                unresolved_repo=unresolved_repo,
+                queue_publisher=publisher,
+                session=session,
+                strategy=AsyncMock(return_value=_EMPTY_RESULT),
+                next_topic=PipelineStep.CHUNK,
+            )
 
         publisher.publish.assert_not_called()
 
@@ -401,23 +388,20 @@ class TestCheckpointing:
             "worker_extract.services.extraction_service.persist_entities",
             AsyncMock(side_effect=RuntimeError("extraction exploded")),
         ):
-            with patch(
-                "worker_extract.services.extraction_service.get_extraction_strategy",
-                return_value=MagicMock(extract=AsyncMock(return_value=_EMPTY_RESULT)),
-            ):
-                await process_extraction(
-                    document_id=doc.id,
-                    task_id=task.id,
-                    document_repo=doc_repo,
-                    task_repo=task_repo,
-                    entity_repo=entity_repo,
-                    doc_entity_repo=doc_entity_repo,
-                    ref_repo=ref_repo,
-                    unresolved_repo=unresolved_repo,
-                    queue_publisher=publisher,
-                    session=session,
-                    next_topic=PipelineStep.CHUNK,
-                )
+            await process_extraction(
+                document_id=doc.id,
+                task_id=task.id,
+                document_repo=doc_repo,
+                task_repo=task_repo,
+                entity_repo=entity_repo,
+                doc_entity_repo=doc_entity_repo,
+                ref_repo=ref_repo,
+                unresolved_repo=unresolved_repo,
+                queue_publisher=publisher,
+                session=session,
+                strategy=AsyncMock(return_value=_EMPTY_RESULT),
+                next_topic=PipelineStep.CHUNK,
+            )
 
         session.rollback.assert_called_once()
         status_calls = [c[0][2] for c in task_repo.update_status.call_args_list]

@@ -19,6 +19,7 @@ from shared.repositories import (
 )
 from shared.worker import serve, subscribe_step
 from worker_extract.config import get_extract_settings
+from worker_extract.extractors.factory import create_extraction_strategy
 from worker_extract.services.extraction_service import process_extraction
 
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +34,7 @@ def subscribe() -> QueueSubscriber:
     extract_settings = get_extract_settings()
 
     install_file_tracing()
+    strategy = create_extraction_strategy()
 
     publisher = create_queue_publisher(settings.queue)
 
@@ -48,6 +50,7 @@ def subscribe() -> QueueSubscriber:
             unresolved_repo=unresolved_reference,
             queue_publisher=publisher,
             session=session,
+            strategy=strategy,
             next_topic=extract_settings.extract_next_topic,
         )
 

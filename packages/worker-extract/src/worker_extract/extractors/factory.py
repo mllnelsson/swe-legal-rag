@@ -1,84 +1,74 @@
 from __future__ import annotations
 
-import os
-from enum import StrEnum, auto
+from functools import partial
 
+from ai.dtos import EntityResult, ExtractedReference
 from ai.providers.roles import LLMRole, create_llm_provider
 from shared.segmentation import DocumentSegments
+from worker_extract.config import ExtractStrategyMode, get_extract_settings
 from worker_extract.entities import deduplicate_entities
 from worker_extract.extractors.base import ExtractionStrategy
-from worker_extract.extractors.llm import LLMStrategy
-from worker_extract.extractors.rule_based import RuleBasedStrategy
-from worker_extract.models import (
-    ExtractionResult,
-    ExtractedReference,
-)
+from worker_extract.extractors.llm import extract_with_llm
+from worker_extract.extractors.rule_based import extract_rule_based_strategy
 
+# How much body text the regex pass is expected to yield one entity from. Below
+# that rate the pass is treated as having missed, and the LLM is asked as well.
 _CHARS_PER_ENTITY_ESTIMATE = 1000
-_ENTITY_COUNT_PER_ESTIMATE_BLOCK = 1
-_DEFAULT_STRATEGY_VALUE = "rule_based_with_llm_fallback"
 
 
-class ExtractStrategyMode(StrEnum):
-    RULE_BASED = auto()
-    LLM = auto()
-    RULE_BASED_WITH_LLM_FALLBACK = auto()
-
-
-def _is_result_complete(result: ExtractionResult, segments: DocumentSegments) -> bool:
+def _is_result_complete(result: EntityResult, segments: DocumentSegments) -> bool:
     # Sized against the body alone: the yardstick is how much of the nämnd's own
     # text there is to extract from, and appendix length says nothing about that.
     if not result.entities:
         return False
-    min_expected = max(
-        1,
-        len(segments.body)
-        // _CHARS_PER_ENTITY_ESTIMATE
-        * _ENTITY_COUNT_PER_ESTIMATE_BLOCK,
-    )
+    min_expected = max(1, len(segments.body) // _CHARS_PER_ENTITY_ESTIMATE)
     return len(result.entities) >= min_expected
 
 
-def _merge_results(
-    primary: ExtractionResult, fallback: ExtractionResult
-) -> ExtractionResult:
+def _merge_results(primary: EntityResult, fallback: EntityResult) -> EntityResult:
     ref_map: dict[str, ExtractedReference] = {}
     for ref in primary.references + fallback.references:
         if ref.case_number not in ref_map:
             ref_map[ref.case_number] = ref
 
-    return ExtractionResult(
+    return EntityResult(
         entities=deduplicate_entities(primary.entities + fallback.entities),
         references=list(ref_map.values()),
     )
 
 
-class _FallbackStrategy:
-    def __init__(self) -> None:
-        self._rule_based = RuleBasedStrategy()
-        self._llm = LLMStrategy(create_llm_provider(LLMRole.STRUCTURED))
-
-    async def extract(
-        self, segments: DocumentSegments, case_number: str | None = None
-    ) -> ExtractionResult:
-        result = await self._rule_based.extract(segments, case_number)
-        if _is_result_complete(result, segments):
-            return result
-        llm_result = await self._llm.extract(segments, case_number)
-        return _merge_results(result, llm_result)
+async def _extract_rule_based_then_llm(
+    segments: DocumentSegments,
+    case_number: str | None = None,
+    *,
+    llm: ExtractionStrategy,
+) -> EntityResult:
+    """Try the regex pass, and only pay for the model when it comes up short."""
+    result = await extract_rule_based_strategy(segments, case_number)
+    if _is_result_complete(result, segments):
+        return result
+    return _merge_results(result, await llm(segments, case_number))
 
 
-def get_extraction_strategy() -> ExtractionStrategy:
-    mode_str = os.environ.get("EXTRACT_STRATEGY", _DEFAULT_STRATEGY_VALUE)
-    try:
-        mode = ExtractStrategyMode(mode_str)
-    except ValueError:
-        mode = ExtractStrategyMode.RULE_BASED_WITH_LLM_FALLBACK
+def create_extraction_strategy() -> ExtractionStrategy:
+    """Build the strategy `EXTRACT_STRATEGY` selects.
 
-    match mode:
+    Call once per process, not once per document: two of the three modes
+    construct an LLM provider, and every other worker builds its provider at
+    startup and injects it.
+    """
+    match get_extract_settings().extract_strategy:
         case ExtractStrategyMode.RULE_BASED:
-            return RuleBasedStrategy()
+            return extract_rule_based_strategy
         case ExtractStrategyMode.LLM:
-            return LLMStrategy(create_llm_provider(LLMRole.STRUCTURED))
+            return partial(
+                extract_with_llm, provider=create_llm_provider(LLMRole.STRUCTURED)
+            )
         case ExtractStrategyMode.RULE_BASED_WITH_LLM_FALLBACK:
-            return _FallbackStrategy()
+            return partial(
+                _extract_rule_based_then_llm,
+                llm=partial(
+                    extract_with_llm,
+                    provider=create_llm_provider(LLMRole.STRUCTURED),
+                ),
+            )

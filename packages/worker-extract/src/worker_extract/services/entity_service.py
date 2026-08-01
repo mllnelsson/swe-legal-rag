@@ -8,7 +8,7 @@ from shared.dtos.document_entity import DocumentEntityCreate
 from shared.dtos.entity import EntityCreate
 from shared.repositories import DocumentEntityRepo, EntityRepo
 from worker_extract.entities import deduplicate_entities, normalize_entity_name
-from worker_extract.models import ExtractedEntity
+from ai.dtos import ExtractedEntity
 
 
 async def persist_entities(

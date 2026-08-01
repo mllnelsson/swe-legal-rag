@@ -336,6 +336,9 @@ async def _run_step(
                     next_topic=_next_topic(PipelineStep.METADATA),
                 )
             case PipelineStep.EXTRACT:
+                from worker_extract.extractors.factory import (
+                    create_extraction_strategy,
+                )
                 from worker_extract.services.extraction_service import (
                     process_extraction,
                 )
@@ -351,6 +354,7 @@ async def _run_step(
                     unresolved_repo=repos.unresolved,
                     queue_publisher=publisher,
                     session=session,
+                    strategy=create_extraction_strategy(),
                     next_topic=_next_topic(PipelineStep.EXTRACT),
                 )
             case PipelineStep.CHUNK:

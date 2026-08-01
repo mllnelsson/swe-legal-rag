@@ -16,19 +16,14 @@ from __future__ import annotations
 
 import re
 
+from ai.dtos import EntityResult, ExtractedEntity, ExtractedReference
+from shared.enums import EntityRelevance, EntityType
 from shared.segmentation import (
     DocumentSegments,
     normalize_case_number,
     normalize_decision_number,
 )
 from worker_extract.entities import deduplicate_entities
-from worker_extract.models import (
-    EntityRelevance,
-    EntityType,
-    ExtractedEntity,
-    ExtractedReference,
-    ExtractionResult,
-)
 
 # "ÖN 2025-0017" / "ÖN dnr 2025-0017" — the ärendenummer space.
 _CASE_REF_RE = re.compile(r"\bÖN\s+(?:dnr\s+)?\d{4}[-–]\d{3,}\b", re.IGNORECASE)
@@ -126,21 +121,23 @@ def extract_entities_rule_based(segments: DocumentSegments) -> list[ExtractedEnt
     return deduplicate_entities(entities)
 
 
-def extract_rule_based(segments: DocumentSegments) -> ExtractionResult:
-    return ExtractionResult(
+def extract_rule_based(segments: DocumentSegments) -> EntityResult:
+    return EntityResult(
         entities=extract_entities_rule_based(segments),
         references=extract_references(segments),
     )
 
 
-class RuleBasedStrategy:
-    async def extract(
-        self, segments: DocumentSegments, case_number: str | None = None
-    ) -> ExtractionResult:
-        # case_number is part of the ExtractionStrategy protocol for the LLM
-        # strategy's benefit. Rule-based extraction no longer needs it: excluding
-        # the trailer already removes the document's own identifiers.
-        return extract_rule_based(segments)
+async def extract_rule_based_strategy(
+    segments: DocumentSegments, case_number: str | None = None
+) -> EntityResult:
+    """`extract_rule_based` in `ExtractionStrategy` shape.
+
+    Async and accepting `case_number` only to satisfy the common signature.
+    Rule-based extraction does no I/O and does not need the case number:
+    excluding the trailer already removes the document's own identifiers.
+    """
+    return extract_rule_based(segments)
 
 
 def _entities_in(text: str, relevance: EntityRelevance) -> list[ExtractedEntity]:

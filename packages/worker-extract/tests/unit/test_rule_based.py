@@ -3,7 +3,8 @@ from __future__ import annotations
 from shared.enums import EntityRelevance
 from shared.segmentation import split_document
 from worker_extract.extractors.rule_based import extract_references, extract_rule_based
-from worker_extract.models import EntityType, ExtractionResult
+from ai.dtos import EntityResult
+from shared.enums import EntityType
 
 _TEXT_WITH_CASE_REF = (
     "Överklagandenämnden för Svenska kyrkan\n\n"
@@ -123,7 +124,7 @@ class TestRuleBasedEntityExtraction:
 
     def test_rule_based_returns_extraction_result(self) -> None:
         assert isinstance(
-            extract_rule_based(_segments(_TEXT_WITH_CASE_REF)), ExtractionResult
+            extract_rule_based(_segments(_TEXT_WITH_CASE_REF)), EntityResult
         )
 
     def test_rule_based_entity_names_are_lowercase(self) -> None:

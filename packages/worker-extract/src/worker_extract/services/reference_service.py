@@ -23,7 +23,7 @@ from shared.repositories import (
     DocumentRepo,
     UnresolvedReferenceRepo,
 )
-from worker_extract.models import ExtractedReference
+from ai.dtos import ExtractedReference
 
 # Beslutsnummer are written "N/YYYY"; ärendenummer never contain a slash.
 _DECISION_NUMBER_MARKER = "/"
