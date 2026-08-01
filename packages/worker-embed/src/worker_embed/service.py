@@ -6,7 +6,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import EmbeddingProvider
-from shared.config import EMBEDDING_DIMENSION
 from shared.pipeline import run_pipeline_step
 from shared.repositories import ChunkRepo, TaskRepo
 from worker_embed.errors import (
@@ -26,6 +25,7 @@ async def process_embedding(
     embedding_provider: EmbeddingProvider,
     session: AsyncSession,
     passage_prefix: str,
+    expected_dimension: int,
 ) -> None:
     """Embed every chunk of a document.
 
@@ -34,6 +34,12 @@ async def process_embedding(
     one side of an asymmetric model puts queries and passages in systematically
     offset regions of the space, and that is precisely what a forgotten default
     would reintroduce. Pass `""` for a model that uses no prefixes.
+
+    `expected_dimension` comes from the same resolved `EmbeddingConfig` as the
+    provider, so this checks the vectors against the width that provider was
+    configured for rather than against a process-wide constant that nothing
+    ties to it. `ai.verify_embedding_dimension` has already reconciled that
+    width with `shared.config.EMBEDDING_DIMENSION` at startup.
     """
 
     async def body() -> None:
@@ -56,9 +62,9 @@ async def process_embedding(
             )
 
         for vector in vectors:
-            if len(vector) != EMBEDDING_DIMENSION:
+            if len(vector) != expected_dimension:
                 raise EmbeddingDimensionError(
-                    f"Embedding dimension mismatch: expected {EMBEDDING_DIMENSION}, got {len(vector)}"
+                    f"Embedding dimension mismatch: expected {expected_dimension}, got {len(vector)}"
                 )
 
         updates = [(chunk.id, vector) for chunk, vector in zip(chunks, vectors)]

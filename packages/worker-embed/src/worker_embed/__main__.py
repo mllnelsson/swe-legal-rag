@@ -37,7 +37,9 @@ def subscribe() -> QueueSubscriber:
     _, passage_prefix = get_embedding_prefixes()
 
     # Fail before consuming the queue rather than once per document. Also warms
-    # the model, so the first message is not charged for loading it.
+    # the model, so the first message is not charged for loading it. The width
+    # it returns is what the model actually produced, so the per-document check
+    # below is against an observed value rather than a declared one.
     dimension = asyncio.run(verify_embedding_dimension(embedding_provider))
     logger.info("Embedding dimension verified: %d", dimension)
 
@@ -50,6 +52,7 @@ def subscribe() -> QueueSubscriber:
             embedding_provider=embedding_provider,
             session=session,
             passage_prefix=passage_prefix,
+            expected_dimension=dimension,
         )
 
     return subscribe_step(

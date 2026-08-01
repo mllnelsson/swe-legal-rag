@@ -6,8 +6,18 @@ from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Matches `ai.embedding.DEFAULT_EMBEDDING_MODEL` (intfloat/multilingual-e5-large).
-# Changing this requires a migration recreating `chunks.embedding` at the new width.
+# The embedding width, and the only copy of it `shared` can see.
+#
+# The real source of truth is `embedding.dimension` in llm_config.yaml, but
+# `shared` must not import `ai` — `ai` depends on `shared`, not the other way
+# round. So the value is restated here for the two consumers that live below
+# that line: the `chunks.embedding` column width (`shared.models.chunk`) and the
+# Alembic migration that created it. `ai.verify_embedding_dimension` exists to
+# reconcile this with the YAML and with what the model actually emits, once, at
+# startup — the dependency direction is why that check has to exist at all.
+#
+# Read at import time rather than through BaseSettings because a SQLAlchemy
+# column type needs it while the module is being defined.
 DEFAULT_EMBEDDING_DIMENSION = 1024
 
 EMBEDDING_DIMENSION: int = int(

@@ -371,18 +371,24 @@ async def _run_step(
                     next_topic=_next_topic(PipelineStep.CHUNK),
                 )
             case PipelineStep.EMBED:
-                from ai import create_embedding_provider, get_embedding_prefixes
+                from ai import (
+                    create_embedding_provider,
+                    get_embedding_prefixes,
+                    resolve_embedding_config,
+                )
                 from worker_embed.service import process_embedding
 
                 _, passage_prefix = get_embedding_prefixes()
+                embedding_config = resolve_embedding_config()
                 await process_embedding(
                     document_id=document_id,
                     task_id=task_id,
                     chunk_repo=repos.chunk,
                     task_repo=repos.task,
-                    embedding_provider=create_embedding_provider(),
+                    embedding_provider=create_embedding_provider(embedding_config),
                     session=session,
                     passage_prefix=passage_prefix,
+                    expected_dimension=embedding_config.dimension,
                 )
 
     final = await repos.task.get_by_id(session, task_id)

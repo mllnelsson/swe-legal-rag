@@ -82,6 +82,7 @@ class TestEmbedPipelineEndToEnd:
             embedding_provider=provider,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -113,6 +114,7 @@ class TestEmbedPipelineEndToEnd:
             embedding_provider=provider,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -143,6 +145,7 @@ class TestEmbedPipelineEndToEnd:
             embedding_provider=provider,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         result = await session.execute(
@@ -175,6 +178,7 @@ class TestEmbedPipelineEndToEnd:
             embedding_provider=provider,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         result = await session.execute(
@@ -212,6 +216,7 @@ class TestEmbedPipelineEndToEnd:
             embedding_provider=provider,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         updated_task = await task_repo.get_by_id(session, task.id)
@@ -244,6 +249,7 @@ class TestIndexFunctionality:
             embedding_provider=provider,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         query_vector = "[" + ",".join(["0.001"] * EMBEDDING_DIMENSION) + "]"
@@ -283,6 +289,7 @@ class TestIndexFunctionality:
             embedding_provider=provider,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         result = await session.execute(
@@ -324,6 +331,7 @@ class TestEmbedPipelineIdempotency:
             embedding_provider=provider1,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         await redrive_task(session, task_repo, task1.id)
@@ -339,6 +347,7 @@ class TestEmbedPipelineIdempotency:
             embedding_provider=provider2,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -370,6 +379,7 @@ class TestEmbedPipelineIdempotency:
             embedding_provider=provider,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         await redrive_task(session, task_repo, task1.id)
@@ -383,6 +393,7 @@ class TestEmbedPipelineIdempotency:
             embedding_provider=provider2,
             session=session,
             passage_prefix="",
+            expected_dimension=EMBEDDING_DIMENSION,
         )
 
         final_chunks = await chunk_repo.get_by_document_id(session, document_id)
