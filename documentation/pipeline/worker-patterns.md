@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Worker Architecture Patterns
-description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, session-per-message, and the commit-before-publish invariant.
+description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, the subscribe/serve startup split, injected trace scopes, and the commit-before-publish invariant.
 tags: [pipeline, workers, task-envelope, patterns]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # Worker Architecture Patterns
@@ -15,9 +15,18 @@ The conventions shared by every subscriber [pipeline](/pipeline/overview.md) wor
 **All workers are functional** — no service classes. Each worker's orchestration is a
 module-level `process_*` async function that takes every dependency as a parameter (repos
 as Protocol-typed namespaces, plus session, publisher, config values). No global state.
-The `__main__.py` handler closure captures the shared infrastructure objects and passes
+The `subscribe()` handler closure captures the shared infrastructure objects and passes
 them on each call. The repo-parameter threading is the injection seam — see
 [repositories](/data-model/repositories.md) for why it is load-bearing.
+
+Anything expensive or fallible to construct is built **once in `subscribe()`, not once
+per message**, and threaded in as a parameter: [worker-embed](/pipeline/embed.md) builds
+its embedding provider and probes its dimension before subscribing, passing the observed
+`expected_dimension` into every `process_embedding()` call rather than re-reading
+`shared.config.EMBEDDING_DIMENSION`; [worker-extract](/pipeline/extract.md) builds its
+`ExtractionStrategy` once via `create_extraction_strategy()` and passes it into every
+`process_extraction()` call, rather than constructing an LLM provider inside the step
+body for every document.
 
 ## Shared task envelope (`shared.pipeline.run_pipeline_step`)
 
@@ -55,12 +64,37 @@ The runner:
 swallow. **Crawl is not a pipeline step** — it loops over many listings producing many
 documents/tasks, so it keeps its own per-document loop.
 
-## Session-per-message pattern
+## Startup envelope (`shared.worker.subscribe_step` / `serve`)
 
-Subscriber workers create a new `AsyncSession` for each message (via
-`get_async_session()` in `__main__.py`). The session is passed to `process_*()` and
-threaded into `run_pipeline_step` and every repo call, giving explicit commit control.
-One failed message does not roll back others.
+Every subscriber worker's `__main__.py` splits into two functions: `subscribe()`
+builds the worker's wiring (settings, repos, providers) and registers a `handle`
+callable against a topic via `shared.worker.subscribe_step`, returning a
+`QueueSubscriber` without starting it; `main()` calls `shared.worker.serve(subscriber,
+name=...)`, which installs the `SIGTERM`/`SIGINT` handlers and calls
+`subscriber.start()`. The split exists because the two have different callers: a worker
+process wants both, in that order, but `scripts/run_pipeline.py` composes six workers
+into one process by calling only their `subscribe()`s — it wants the registration, not
+six competing signal handlers and six blocking `start()` calls.
+
+`subscribe_step(*, topic, queue_settings, handle, scope=None)` owns what
+`__main__.py` used to do by hand: it creates the `QueueSubscriber`, and its inner
+`handle_message` opens a fresh `AsyncSession` per message (via `get_async_session()`)
+and calls `handle(message, session)` inside `asyncio.run()`. `handle` is a worker's
+`StepHandler` — a closure over its already-built dependencies — and is threaded into
+`run_pipeline_step` and every repo call from there, giving explicit commit control. One
+failed message does not roll back others.
+
+## Trace scope injection
+
+`scope`, `subscribe_step`'s other keyword, is a `MessageScope` — a context manager
+factory entered around `asyncio.run()`, not inside the coroutine, so a `ContextVar` it
+sets is inherited by the loop (`asyncio.Runner` copies the current context when it
+builds the loop). `shared` must not depend on `llm-core`, so `shared.worker` cannot
+supply a tracing implementation itself; each worker that makes LLM calls passes
+`ai.worker_trace_scope(NAME)`, which enters `llm_core.trace_context` keyed on the
+message's `document_id`/`task_id` and the worker's own name as `source`. worker-download
+and worker-parse make no LLM calls and pass no `scope`. See
+[LLM Observability](/observability.md) for the wiring invariant this satisfies.
 
 ## Config pattern
 

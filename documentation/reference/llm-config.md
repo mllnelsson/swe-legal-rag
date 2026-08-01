@@ -4,7 +4,7 @@ title: llm_config.yaml — LLM and Embedding Configuration
 description: The single source of truth for which model and provider each LLM role and the embedder use — file format, precedence rules against environment variables, and the full env-var registry.
 resource: llm_config.yaml
 tags: [llm, config, yaml, provider, embedding, precedence]
-timestamp: 2026-08-01T15:02:17Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # llm_config.yaml — LLM and Embedding Configuration
@@ -16,7 +16,9 @@ used to live only in `.env.example` and package docs — those still exist, but 
 [`ai.llm_config`](/packages/ai.md); resolution and precedence live there, this page
 documents the contract.
 
-Adding a task with its own model is a YAML edit. No Python change is required.
+Swapping a task's model is a YAML edit. **Adding** a task needs both an entry
+under `roles:` here and a matching `LLMRole` member in
+`ai.providers.roles` — see [adding a role](#adding-a-role).
 
 ## File format
 
@@ -61,10 +63,10 @@ embedding:
 | Section | Purpose |
 |---|---|
 | `version` | Must equal `1` — the only version this build understands. Load fails otherwise. |
-| `providers` | Named hosts. `kind` is `openai_compatible` or `gemini` — the client implementation dispatched on. `api_key_env` names the environment variable holding that host's key; `base_url` is optional (only `openai_compatible` needs one, and it falls back to `llm_core.BERGET_BASE_URL` if omitted). |
+| `providers` | Named hosts. `kind` is a `llm_core.ProviderKind` — `openai_compatible` or `gemini` — the client implementation dispatched on. `api_key_env` names the environment variable holding that host's key. `openai_compatible` also requires `base_url`: there is no built-in default, and a host missing either raises `llm_core.MissingCredentialError` at construction. |
 | `defaults` | Inherited by every role that omits the field: `provider`, `temperature`, `max_tokens`, `stream_usage`. |
 | `roles` | One entry per task. `model` is required; `provider`/`temperature`/`max_tokens`/`stream_usage` are optional per-role overrides of `defaults`. |
-| `embedding` | The embedder's `provider` (a `providers` name, or the literal `"local"` for in-process `sentence-transformers`), `model`, `dimension`, and the retrieval `query_prefix`/`passage_prefix` pair. |
+| `embedding` | The embedder's `provider` (a `providers` name, or the literal `"local"` for in-process `sentence-transformers`), `model`, `dimension`, and the retrieval `query_prefix`/`passage_prefix` pair. Naming a provider whose `kind` has no embeddings client (`gemini` today) raises `ai.errors.UnsupportedEmbeddingBackendError` at resolution time, naming the offending key. |
 
 Every document model uses `extra="forbid"` — a typo'd or unrecognized key fails to
 load rather than silently doing nothing. A missing file is fatal
@@ -116,14 +118,19 @@ overrides it. Unset `LLM_PROVIDER` to let the file decide.
 
 ## Adding a role
 
-1. Add an entry under `roles:` in `llm_config.yaml` with at least `model:`.
-2. Call `ai.create_llm_provider("<your-role-name>")` from wherever the task needs a
+The role set is **closed**, not YAML-only: both halves must exist and must agree.
+
+1. Add a member to `ai.providers.roles.LLMRole` (a `StrEnum`; the value must match
+   the key used in step 2).
+2. Add a matching entry under `roles:` in `llm_config.yaml` with at least `model:`.
+3. Call `ai.create_llm_provider(LLMRole.<YOUR_ROLE>)` from wherever the task needs a
    provider.
 
-No Python constant is required — `ai.providers.roles.ROLE_STRUCTURED` /
-`ROLE_SUMMARIZE` / `ROLE_CHAT` exist only because those three roles have call sites
-today, not because the set of valid roles is closed. Requesting an undeclared role
-raises `UnknownLLMRoleError`.
+`resolve_role_config(role: str, ...)` — one layer below `create_llm_provider` — still
+resolves an arbitrary string key out of the file, but `LLMRole` is the closed set code
+actually asks for, which is what makes a misspelled role a type error rather than a
+runtime `UnknownLLMRoleError`. Calling `resolve_role_config` directly with a role
+undeclared in the YAML still raises `UnknownLLMRoleError`.
 
 The role automatically gets its own override variable, `LLM_MODEL_<ROLE_UPPER>` (role
 name upper-cased, `-` replaced with `_`) — computed from the role name, not
@@ -142,16 +149,16 @@ is not declared.
 | Variable | Scope | Effect |
 |---|---|---|
 | `LLM_CONFIG_PATH` | Global | Points at a config file directly, skipping the walk-up-from-cwd discovery. A missing file at this path is fatal. |
-| `LLM_PROVIDER` | Every role | Overrides every role's provider `kind`, flattening them onto one host. Logs a warning when it masks a role's own `provider:`. |
+| `LLM_PROVIDER` | Every role | Overrides every role's provider **kind** (`openai_compatible` or `gemini` — a `ProviderKind` value, not a `providers:` name), flattening them onto one host. Logs a warning when it masks a role's own `provider:`. |
 | `LLM_MODEL_<ROLE>` | One role | Overrides that role's `model`. Exists for free for any role declared in the YAML — `LLM_MODEL_STRUCTURED`, `LLM_MODEL_SUMMARIZE`, `LLM_MODEL_CHAT` today. |
 | `LLM_MODEL` | — | Deliberately ignored by role resolution. Pre-dates roles. |
 | `LLM_TEMPERATURE` | Every role | Overrides `temperature` for whichever role is being resolved. |
 | `LLM_MAX_TOKENS` | Every role | Overrides `max_tokens`. |
 | `LLM_STREAM_USAGE` | Every role | Overrides `stream_usage` — turn off only if a host rejects the streaming-usage request parameter; it fails the whole call. |
-| `LLM_BASE_URL` | Every role + embedding | Overrides the resolved provider's `base_url`. |
-| `LLM_API_KEY` | Every role + embedding | Host-agnostic key override, read before the provider's own named variable (`BERGET_API_KEY`/`GEMINI_API_KEY`). |
-| `BERGET_API_KEY`, `GEMINI_API_KEY` | Named provider | The normal source of a provider's key — named per-provider by `providers.<name>.api_key_env`, never read from the YAML. |
-| `EMBEDDING_PROVIDER` | Embedding | Overrides `embedding.provider`. |
+| `LLM_BASE_URL` | Every role + embedding | Overrides the resolved provider's `base_url`. There is no built-in default any more — an `openai_compatible` provider with neither this nor a YAML `base_url` refuses to start (`MissingCredentialError`). |
+| `LLM_API_KEY` | Every role + embedding | Host-agnostic key override. When unset, the key comes from whichever variable the resolved provider's `api_key_env` names (`BERGET_API_KEY`/`GEMINI_API_KEY` today) — `llm_core.LLMConfig` itself carries only the one `api_key` field, not a named field per host. |
+| `BERGET_API_KEY`, `GEMINI_API_KEY` | Named provider | The normal source of a provider's key — named per-provider by `providers.<name>.api_key_env`, never read from the YAML. These are ordinary vendor-named env vars; nothing about them is special-cased in code beyond the `api_key_env` indirection. |
+| `EMBEDDING_PROVIDER` | Embedding | Overrides `embedding.provider`. Takes an `EmbeddingBackend` **kind** (`openai_compatible` or `local`) rather than a `providers:` name — setting it to a host name like `berget` is not valid. |
 | `EMBEDDING_MODEL` | Embedding | Overrides `embedding.model`. |
 | `EMBEDDING_DIMENSION` | Embedding | Overrides `embedding.dimension`. Must agree with `embedding.dimension` and the `chunks.embedding` column width — see [embedding dimension](/decisions/embedding-dimension.md). |
 

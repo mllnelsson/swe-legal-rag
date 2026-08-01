@@ -181,7 +181,7 @@ it, and cost questions become unanswerable.
 `install_file_tracing()` is idempotent: a call after one has already succeeded
 returns the recorder already installed rather than building another. This is what
 lets [`scripts/run_pipeline.py`](/packages/overview.md) compose several workers'
-`main()` functions into one process — each calls `install_file_tracing()`
+`subscribe()` functions into one process — each calls `install_file_tracing()`
 independently, and only the first actually builds a `FileTraceRecorder`. Without
 this, each later call would replace the installed recorder with a fresh one,
 leaving a stray writer thread and `atexit` hook behind for every recorder that got
@@ -190,7 +190,7 @@ discarded.
 | Key | Set by |
 |---|---|
 | `interaction_id`, `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
-| `document_id`, `task_id` | Each worker, around `asyncio.run` in `handle_message` |
+| `document_id`, `task_id` | Each worker, via the `MessageScope` `ai.worker_trace_scope(name)` supplies to `shared.worker.subscribe_step`, entered around `asyncio.run` inside its `handle_message` |
 | `document_id`, `task_id` | `scripts/run_step.py`, around the step dispatch in `_run_step` |
 | `source` | The innermost code that knows what the call is |
 | `prompt` | `ai/services.py`, from the template's name |
@@ -223,7 +223,11 @@ and the streaming synthesis alike.
 
 **In the workers, the context wraps `asyncio.run`, not the coroutine.**
 `asyncio.Runner` copies the current context when it builds the loop, so an outer
-set propagates in. Setting it after the run would do nothing.
+set propagates in. Setting it after the run would do nothing. `shared.worker.subscribe_step`
+enters the `scope` it was given exactly there, around its own internal `asyncio.run` —
+`shared` cannot supply the context itself since it must not depend on `llm-core`, so each
+worker passes `ai.worker_trace_scope(name)` in; the two workers with no LLM calls
+(download, parse) pass no `scope` at all.
 
 ## Recorder lifecycle
 

@@ -52,8 +52,20 @@ selection](/decisions/llm-model-selection.md), embedding
   [GCP layout](/reference/gcp-layout.md).
 - **Model assignment is a declarative file, not environment variables** — which model and
   provider each task uses lives in [`llm_config.yaml`](/reference/llm-config.md), so a
-  role can name its own provider and a new role costs no Python. The environment still
-  overrides it. See [the decision](/decisions/llm-model-selection.md).
+  role can name its own provider and swapping a model costs no Python. The environment
+  still overrides it. Adding a *new* role needs an `LLMRole` member as well as the YAML
+  entry; that is the price of a misspelled role being a type error. See
+  [the decision](/decisions/llm-model-selection.md).
+- **A provider *kind* is a closed enum; a provider *name* is arbitrary** —
+  `llm_core.ProviderKind` (`openai_compatible`, `gemini`) is the set of client
+  implementations, and dispatch on it is exhaustive, so adding a kind without wiring it
+  up is a type error. The names under `providers:` in the YAML are free-form labels for
+  hosts. The same split governs roles: `LLMRole` is closed, the `roles:` keys are file
+  data. See [llm_config.yaml](/reference/llm-config.md).
+- **No built-in default host or per-vendor credential fields** — a provider requires
+  `base_url` and `api_key`, and refuses to start without them. A defaulted base URL
+  sends traffic to the wrong host silently, which is harder to diagnose than a refusal.
+  See [llm-core](/packages/llm-core.md).
 - **No LLM proxy container** — containerizing `ai`/`llm-core` as a service was considered
   as a way to give every worker its own container without each owning a private trace
   file. It solves neither half. What keeps the workers in one process is the `sync`
