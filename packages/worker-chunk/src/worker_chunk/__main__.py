@@ -1,29 +1,27 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import signal
 
 from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai import install_file_tracing, trace_context
+from ai import install_file_tracing, worker_trace_scope
 from ai.providers.roles import create_summarize_llm_provider
 from shared.config import get_settings
-from shared.db import get_async_session
-from shared.queue import create_queue_publisher, create_queue_subscriber
-from shared.queue.base import QueueMessage
+from shared.queue import create_queue_publisher
+from shared.queue.base import QueueMessage, QueueSubscriber
 from shared.repositories import chunk, document, task
+from shared.worker import serve, subscribe_step
 from worker_chunk.config import get_chunk_settings
 from worker_chunk.service import process_chunking
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Attribution for traces from this worker; inner calls name themselves.
-_SOURCE = "worker-chunk"
+NAME = "worker-chunk"
 
 
-def main() -> None:
+def subscribe() -> QueueSubscriber:
     load_dotenv()
     settings = get_settings()
     chunk_settings = get_chunk_settings()
@@ -32,47 +30,30 @@ def main() -> None:
     llm_provider = create_summarize_llm_provider()
 
     publisher = create_queue_publisher(settings.queue)
-    subscriber = create_queue_subscriber(settings.queue)
 
-    def handle_message(message: QueueMessage) -> None:
-        async def _handle() -> None:
-            async with get_async_session() as session:
-                await process_chunking(
-                    document_id=message.document_id,
-                    task_id=message.task_id,
-                    document_repo=document,
-                    chunk_repo=chunk,
-                    task_repo=task,
-                    queue_publisher=publisher,
-                    session=session,
-                    next_topic=chunk_settings.chunk_next_topic,
-                    llm_provider=llm_provider,
-                )
+    async def handle(message: QueueMessage, session: AsyncSession) -> None:
+        await process_chunking(
+            document_id=message.document_id,
+            task_id=message.task_id,
+            document_repo=document,
+            chunk_repo=chunk,
+            task_repo=task,
+            queue_publisher=publisher,
+            session=session,
+            next_topic=chunk_settings.chunk_next_topic,
+            llm_provider=llm_provider,
+        )
 
-        # Set outside asyncio.run: the runner copies the current context when
-        # it builds the loop, so everything inside inherits it. The document id
-        # is what ties this worker's cost back to the document that caused it.
-        with trace_context(
-            document_id=str(message.document_id),
-            task_id=str(message.task_id),
-            source=_SOURCE,
-        ):
-            asyncio.run(_handle())
-
-    subscriber.subscribe(chunk_settings.chunk_topic, handle_message)
-
-    def shutdown_handler(_signum: int, _frame: object) -> None:
-        logger.info("Shutdown signal received, stopping...")
-        subscriber.shutdown()
-
-    signal.signal(signal.SIGTERM, shutdown_handler)
-    signal.signal(signal.SIGINT, shutdown_handler)
-
-    logger.info(
-        "Chunk worker starting, subscribing to topic: %s",
-        chunk_settings.chunk_topic,
+    return subscribe_step(
+        topic=chunk_settings.chunk_topic,
+        queue_settings=settings.queue,
+        handle=handle,
+        scope=worker_trace_scope(NAME),
     )
-    subscriber.start()
+
+
+def main() -> None:
+    serve(subscribe(), name=NAME)
 
 
 if __name__ == "__main__":

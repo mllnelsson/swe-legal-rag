@@ -59,6 +59,7 @@ from ai.services import (
     summarize_document,
     synthesize_answer,
 )
+from ai.worker import worker_trace_scope
 
 __all__ = [
     # Observability. Every process making LLM calls installs tracing once at
@@ -66,6 +67,7 @@ __all__ = [
     "install_file_tracing",
     "LLMTraceConfig",
     "trace_context",
+    "worker_trace_scope",
     # Service functions
     "decompose_query",
     "extract_metadata",

@@ -8,10 +8,9 @@ worker_crawl`` on its own fails with ``QueueHandlerError: No handler registered
 for topic: 'download'`` — nothing ever subscribed.
 
 The fix is to register the six downstream handlers first and then let crawl
-cascade into them. Each worker's ``main()`` already does exactly the registering
-half: it subscribes its topic and then calls ``subscriber.start()``, which the
-sync backend implements as a no-op. So composing the pipeline is just calling
-those ``main()``s in order and running crawl last.
+cascade into them. Each worker exposes ``subscribe()`` for exactly this: it
+builds the worker's wiring, registers its handler and returns without blocking.
+Composing the pipeline is calling those in order and running crawl last.
 
 This is what the ``pipeline`` container runs — see /playbooks/local-dev.md.
 For iterating on one step at a time instead, use ``scripts/run_step.py``.
@@ -27,29 +26,27 @@ from __future__ import annotations
 
 import argparse
 import logging
-import signal
 from collections.abc import Callable
 
 from dotenv import load_dotenv
 
 from shared.config import QueueBackendType, get_settings
-from worker_chunk.__main__ import main as subscribe_chunk
+from shared.queue.base import QueueSubscriber
+from worker_chunk.__main__ import subscribe as subscribe_chunk
 from worker_crawl.__main__ import main as run_crawl
-from worker_download.__main__ import main as subscribe_download
-from worker_embed.__main__ import main as subscribe_embed
-from worker_extract.__main__ import main as subscribe_extract
-from worker_metadata.__main__ import main as subscribe_metadata
-from worker_parse.__main__ import main as subscribe_parse
+from worker_download.__main__ import subscribe as subscribe_download
+from worker_embed.__main__ import subscribe as subscribe_embed
+from worker_extract.__main__ import subscribe as subscribe_extract
+from worker_metadata.__main__ import subscribe as subscribe_metadata
+from worker_parse.__main__ import subscribe as subscribe_parse
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("run_pipeline")
 
-# Every step downstream of crawl, in pipeline order. Each of these subscribes
-# its topic on the shared sync broker and returns; none of them blocks. That
-# depends on `SyncQueueSubscriber.start()` being a no-op — if a future sync
-# subscriber ever blocks, the first entry here never returns and the failure is
-# visible immediately rather than silent.
-_SUBSCRIBING_WORKERS: tuple[Callable[[], None], ...] = (
+# Every step downstream of crawl, in pipeline order. Each registers its handler
+# on the shared sync broker and returns the subscriber without starting it —
+# starting is `shared.worker.serve`'s job, and this script never calls it.
+_SUBSCRIBING_WORKERS: tuple[Callable[[], QueueSubscriber], ...] = (
     subscribe_download,
     subscribe_parse,
     subscribe_metadata,
@@ -99,13 +96,6 @@ def main() -> None:
 
     for subscribe in _SUBSCRIBING_WORKERS:
         subscribe()
-
-    # Each worker main() installs SIGINT/SIGTERM handlers that call
-    # SyncQueueSubscriber.shutdown() — a no-op. Left in place they would
-    # swallow Ctrl-C for the whole run, so a one-shot run takes the default
-    # signal behaviour back.
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
-    signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
     logger.info("All downstream handlers registered; starting crawl")
     run_crawl(["--years", args.years] if args.years else [])

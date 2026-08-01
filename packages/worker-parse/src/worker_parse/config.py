@@ -8,7 +8,7 @@ from shared.enums import PipelineStep
 class ParseSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
-    parse_topic: str = "parse"
+    parse_topic: PipelineStep = PipelineStep.PARSE
     parse_next_topic: PipelineStep = PipelineStep.METADATA
 
 

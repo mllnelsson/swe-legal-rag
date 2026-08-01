@@ -8,7 +8,7 @@ from shared.enums import PipelineStep
 class ExtractSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
-    extract_topic: str = "extract"
+    extract_topic: PipelineStep = PipelineStep.EXTRACT
     extract_next_topic: PipelineStep = PipelineStep.CHUNK
 
 
