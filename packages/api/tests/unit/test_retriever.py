@@ -291,12 +291,19 @@ class TestRetrieve:
             mock_chunk.text_search = AsyncMock(return_value=[])
             mock_doc.get_by_id = AsyncMock(return_value=doc)
 
-            plan = _plan(query="kyrkorätt")
-            await retrieve(
-                plan, MagicMock(), embedding_provider=provider, settings=_settings()
-            )
+            # Patched rather than asserted against the shipped value: what
+            # matters is that the prefix comes from the configured pair, so it
+            # cannot drift from the passage half worker-embed applies.
+            with patch(
+                "api.services.retriever.get_embedding_prefixes",
+                return_value=("fråga: ", "stycke: "),
+            ):
+                plan = _plan(query="kyrkorätt")
+                await retrieve(
+                    plan, MagicMock(), embedding_provider=provider, settings=_settings()
+                )
 
-            provider.embed.assert_called_once_with(["query: kyrkorätt"])
+            provider.embed.assert_called_once_with(["fråga: kyrkorätt"])
 
 
 class TestSectionScoping:

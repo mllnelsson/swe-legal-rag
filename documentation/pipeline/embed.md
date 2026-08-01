@@ -4,7 +4,7 @@ title: Embed Worker
 description: Terminal pipeline worker that generates vector embeddings for a document's chunks and bulk-updates the chunks table.
 resource: packages/worker-embed
 tags: [pipeline, worker, embed, vector, terminal]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Embed Worker (`packages/worker-embed/`)
@@ -24,20 +24,38 @@ bulk UPDATE on the chunks table (no downstream publish).
 ## `process_embedding()`
 
 `process_embedding(document_id, task_id, chunk_repo, task_repo, embedding_provider,
-session)` defines a `body()`:
+session, passage_prefix)` defines a `body()`:
 
 1. Fetches all chunks via `chunk_repo.get_by_document_id(...)` — raises `NoChunksError`
    if empty (the chunk worker must run first).
-2. Extracts embed texts: `chunk.contextual_text or chunk.chunk_text` per chunk.
+2. Extracts embed texts: `passage_prefix + (chunk.contextual_text or chunk.chunk_text)`
+   per chunk.
 3. Calls `embedding_provider.embed(texts)` — a single batch call for all chunks. The
    default provider is [Berget-hosted](/decisions/embedding-hosting.md); `local`
-   (`sentence-transformers`) remains available. Passages are embedded with e5's
-   `"passage: "` convention (symmetric with the `"query: "` prefix the
-   [retrieval agent](/retrieval/agent.md) uses).
+   (`sentence-transformers`) remains available.
 4. Validates: vector count matches chunk count (`EmbeddingCountMismatchError`); each
    vector is exactly `EMBEDDING_DIMENSION` (`EmbeddingDimensionError`).
 5. Calls `chunk_repo.update_embeddings(session, [(chunk_id, vector), ...])` — a bulk
    UPDATE of the `embedding` column only.
+
+## The passage prefix
+
+`passage_prefix` is the document side of the embedding model's asymmetric prefix pair.
+It comes from `embedding.passage_prefix` in
+[`llm_config.yaml`](/reference/llm-config.md), read by `ai.get_embedding_prefixes()` in
+`__main__.py` and threaded in — the same call the
+[retrieval agent](/retrieval/agent.md) uses for the query half, so the two cannot drift
+apart.
+
+**The parameter has no default, deliberately.** e5 is trained with `"query: "` on one
+side and `"passage: "` on the other, and prefixing only one side is worse than prefixing
+neither: queries and passages land in systematically offset regions of the space. That
+is precisely the bug this parameter replaced — the query side was prefixed, the passage
+side never was, and a comment in the retriever asserted otherwise. A forgotten default
+would reintroduce it silently. Pass `""` for a model that uses no prefixes.
+
+Changing either prefix changes what gets embedded, so it **invalidates every stored
+vector** — see the re-embed step in [live testing](/playbooks/live-testing.md).
 
 It hands `body` to the shared task envelope with `next_step=None` (terminal — no
 publisher, no downstream task) and `reraise=True` (failures re-raise for redelivery). The

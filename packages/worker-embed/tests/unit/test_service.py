@@ -54,6 +54,58 @@ def _make_vectors(count: int, dim: int = _EMBEDDING_DIM) -> list[list[float]]:
     return [[float(i) / 1000] * dim for i in range(count)]
 
 
+class TestPassagePrefix:
+    """The document half of the embedding model's asymmetric prefix pair.
+
+    e5 is trained with `query: ` on one side and `passage: ` on the other.
+    Applying it to only one side is worse than applying it to neither, so the
+    parameter is required and these tests pin both directions.
+    """
+
+    async def _embed_one_chunk(self, passage_prefix: str) -> MagicMock:
+        document_id = uuid.uuid4()
+        task = _make_task()
+
+        chunk_repo = MagicMock()
+        chunk_repo.get_by_document_id = AsyncMock(
+            return_value=[_make_chunk(document_id, 0, contextual_text="ctx text")]
+        )
+        chunk_repo.update_embeddings = AsyncMock()
+
+        task_repo = MagicMock()
+        task_repo.get_by_id = AsyncMock(return_value=task)
+        task_repo.update_status = AsyncMock(return_value=task)
+
+        embedding_provider = MagicMock()
+        embedding_provider.embed = AsyncMock(return_value=_make_vectors(1))
+
+        session = MagicMock()
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+
+        await process_embedding(
+            document_id=document_id,
+            task_id=task.id,
+            chunk_repo=chunk_repo,
+            task_repo=task_repo,
+            embedding_provider=embedding_provider,
+            session=session,
+            passage_prefix=passage_prefix,
+        )
+        return embedding_provider
+
+    async def test_prefix_is_prepended_to_every_passage(self) -> None:
+        embedding_provider = await self._embed_one_chunk("passage: ")
+
+        embedding_provider.embed.assert_awaited_once_with(["passage: ctx text"])
+
+    async def test_empty_prefix_embeds_the_raw_text(self) -> None:
+        """The correct setting for a model that uses no prefixes (bge-m3, jina)."""
+        embedding_provider = await self._embed_one_chunk("")
+
+        embedding_provider.embed.assert_awaited_once_with(["ctx text"])
+
+
 class TestProcessEmbeddingSuccess:
     async def test_embeds_contextual_text_not_chunk_text(self) -> None:
         document_id = uuid.uuid4()
@@ -82,6 +134,7 @@ class TestProcessEmbeddingSuccess:
             task_repo=task_repo,
             embedding_provider=embedding_provider,
             session=session,
+            passage_prefix="",
         )
 
         embedding_provider.embed.assert_awaited_once_with(["contextual text"])
@@ -113,6 +166,7 @@ class TestProcessEmbeddingSuccess:
             task_repo=task_repo,
             embedding_provider=embedding_provider,
             session=session,
+            passage_prefix="",
         )
 
         assert embedding_provider.embed.await_count == 1
@@ -145,6 +199,7 @@ class TestProcessEmbeddingSuccess:
             task_repo=task_repo,
             embedding_provider=embedding_provider,
             session=session,
+            passage_prefix="",
         )
 
         chunk_repo.update_embeddings.assert_awaited_once()
@@ -178,6 +233,7 @@ class TestProcessEmbeddingSuccess:
             task_repo=task_repo,
             embedding_provider=embedding_provider,
             session=session,
+            passage_prefix="",
         )
 
         embedding_provider.embed.assert_awaited_once_with(["raw chunk text"])
@@ -209,6 +265,7 @@ class TestProcessEmbeddingErrorCases:
                 task_repo=task_repo,
                 embedding_provider=embedding_provider,
                 session=session,
+                passage_prefix="",
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -242,6 +299,7 @@ class TestProcessEmbeddingErrorCases:
                 task_repo=task_repo,
                 embedding_provider=embedding_provider,
                 session=session,
+                passage_prefix="",
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -275,6 +333,7 @@ class TestProcessEmbeddingErrorCases:
                 task_repo=task_repo,
                 embedding_provider=embedding_provider,
                 session=session,
+                passage_prefix="",
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -310,6 +369,7 @@ class TestProcessEmbeddingErrorCases:
                 task_repo=task_repo,
                 embedding_provider=embedding_provider,
                 session=session,
+                passage_prefix="",
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -335,6 +395,7 @@ class TestProcessEmbeddingErrorCases:
             task_repo=task_repo,
             embedding_provider=embedding_provider,
             session=session,
+            passage_prefix="",
         )
 
         chunk_repo.get_by_document_id = MagicMock()

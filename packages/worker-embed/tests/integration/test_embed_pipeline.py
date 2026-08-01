@@ -81,6 +81,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -111,6 +112,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -140,6 +142,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         result = await session.execute(
@@ -171,6 +174,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         result = await session.execute(
@@ -207,6 +211,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         updated_task = await task_repo.get_by_id(session, task.id)
@@ -238,6 +243,7 @@ class TestIndexFunctionality:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         query_vector = "[" + ",".join(["0.001"] * EMBEDDING_DIMENSION) + "]"
@@ -276,6 +282,7 @@ class TestIndexFunctionality:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         result = await session.execute(
@@ -316,6 +323,7 @@ class TestEmbedPipelineIdempotency:
             task_repo=task_repo,
             embedding_provider=provider1,
             session=session,
+            passage_prefix="",
         )
 
         await redrive_task(session, task_repo, task1.id)
@@ -330,6 +338,7 @@ class TestEmbedPipelineIdempotency:
             task_repo=task_repo,
             embedding_provider=provider2,
             session=session,
+            passage_prefix="",
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -360,6 +369,7 @@ class TestEmbedPipelineIdempotency:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         await redrive_task(session, task_repo, task1.id)
@@ -372,6 +382,7 @@ class TestEmbedPipelineIdempotency:
             task_repo=task_repo,
             embedding_provider=provider2,
             session=session,
+            passage_prefix="",
         )
 
         final_chunks = await chunk_repo.get_by_document_id(session, document_id)
