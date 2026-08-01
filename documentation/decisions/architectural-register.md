@@ -3,16 +3,18 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-07-31T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Architectural Decision Register
 
-A consolidated register of the system-shaping decisions. Embedding decisions have their
-own records: [model](/decisions/embedding-model.md),
-[hosting](/decisions/embedding-hosting.md), [dimension](/decisions/embedding-dimension.md);
-the mandatory crawl [tag filter](/decisions/tag-filter.md) is also separate. All entries
-below are **Accepted**.
+A consolidated register of the system-shaping decisions. Model and embedding decisions
+have their own records: [per-task LLM model and provider
+selection](/decisions/llm-model-selection.md), embedding
+[model](/decisions/embedding-model.md), [hosting](/decisions/embedding-hosting.md) and
+[dimension](/decisions/embedding-dimension.md); the mandatory crawl
+[tag filter](/decisions/tag-filter.md) is also separate. All entries below are
+**Accepted**.
 
 ## Retrieval and extraction
 
@@ -48,6 +50,10 @@ below are **Accepted**.
 - **Interface abstraction for all infra dependencies** — storage, queue, LLM, embedding
   are swappable via config for local-dev parity. See
   [GCP layout](/reference/gcp-layout.md).
+- **Model assignment is a declarative file, not environment variables** — which model and
+  provider each task uses lives in [`llm_config.yaml`](/reference/llm-config.md), so a
+  role can name its own provider and a new role costs no Python. The environment still
+  overrides it. See [the decision](/decisions/llm-model-selection.md).
 - **No LLM proxy container** — containerizing `ai`/`llm-core` as a service was considered
   as a way to give every worker its own container without each owning a private trace
   file. It solves neither half. What keeps the workers in one process is the `sync`

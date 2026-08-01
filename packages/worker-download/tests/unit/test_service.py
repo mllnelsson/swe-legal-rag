@@ -73,6 +73,7 @@ def _make_deps(
 
     task_repo.get_by_id = AsyncMock(return_value=task)
     doc_repo.get_by_id = AsyncMock(return_value=document)
+    task_repo.get_by_document_and_step = AsyncMock(return_value=None)
     task_repo.update_status = AsyncMock()
     doc_repo.update = AsyncMock()
     storage.store.return_value = storage_uri

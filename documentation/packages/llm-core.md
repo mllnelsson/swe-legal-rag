@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-07-27T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -25,10 +25,21 @@ lives in the [ai package](/packages/ai.md).
   and `generate_stream()`. Providers do one round-trip; the tool-call loop is in the
   service layer.
 - **`_config.py`** — `LLMConfig(BaseSettings)` reading `LLM_PROVIDER` (default
-  `"berget"`), `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `GEMINI_API_KEY`,
-  `BERGET_API_KEY`, `LLM_BASE_URL`, `LLM_STREAM_USAGE`. `create_provider()` is a factory
-  with lazy-import dispatch: `"gemini"` → `GeminiProvider`, `"berget"` →
-  `OpenAiCompatibleProvider`.
+  `"berget"`), `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_API_KEY`,
+  `GEMINI_API_KEY`, `BERGET_API_KEY`, `LLM_BASE_URL`, `LLM_STREAM_USAGE`, plus the
+  `BERGET_BASE_URL` constant. `create_provider()` is a factory with lazy-import dispatch
+  on the provider **kind**: `"gemini"` → `GeminiProvider`, `"openai_compatible"` →
+  `OpenAiCompatibleProvider`. `"berget"` is accepted as an alias for the latter, so an
+  environment that still sets `LLM_PROVIDER=berget` keeps resolving.
+
+  `api_key` is the host-agnostic field, populated when the caller resolved the key
+  itself — as [`ai.llm_config`](/reference/llm-config.md) does, from the variable each
+  provider entry names. Each provider reads `config.api_key` first and falls back to its
+  own named field (`berget_api_key` / `gemini_api_key`), which is the
+  straight-from-the-environment path.
+
+  Note that in this project nothing resolves a role's model through `LLM_MODEL` —
+  see [per-task model selection](/packages/ai.md).
 - **`_tracing.py`** — the observability hook: `LLMOperation`, `LLMCallRecord`, the
   `TraceRecorder` Protocol, `set_trace_recorder()`, the ContextVar-backed
   `trace_context()`, and the `traced_call()` context manager that opens and closes
@@ -38,10 +49,12 @@ lives in the [ai package](/packages/ai.md).
   `LLM_PROVIDER=gemini`.
 - **`providers/_openai_compatible.py`** — `OpenAiCompatibleProvider`, a generic client
   for any OpenAI-chat-completions-compatible API using the `openai` SDK (`AsyncOpenAI`).
-  [Berget.ai](https://docs.berget.ai) is the first and default host (`LLM_PROVIDER=berget`,
-  base URL `https://api.berget.ai/v1`). The class is not Berget-specific: `LLM_BASE_URL`
-  overrides the base URL, so a second OpenAI-compatible host needs a config value, not a
-  new provider class. Maps `Message`/`ToolDefinition`/`response_schema` to OpenAI's
+  [Berget.ai](https://docs.berget.ai) is the first and default host (base URL
+  `https://api.berget.ai/v1`, the `BERGET_BASE_URL` fallback). The class is not
+  Berget-specific, and this is now literally true rather than aspirational: a second
+  OpenAI-compatible host (Groq, Together, a local vLLM) is a new entry under `providers:`
+  in [`llm_config.yaml`](/reference/llm-config.md) naming its `base_url` and
+  `api_key_env` — no new provider class, and no code change at all. Maps `Message`/`ToolDefinition`/`response_schema` to OpenAI's
   chat-completions shape (tool calls, `response_format` json_schema for structured
   output) and wraps SDK exceptions in `ProviderError`.
 - **`_service.py`** — the higher-level API: `generate()`, `generate_structured()`,

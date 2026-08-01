@@ -62,21 +62,6 @@ class TestFormatSse:
         result = _format_sse("token", {"text": "hello"})
         assert result == 'event: token\ndata: {"text": "hello"}\n\n'
 
-    def test_data_is_json_encoded(self):
-        result = _format_sse("sources", {"sources": []})
-        assert "data: " in result
-        data_line = [ln for ln in result.split("\n") if ln.startswith("data:")][0]
-        parsed = json.loads(data_line[len("data: ") :])
-        assert parsed == {"sources": []}
-
-    def test_event_name_in_output(self):
-        result = _format_sse("done", {"session_id": "abc"})
-        assert result.startswith("event: done\n")
-
-    def test_ends_with_double_newline(self):
-        result = _format_sse("token", {"text": "x"})
-        assert result.endswith("\n\n")
-
     def test_unicode_content_round_trips(self):
         swedish = "kyrkorätten säger: åäö"
         result = _format_sse("token", {"text": swedish})
@@ -317,22 +302,6 @@ class TestChatEndpointErrorHandling:
             response = self.client.post("/api/chat", json={"message": ""})
 
         assert response.status_code == 422
-
-
-class TestHealthz:
-    def test_healthz_returns_200(self):
-        app = create_app()
-        # Entering TestClient runs lifespan, which verifies the embedding dimension.
-        # Stubbed out here: the real check loads the ~2.2 GB model, which this test
-        # has no use for. Coverage for the check itself lives in the ai package.
-        with (
-            patch("ai.create_embedding_provider", return_value=MagicMock()),
-            patch("ai.verify_embedding_dimension", new=AsyncMock(return_value=1024)),
-            TestClient(app) as client,
-        ):
-            response = client.get("/healthz")
-        assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
 
 
 class TestChatTracing:

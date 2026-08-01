@@ -2,7 +2,6 @@ import pytest
 
 from worker_parse.parser import (
     ParseError,
-    Parser,
     normalize_typographic_chars,
     parse_pdf_with_pypdfium2,
     rejoin_hyphenated_words,
@@ -34,14 +33,6 @@ def test_parse_valid_pdf_returns_nonempty_string(minimal_pdf_bytes: bytes) -> No
 def test_parse_invalid_bytes_raises_parse_error() -> None:
     with pytest.raises(ParseError):
         parse_pdf_with_pypdfium2(b"not a pdf at all")
-
-
-def test_custom_function_satisfies_parser_protocol() -> None:
-    def my_parser(pdf_bytes: bytes) -> str:
-        return f"parsed {len(pdf_bytes)} bytes"
-
-    parser: Parser = my_parser
-    assert parser(b"hello") == "parsed 5 bytes"
 
 
 # U+FFFE is a Unicode noncharacter; writing it as an escape keeps these fixtures

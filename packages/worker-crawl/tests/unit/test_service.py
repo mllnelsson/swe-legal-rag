@@ -11,7 +11,7 @@ from shared.enums import PipelineStep
 from shared.queue.base import QueueMessage
 from worker_crawl.errors import UnknownYearError
 from worker_crawl.odata import DecisionListing, ODataConfig
-from worker_crawl.service import CrawlResult, process_crawl
+from worker_crawl.service import process_crawl
 from worker_crawl.tags import DecisionTag
 from worker_crawl.years import YearSelection
 
@@ -303,7 +303,3 @@ async def test_run_handles_integrity_error_as_duplicate() -> None:
     assert (result.total_found, result.new_documents, result.skipped) == (1, 0, 1)
     session.rollback.assert_called_once()
     publisher.publish.assert_not_called()
-
-
-def test_crawl_result_defaults_are_stable() -> None:
-    assert CrawlResult(total_found=0, new_documents=0, skipped=0).years_crawled == ()

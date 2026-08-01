@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from ai import (
     create_embedding_provider,
+    get_embedding_prefixes,
     install_file_tracing,
     trace_context,
     verify_embedding_dimension,
@@ -36,6 +37,7 @@ def main() -> None:
     # billed embedding on a hosted provider — is recorded like any other call.
     install_file_tracing()
     embedding_provider = create_embedding_provider()
+    _, passage_prefix = get_embedding_prefixes()
 
     # Fail before consuming the queue rather than once per document. Also warms the
     # model, so the first message is not charged for loading it.
@@ -54,6 +56,7 @@ def main() -> None:
                     task_repo=task,
                     embedding_provider=embedding_provider,
                     session=session,
+                    passage_prefix=passage_prefix,
                 )
 
         # Set outside asyncio.run: the runner copies the current context when

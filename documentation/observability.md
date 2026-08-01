@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to file storage — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-07-31T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # LLM Observability
@@ -191,6 +191,7 @@ discarded.
 |---|---|
 | `interaction_id`, `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
 | `document_id`, `task_id` | Each worker, around `asyncio.run` in `handle_message` |
+| `document_id`, `task_id` | `scripts/run_step.py`, around the step dispatch in `_run_step` |
 | `source` | The innermost code that knows what the call is |
 | `prompt` | `ai/services.py`, from the template's name |
 
@@ -199,6 +200,18 @@ discarded.
 `ai.extract_metadata`, `ai.extract_entities`, `ai.summarize_document`,
 `ai.synthesize_answer`, `ai.embed`, `api.retriever.rerank`. Contexts nest and
 merge; on a key collision the innermost wins.
+
+The outer attribution set by a worker or by the manual runner is its own name —
+`worker-chunk`, `worker-embed`, `worker-extract`, `worker-metadata`, or
+`scripts.run_step` — which the inner `ai.*` source then overrides for the call itself.
+
+**The manual runner used to be a hole in this invariant.**
+[`scripts/run_step.py`](/playbooks/live-testing.md) never called
+`install_file_tracing()`, so every `metadata`, `extract`, `chunk` and `embed` run it
+performed made real, billed calls that were never recorded — and because tracing failing
+open is by design, nothing complained. It now installs tracing in `_dispatch` and sets
+the context in `_run_step`, like the workers do. If a process makes model calls and is
+not in the table above, it is a hole of the same kind.
 
 ### Two placements that are load-bearing
 

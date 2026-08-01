@@ -4,7 +4,6 @@ import uuid
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import RetrievalSettings
@@ -17,8 +16,6 @@ from shared.dtos.document_entity import DocumentEntityCreate
 from shared.dtos.document_reference import DocumentReferenceCreate
 from shared.dtos.entity import EntityCreate
 from shared.dtos.search import DocumentFilter
-
-pytestmark = pytest.mark.integration
 
 _SWEDISH_TEXT = "Kyrkorådet beslutade att bifalla överklagandet."
 
@@ -58,8 +55,9 @@ async def _seed_document(
     category: str | None = None,
     raw_text: str = _SWEDISH_TEXT,
 ) -> uuid.UUID:
-    doc = await document_repo.create(DocumentCreate(source_url=source_url))
+    doc = await document_repo.create(session, DocumentCreate(source_url=source_url))
     await document_repo.update(
+        session,
         doc.id,
         DocumentUpdate(
             raw_text=raw_text,
@@ -84,6 +82,7 @@ async def _seed_chunk(
     if embedding is None:
         embedding = _unit_vector(0)
     chunks = await chunk_repo.bulk_create(
+        session,
         [
             ChunkCreate(
                 document_id=document_id,
@@ -91,7 +90,7 @@ async def _seed_chunk(
                 chunk_text=chunk_text,
                 embedding=embedding,
             )
-        ]
+        ],
     )
     await session.commit()
     return chunks[0].id
@@ -216,11 +215,14 @@ class TestRetrievePipelineIntegration:
         await _seed_chunk(chunk_repo, session, match_id, embedding=_unit_vector(0))
         await _seed_chunk(chunk_repo, session, no_match_id, embedding=_unit_vector(0))
 
-        entity = await entity_repo.upsert(EntityCreate(name="kyrkorådet", type="role"))
+        entity = await entity_repo.upsert(
+            session, EntityCreate(name="kyrkorådet", type="role")
+        )
         await doc_entity_repo.upsert(
+            session,
             DocumentEntityCreate(
                 document_id=match_id, entity_id=entity.id, relevance="primary"
-            )
+            ),
         )
         await session.commit()
 
@@ -266,9 +268,10 @@ class TestRetrievePipelineIntegration:
         )
 
         await doc_ref_repo.upsert(
+            session,
             DocumentReferenceCreate(
                 source_document_id=doc1_id, target_document_id=doc2_id
-            )
+            ),
         )
         await session.commit()
 

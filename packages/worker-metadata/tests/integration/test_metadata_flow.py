@@ -4,7 +4,6 @@ from shared.enums import PipelineStep
 import datetime
 from unittest.mock import AsyncMock
 
-import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +15,6 @@ from worker_metadata.patterns import MetadataResult, extract_metadata_rule_based
 from worker_metadata.service import process_metadata
 
 
-@pytest.mark.integration
 async def test_metadata_flow_populates_fields_and_completes_task(
     session: AsyncSession,
     document_repo,

@@ -11,10 +11,9 @@ from shared.config import EMBEDDING_DIMENSION
 from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentCreate
 from shared.dtos.task import TaskCreate
+from shared.testing.pipeline import redrive_task
 from shared.models.chunk import Chunk
 from worker_embed.service import process_embedding
-
-pytestmark = pytest.mark.integration
 
 _SWEDISH_TEXT = "Nämnden beslutade att avslå överklagandet."
 _CONTEXTUAL_TEXT = "Kyrkoherden överklagade beslutet.\n\n---\n\n" + _SWEDISH_TEXT
@@ -82,6 +81,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -112,6 +112,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -141,6 +142,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         result = await session.execute(
@@ -172,6 +174,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         result = await session.execute(
@@ -208,6 +211,7 @@ class TestEmbedPipelineEndToEnd:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         updated_task = await task_repo.get_by_id(session, task.id)
@@ -239,6 +243,7 @@ class TestIndexFunctionality:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         query_vector = "[" + ",".join(["0.001"] * EMBEDDING_DIMENSION) + "]"
@@ -277,6 +282,7 @@ class TestIndexFunctionality:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
         result = await session.execute(
@@ -317,23 +323,22 @@ class TestEmbedPipelineIdempotency:
             task_repo=task_repo,
             embedding_provider=provider1,
             session=session,
+            passage_prefix="",
         )
 
-        task2 = await task_repo.create(
-            session, TaskCreate(document_id=document_id, step="embed", status="pending")
-        )
-        await session.commit()
+        await redrive_task(session, task_repo, task1.id)
 
         second_vectors = [[0.999] * EMBEDDING_DIMENSION for _ in chunks]
         provider2 = MagicMock()
         provider2.embed = AsyncMock(return_value=second_vectors)
         await process_embedding(
             document_id=document_id,
-            task_id=task2.id,
+            task_id=task1.id,
             chunk_repo=chunk_repo,
             task_repo=task_repo,
             embedding_provider=provider2,
             session=session,
+            passage_prefix="",
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -364,21 +369,20 @@ class TestEmbedPipelineIdempotency:
             task_repo=task_repo,
             embedding_provider=provider,
             session=session,
+            passage_prefix="",
         )
 
-        task2 = await task_repo.create(
-            session, TaskCreate(document_id=document_id, step="embed", status="pending")
-        )
-        await session.commit()
+        await redrive_task(session, task_repo, task1.id)
 
         provider2 = _make_mock_embedding_provider(len(chunks))
         await process_embedding(
             document_id=document_id,
-            task_id=task2.id,
+            task_id=task1.id,
             chunk_repo=chunk_repo,
             task_repo=task_repo,
             embedding_provider=provider2,
             session=session,
+            passage_prefix="",
         )
 
         final_chunks = await chunk_repo.get_by_document_id(session, document_id)

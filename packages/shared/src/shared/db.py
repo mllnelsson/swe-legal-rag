@@ -25,6 +25,10 @@ def _async_url(database_url: str) -> str:
 def get_engine() -> Engine:
     return create_engine(
         _sync_url(get_settings().database.database_url),
+        # Deliberate: workers hold pooled connections across long idle stretches
+        # between messages, and Postgres or anything in front of it may drop one
+        # in the meantime. Pre-ping trades a round trip for not handing out a
+        # dead connection.
         pool_pre_ping=True,
     )
 

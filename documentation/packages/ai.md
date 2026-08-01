@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-07-27T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -20,10 +20,11 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
 | `_observability.py` | `FileTraceRecorder`, `LLMTraceConfig`, `install_file_tracing()` — writes LLM traces to file storage |
 | `services.py` | Five async service functions (below) |
-| `embedding.py` | `EmbeddingProvider` Protocol, `EmbeddingConfig`, `create_embedding_provider` factory |
+| `llm_config.py` | Reads `llm_config.yaml` — document models, discovery, and role/embedding resolution |
+| `embedding.py` | `EmbeddingProvider` Protocol, `create_embedding_provider` factory, `verify_embedding_dimension` |
 | `providers/berget_embeddings.py` | `BergetEmbeddingProvider` — Berget's hosted embedding API (default) |
 | `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers` (offline dev/test fallback) |
-| `providers/roles.py` | `LLMRoleConfig` + per-role provider factories (per-task model assignment, below) |
+| `providers/roles.py` | `create_llm_provider(role)` + the three named delegates (per-task model assignment, below) |
 | `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |
 | `prompts/_templates.py` | The five template constants |
 | `__init__.py` | Public API — service functions, embedding types, and DTOs |
@@ -79,39 +80,84 @@ removed or renamed.
 
 `ChunkContext.score: float` is required (no default).
 
+## Configuration (`ai/llm_config.py`)
+
+Reads [`llm_config.yaml`](/reference/llm-config.md) — which model and provider each task
+uses — and resolves it into the settings objects the rest of the package consumes. The
+loader lives here rather than in [llm-core](/packages/llm-core.md) because llm-core is
+project-agnostic and knows nothing about a file at this project's root.
+
+| Function | Returns |
+|---|---|
+| `get_llm_config()` | The validated `LLMConfigDocument`, read once (`@lru_cache`) |
+| `resolve_role_config(role)` | An `llm_core.LLMConfig` for a named role |
+| `resolve_embedding_config()` | An `EmbeddingConfig` |
+| `get_embedding_prefixes()` | `(query_prefix, passage_prefix)` |
+| `find_config_path()` / `load_config_document(path)` | Discovery and parsing, for tests and tooling |
+| `role_model_env_var(role)` | That role's override variable, `LLM_MODEL_<ROLE>` |
+
+Discovery is `LLM_CONFIG_PATH`, else a walk up from the working directory (pytest runs
+from package subdirectories in this workspace). **A missing or malformed file is fatal**
+— `LLMConfigNotFoundError` / `LLMConfigInvalidError`, and every document model sets
+`extra="forbid"` so a mistyped key fails at load. There is deliberately no fallback to
+built-in defaults: a silent fallback is how the documented configuration and the running
+one drift apart, which has happened here before (see [the log](/log.md)).
+
+Environment variables override the file, which inverts pydantic-settings' native
+ordering — the [precedence rules](/reference/llm-config.md#precedence) explain the
+mechanism.
+
 ## Per-task model selection (`ai/providers/roles.py`)
 
-`llm_core.LLMConfig` carries one `model` field. This project needs three models for three
-cost/quality profiles — extraction/decomposition/rerank run once per document at
-ingestion scale, while chat synthesis runs a handful of times per day:
+`llm_core.LLMConfig` carries one `model` field. This project needs a different model —
+and sometimes a different provider — per task, so the assignment lives in
+`llm_config.yaml` under `roles:`. See
+[the decision record](/decisions/llm-model-selection.md) for why.
 
-| Role | Used by | Env var | Default (Berget model) |
-|---|---|---|---|
-| `structured` | `decompose_query`, `extract_metadata`, `extract_entities`, `retriever._rerank` | `LLM_MODEL_STRUCTURED` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
-| `summarize` | `summarize_document` | `LLM_MODEL_SUMMARIZE` | `mistralai/Mistral-Medium-3.5-128B` |
-| `chat` | `synthesize_answer` | `LLM_MODEL_CHAT` | `zai-org/GLM-5.2` |
+| Role | Used by | Default (Berget model) |
+|---|---|---|
+| `structured` | `decompose_query`, `extract_metadata`, `extract_entities`, `retriever._rerank` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
+| `summarize` | `summarize_document` | `mistralai/Mistral-Medium-3.5-128B` |
+| `chat` | `synthesize_answer` | `zai-org/GLM-5.2` |
 
-`create_structured_llm_provider()`, `create_summarize_llm_provider()`, and
-`create_chat_llm_provider()` each build an `llm_core.LLMConfig` overriding only `model`;
-`provider`/`BERGET_API_KEY`/`LLM_BASE_URL`/temperature resolve from the environment. Each
-composition root constructs the role-appropriate provider(s) once at startup and threads
-them into the call sites via the `provider=` keyword — no hidden global default in
-production.
+`create_llm_provider(role)` builds the provider for any role declared in the file;
+`create_structured_llm_provider()`, `create_summarize_llm_provider()` and
+`create_chat_llm_provider()` are one-line delegates for the three that have call sites.
+**The role set is open** — declaring `rerank:` in the YAML is enough to call
+`create_llm_provider("rerank")`, with no Python change and no new environment variable.
+An undeclared role raises `UnknownLLMRoleError`.
 
-**Gemini fallback caveat.** The three `LLM_MODEL_*` defaults are Berget model IDs.
-Switching `LLM_PROVIDER=gemini` also requires overriding all three to valid Gemini model
-names (e.g. `gemini-2.5-flash-lite`, since `gemini-2.0-flash` was shut down — see
+Each composition root constructs the role-appropriate provider(s) once at startup and
+threads them into the call sites via the `provider=` keyword — no hidden global default
+in production.
+
+**Gemini caveat.** The defaults above are Berget model IDs and will not resolve against
+Gemini's API, so pointing a role at `provider: gemini` means changing its `model:` in the
+same edit (e.g. `gemini-2.5-flash-lite`, since `gemini-2.0-flash` was shut down — see
 [LLM pricing](/reference/llm-pricing.md)).
 
 ## Embedding abstraction (`ai/embedding.py`)
 
 `EmbeddingProvider` is a `@runtime_checkable` Protocol with one method:
-`async embed(texts) -> list[list[float]]`. `EmbeddingConfig(BaseSettings)` reads
-`EMBEDDING_PROVIDER` (default `"berget"`), `EMBEDDING_MODEL` (default
-`"intfloat/multilingual-e5-large"`), `BERGET_API_KEY`, and `LLM_BASE_URL` — one Berget
-account/key covers both LLM and embedding calls. `create_embedding_provider()` lazy-imports
-the concrete class so the heavy ML library loads only for the local provider and `openai`
-only for the Berget provider.
+`async embed(texts) -> list[list[float]]`. `EmbeddingConfig` is defined in
+`ai/llm_config.py` (and re-exported here) and carries `provider`, `model`, `dimension`,
+`api_key` and `base_url`, resolved from `llm_config.yaml`'s `embedding:` block — the
+base URL and key variable come from the same `providers:` entry the LLM roles use, so
+one Berget account/key covers both. `create_embedding_provider()` dispatches on the
+resolved backend (`local`, or the host's kind) and lazy-imports the concrete class, so
+the heavy ML library loads only for the local provider and `openai` only for the hosted
+one.
+
+`verify_embedding_dimension(provider, config=None)` is the startup guard. It checks
+**three** declarations of the width against each other — `embedding.dimension` in the
+YAML, `shared.config.EMBEDDING_DIMENSION`, and the width the model actually produces for
+a probe string — and raises `EmbeddingDimensionMismatchError` naming the disagreement.
+See [embedding dimension](/decisions/embedding-dimension.md).
+
+`get_embedding_prefixes()` returns the `(query, passage)` pair for the configured model.
+Both sides come from one place so they cannot drift apart; the query half is used by the
+[retrieval agent](/retrieval/agent.md) and the passage half by
+[worker-embed](/pipeline/embed.md).
 
 - **`BergetEmbeddingProvider`** (default, `EMBEDDING_PROVIDER=berget`) — calls Berget's
   hosted `intfloat/multilingual-e5-large` via `openai.AsyncOpenAI.embeddings.create()`.

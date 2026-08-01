@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document import DocumentCreate, DocumentRead, DocumentUpdate
 from shared.dtos.task import TaskCreate, TaskRead
+from shared.testing.pipeline import redrive_task
 from shared.models.document_entity import DocumentEntity
 from shared.models.document_reference import DocumentReference
 from shared.models.entity import Entity
@@ -72,7 +73,6 @@ async def _run_extraction(
     return doc, task
 
 
-@pytest.mark.integration
 async def test_extraction_populates_entities_and_completes_task(
     session: AsyncSession,
     document_repo,
@@ -124,7 +124,6 @@ async def test_extraction_populates_entities_and_completes_task(
     assert published_messages[0].document_id == doc.id
 
 
-@pytest.mark.integration
 async def test_extraction_cross_reference_resolution(
     session: AsyncSession,
     document_repo,
@@ -181,7 +180,6 @@ async def test_extraction_cross_reference_resolution(
     assert len(refs) == 1
 
 
-@pytest.mark.integration
 async def test_extraction_unresolved_reference(
     session: AsyncSession,
     document_repo,
@@ -225,7 +223,6 @@ async def test_extraction_unresolved_reference(
     assert len(unresolved) == 1
 
 
-@pytest.mark.integration
 async def test_extraction_reconciliation(
     session: AsyncSession,
     document_repo,
@@ -314,7 +311,6 @@ async def test_extraction_reconciliation(
     assert len(unresolved_after) == 0
 
 
-@pytest.mark.integration
 async def test_extraction_idempotency(
     session: AsyncSession,
     document_repo,
@@ -330,7 +326,7 @@ async def test_extraction_idempotency(
     monkeypatch.setenv("EXTRACT_STRATEGY", "rule_based")
 
     # First extraction run
-    doc, _ = await _run_extraction(
+    doc, task = await _run_extraction(
         session,
         document_repo,
         task_repo,
@@ -355,15 +351,12 @@ async def test_extraction_idempotency(
     ).scalar_one()
     assert entity_count_after_first >= 1
 
-    # Second extraction run — new task, same document
-    task2 = await task_repo.create(
-        session, TaskCreate(document_id=doc.id, step="extract", status="pending")
-    )
-    await session.commit()
+    # Second extraction run — the same task re-driven, same document
+    await redrive_task(session, task_repo, task.id)
 
     await process_extraction(
         document_id=doc.id,
-        task_id=task2.id,
+        task_id=task.id,
         document_repo=document_repo,
         task_repo=task_repo,
         entity_repo=entity_repo,
@@ -389,7 +382,7 @@ async def test_extraction_idempotency(
     assert entity_count_after_second == entity_count_after_first
     assert doc_entity_count_after_second == doc_entity_count_after_first
 
-    task2_row = (
-        await session.execute(select(Task).where(Task.id == task2.id))
+    task_row = (
+        await session.execute(select(Task).where(Task.id == task.id))
     ).scalar_one()
-    assert task2_row.status == "completed"
+    assert task_row.status == "completed"

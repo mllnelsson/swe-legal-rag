@@ -3,7 +3,7 @@ type: Concept
 title: Worker Architecture Patterns
 description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, session-per-message, and the commit-before-publish invariant.
 tags: [pipeline, workers, task-envelope, patterns]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Worker Architecture Patterns
@@ -77,9 +77,19 @@ Pub/Sub — rows are durable before any async consumer acts on a message.
 
 ## Integration test pattern
 
-Integration tests use a real async `Session` on a local Postgres, real repo namespaces and
-storage (conftest fixtures expose the repo *modules* so they inject exactly as production
-does; `shared.testing.bind_repo(module, session)` session-binds a module for direct-call
-tests), mocked HTTP only, a `SyncQueueBroker` with a recording handler (captures
+Integration tests use a real async `Session` on a local Postgres — its own
+`overklagan_test` database, never the development one — plus real repo namespaces and
+storage, mocked HTTP only, a `SyncQueueBroker` with a recording handler (captures
 published messages without triggering downstream workers), and table truncation before
-each test. See the [testing strategy](/testing.md).
+each test.
+
+The fixtures live once in `shared.testing.fixtures`, registered as a pytest plugin by
+the repository-root `conftest.py`. They hand back the repo *modules* unchanged, so a
+test injects exactly what production injects and calls
+`await document_repo.create(session, dto)`. A package's own integration conftest
+declares only its `next_topic`.
+
+Rerunning a step means re-driving the same task row —
+`shared.testing.pipeline.redrive_task` — because `tasks` holds at most one row per
+(document, step) and `run_pipeline_step` skips one already marked completed. See the
+[testing strategy](/testing.md).

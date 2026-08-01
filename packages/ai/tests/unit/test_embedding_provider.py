@@ -1,82 +1,85 @@
-"""Unit tests for LocalEmbeddingProvider."""
+"""Unit tests for LocalEmbeddingProvider.
+
+`_get_model` is the seam, not `sentence_transformers`. Naming the library as a
+patch target would import it — `mock.patch` resolves its target eagerly — and
+that pulls torch and transformers into a suite that is supposed to be fast and
+offline. What is worth testing here is ours anyway: the empty-input shortcut, the
+load-once guard, and the numpy-to-list conversion.
+"""
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
-from ai.embedding import EmbeddingConfig, EmbeddingProvider
+from ai.embedding import EmbeddingConfig
 from ai.providers.local_embeddings import LocalEmbeddingProvider
 
-
-def _make_provider(
-    model: str = "intfloat/multilingual-e5-large",
-) -> LocalEmbeddingProvider:
-    config = EmbeddingConfig(EMBEDDING_MODEL=model, EMBEDDING_PROVIDER="local")
-    return LocalEmbeddingProvider(config)
+EMBEDDING_WIDTH = 768
 
 
-@pytest.mark.asyncio
-async def test_embed_single_text() -> None:
-    provider = _make_provider()
-    mock_model = MagicMock()
-    mock_model.encode.return_value = np.zeros((1, 768), dtype=np.float32)
-
-    with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
-        result = await provider.embed(["hello"])
-
-    assert len(result) == 1
-    assert len(result[0]) == 768
-    assert isinstance(result[0][0], float)
-
-
-@pytest.mark.asyncio
-async def test_embed_batch() -> None:
-    provider = _make_provider()
-    mock_model = MagicMock()
-    mock_model.encode.return_value = np.zeros((3, 768), dtype=np.float32)
-
-    with patch("sentence_transformers.SentenceTransformer", return_value=mock_model):
-        result = await provider.embed(["a", "b", "c"])
-
-    assert len(result) == 3
-    assert all(len(v) == 768 for v in result)
-
-
-@pytest.mark.asyncio
-async def test_lazy_loading() -> None:
-    provider = _make_provider()
-    assert provider._model is None
-
-    mock_model = MagicMock()
-    mock_model.encode.return_value = np.zeros((1, 768), dtype=np.float32)
-
-    with patch(
-        "sentence_transformers.SentenceTransformer", return_value=mock_model
-    ) as mock_cls:
-        await provider.embed(["text"])
-        assert mock_cls.call_count == 1
-
-        await provider.embed(["text again"])
-        assert mock_cls.call_count == 1  # not reloaded
-
-
-@pytest.mark.asyncio
-async def test_empty_input() -> None:
-    provider = _make_provider()
-
-    with patch("sentence_transformers.SentenceTransformer") as mock_cls:
-        result = await provider.embed([])
-
-    assert result == []
-    mock_cls.assert_not_called()
-
-
-def test_protocol_compliance() -> None:
+def _make_provider() -> LocalEmbeddingProvider:
     config = EmbeddingConfig(
         EMBEDDING_MODEL="intfloat/multilingual-e5-large", EMBEDDING_PROVIDER="local"
     )
-    provider = LocalEmbeddingProvider(config)
-    assert isinstance(provider, EmbeddingProvider)
+    return LocalEmbeddingProvider(config)
+
+
+def _make_model(row_count: int) -> MagicMock:
+    model = MagicMock()
+    model.encode.return_value = np.zeros((row_count, EMBEDDING_WIDTH), dtype=np.float32)
+    return model
+
+
+async def test_embed_returns_one_plain_float_vector_per_text() -> None:
+    provider = _make_provider()
+
+    with patch.object(
+        LocalEmbeddingProvider, "_get_model", return_value=_make_model(3)
+    ):
+        result = await provider.embed(["a", "b", "c"])
+
+    assert len(result) == 3
+    assert all(len(vector) == EMBEDDING_WIDTH for vector in result)
+    # `encode` hands back a numpy array; callers are promised plain floats.
+    assert isinstance(result[0][0], float)
+
+
+def _stub_sentence_transformers(model: MagicMock) -> tuple[ModuleType, MagicMock]:
+    """A stand-in for the library, good enough for `_get_model`'s import.
+
+    `_get_model` imports `sentence_transformers` inside its body, so a stub in
+    `sys.modules` intercepts it. Patching the name on our own module would not:
+    it exists only under `TYPE_CHECKING`.
+    """
+    module = ModuleType("sentence_transformers")
+    constructor = MagicMock(return_value=model)
+    setattr(module, "SentenceTransformer", constructor)
+    return module, constructor
+
+
+async def test_model_is_loaded_once_and_reused() -> None:
+    provider = _make_provider()
+    assert provider._model is None
+
+    model = _make_model(1)
+    stub, constructor = _stub_sentence_transformers(model)
+    with patch.dict(sys.modules, {"sentence_transformers": stub}):
+        await provider.embed(["text"])
+        await provider.embed(["text again"])
+
+    assert constructor.call_count == 1
+    assert provider._model is model
+
+
+async def test_empty_input_never_loads_the_model() -> None:
+    provider = _make_provider()
+
+    with patch.object(LocalEmbeddingProvider, "_get_model") as get_model:
+        result = await provider.embed([])
+
+    assert result == []
+    get_model.assert_not_called()

@@ -3,7 +3,7 @@ type: Concept
 title: Query / Retrieval Agent
 description: The five-step query agent — decompose, pre-filter, hybrid retrieve (RRF), optional rerank, synthesize — plus session context.
 tags: [retrieval, agent, rrf, hybrid-search, synthesis]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Query / Retrieval Agent
@@ -50,10 +50,14 @@ tsvector) run in parallel, then scores combine with reciprocal rank fusion (RRF)
 
 *Implementation:* `api/services/retriever.py`. `_hybrid_search()` runs
 `asyncio.gather(vector_search, text_search)`, both capped at `RETRIEVAL_SEARCH_LIMIT`.
-The question is embedded with the `"query: "` prefix (e5 convention — symmetric with the
-`"passage: "` prefix used at index time by the [embed worker](/pipeline/embed.md)). RRF
-fusion via `shared.search.rrf.rrf_fuse(k=60)` then takes `[:RETRIEVAL_TOP_K]`. Document
-metadata is hydrated concurrently.
+The question is embedded with the query prefix from `ai.get_embedding_prefixes()` —
+`"query: "` under the default e5 model, and read from the same
+[`llm_config.yaml`](/reference/llm-config.md) entry as the `"passage: "` prefix the
+[embed worker](/pipeline/embed.md) applies at index time, so the two cannot drift
+apart. (They did: the query side was prefixed while the passage side never was, which is
+worse for retrieval than prefixing neither.) RRF fusion via
+`shared.search.rrf.rrf_fuse(k=60)` then takes `[:RETRIEVAL_TOP_K]`. Document metadata is
+hydrated concurrently.
 
 ### Section scoping
 

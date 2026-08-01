@@ -4,7 +4,7 @@ title: Repository Layer
 description: The function-based data-access layer bridging SQLAlchemy models and Pydantic DTOs, injected into services as Protocol-typed namespaces.
 resource: packages/shared/src/shared/repositories
 tags: [data-model, repositories, data-layer, dto, protocol]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Repository Layer
@@ -100,5 +100,6 @@ async with get_async_session() as session:
 ```
 
 In FastAPI, `get_async_session` is wrapped in a dependency. In workers, the repo modules
-are injected as Protocol-typed namespaces. Integration/`api` tests that call repos
-directly use `shared.testing.bind_repo(module, session)` for a session-bound namespace.
+are injected as Protocol-typed namespaces. Integration tests inject the same modules —
+the fixtures in `shared.testing.fixtures` return them unchanged — so a test call site
+reads exactly like a production one, `session` first.

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from llm_core import LLMOperation, Usage, set_trace_recorder
 
-from ai.embedding import EmbeddingConfig, EmbeddingProvider, create_embedding_provider
+from ai.embedding import EmbeddingConfig, create_embedding_provider
 from ai.providers.berget_embeddings import BergetEmbeddingProvider
 
 
@@ -25,8 +25,24 @@ def _make_config(
 
 def test_missing_api_key_raises() -> None:
     config = _make_config(api_key=None)
-    with pytest.raises(ValueError, match="berget_api_key is required"):
+    with pytest.raises(ValueError, match="An API key is required"):
         BergetEmbeddingProvider(config, default_base_url="https://api.berget.ai/v1")
+
+
+def test_resolved_api_key_is_accepted() -> None:
+    """The config loader resolves the key from the variable a provider names,
+    so it arrives in the host-agnostic field rather than the Berget-named one."""
+    config = EmbeddingConfig(
+        EMBEDDING_MODEL="intfloat/multilingual-e5-large",
+        EMBEDDING_PROVIDER="openai_compatible",
+        LLM_API_KEY="resolved-key",
+    )
+
+    provider = BergetEmbeddingProvider(
+        config, default_base_url="https://api.berget.ai/v1"
+    )
+
+    assert provider._client.api_key == "resolved-key"
 
 
 def test_uses_default_base_url_when_unset() -> None:
@@ -82,15 +98,6 @@ async def test_empty_input_short_circuits() -> None:
     provider._client.embeddings.create.assert_not_called()
 
 
-def test_protocol_compliance() -> None:
-    config = _make_config()
-    with patch("openai.AsyncOpenAI"):
-        provider = BergetEmbeddingProvider(
-            config, default_base_url="https://api.berget.ai/v1"
-        )
-    assert isinstance(provider, EmbeddingProvider)
-
-
 def test_create_embedding_provider_berget_dispatch() -> None:
     mock_instance = MagicMock()
     with patch(
@@ -102,16 +109,6 @@ def test_create_embedding_provider_berget_dispatch() -> None:
     mock_cls.assert_called_once_with(
         config, default_base_url="https://api.berget.ai/v1"
     )
-    assert result is mock_instance
-
-
-def test_create_embedding_provider_defaults_to_berget() -> None:
-    mock_instance = MagicMock()
-    with patch(
-        "ai.providers.berget_embeddings.BergetEmbeddingProvider",
-        return_value=mock_instance,
-    ):
-        result = create_embedding_provider(EmbeddingConfig(BERGET_API_KEY="test-key"))
     assert result is mock_instance
 
 

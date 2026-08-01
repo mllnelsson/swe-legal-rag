@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-07-29T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Local Development Environment
@@ -39,9 +39,17 @@ they contend for port 5432.
 docker compose up -d db     # ankane/pgvector, healthchecked, persistent volume
 ```
 
-The image's entrypoint applies `docker/init.sql`, which enables the extension. The
-`postgres` role and the `overklagan` database come from the image's own environment, so
+The image's entrypoint applies `docker/init.sql`, which enables the extension and
+creates the `overklagan_test` database the integration suite needs. The `postgres` role
+and the `overklagan` database come from the image's own environment, so
 `.env.example`'s `DATABASE_URL` works with no further setup.
+
+`docker-entrypoint-initdb.d` only runs on a **first** initialisation of the `pgdata`
+volume. On a volume that predates the test database, create it by hand:
+
+```bash
+docker compose exec db createdb -U postgres -O postgres overklagan_test
+```
 
 ### macOS — Homebrew (native)
 
@@ -72,12 +80,25 @@ it, identical to the Linux path:
 ```bash
 createuser -s postgres
 createdb -O postgres overklagan
+createdb -O postgres overklagan_test   # integration tests only; see below
 ```
 
 Local connections use trust authentication, so the password in
 `postgresql://postgres:postgres@localhost:5432/overklagan` is never checked — only the
-role has to exist. That keeps one `DATABASE_URL` working across platforms, the optional
-containers, and the integration-test default in `shared/tests/integration/conftest.py`.
+role has to exist. That keeps one `DATABASE_URL` working across platforms and the
+optional containers.
+
+### The test database (both platforms)
+
+Integration tests truncate every table before each test, so they run against
+`overklagan_test`, never `overklagan`. The name is derived from `DATABASE_URL` by
+appending `_test`, so creating the database is the whole setup — no env var needed.
+`TEST_DATABASE_URL` overrides the derived default; pointing it at the same database as
+`DATABASE_URL` aborts the run rather than truncating. See
+[testing](/testing.md) for the resolution rules.
+
+The database needs no migrating by hand: the test fixtures run `alembic upgrade head`
+against it on first use, which also installs the `vector` extension.
 
 ### Migrations (both platforms)
 
@@ -86,8 +107,9 @@ uv run alembic upgrade head
 ```
 
 `alembic/versions/001_initial_schema.py` runs `CREATE EXTENSION IF NOT EXISTS vector`
-itself, so the extension needs no separate step — which is also why `docker/init.sql` is
-belt-and-braces rather than load-bearing. Verify with `psql -d overklagan -c '\dx'`,
+itself, so the extension needs no separate step — `docker/init.sql`'s `CREATE EXTENSION`
+is belt-and-braces. Its `CREATE DATABASE overklagan_test` is not: on the Compose path
+that is where the test database comes from. Verify with `psql -d overklagan -c '\dx'`,
 which must list `vector | 0.8.5`.
 
 ## Optional Docker Compose Services
@@ -133,6 +155,8 @@ variables to select the local implementation.
 ```
 # Database
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/overklagan
+# TEST_DATABASE_URL=…/overklagan_test   # integration tests only; defaults to
+                                        # DATABASE_URL's name + "_test"
 
 # Storage — "local" uses filesystem, "gcs" uses GCS client
 STORAGE_BACKEND=local
@@ -143,28 +167,14 @@ GCS_BUCKET=                     # required when STORAGE_BACKEND=gcs
 QUEUE_BACKEND=sync
 PUBSUB_PROJECT_ID=              # required when QUEUE_BACKEND=pubsub
 
-# AI — provider keys, model selection
-# "berget" is the default LLM provider (OpenAI-compatible, https://api.berget.ai/v1).
-# "gemini" remains fully supported — set LLM_PROVIDER=gemini and GEMINI_API_KEY,
-# and also override the three LLM_MODEL_* vars below to valid Gemini model names.
-LLM_PROVIDER=berget
-BERGET_API_KEY=                # required for LLM_PROVIDER=berget and/or EMBEDDING_PROVIDER=berget
-LLM_BASE_URL=                   # optional override; defaults to https://api.berget.ai/v1
-GEMINI_API_KEY=                 # required only if LLM_PROVIDER=gemini
+# AI — secrets only. Which model and provider each task uses lives in
+# llm_config.yaml at the repo root; see /reference/llm-config.md for the file
+# format, the precedence rules, and the full list of variables that override it.
+BERGET_API_KEY=                 # required unless every provider is gemini/local
+GEMINI_API_KEY=                 # required if any role uses provider: gemini
 
-# Per-task model assignment (see /packages/ai.md — per-task model selection).
-# Defaults are Berget model IDs; override all three if switching LLM_PROVIDER=gemini.
-LLM_MODEL_STRUCTURED=mistralai/Mistral-Small-3.2-24B-Instruct-2506
-LLM_MODEL_SUMMARIZE=mistralai/Mistral-Medium-3.5-128B
-LLM_MODEL_CHAT=zai-org/GLM-5.2
-
-# "berget" is the default embedding provider (Berget-hosted, same model as "local").
-# "local" runs sentence-transformers in-process — no API key, no network access.
-EMBEDDING_PROVIDER=berget
-# Passed verbatim to the provider (Berget model id, or SentenceTransformer() for "local")
-EMBEDDING_MODEL=intfloat/multilingual-e5-large
-
-# Must match the model's output width (e5-large=1024, e5-base=768)
+# Must match embedding.dimension in llm_config.yaml and the chunks.embedding
+# column width (e5-large=1024, e5-base=768). Checked at startup.
 EMBEDDING_DIMENSION=1024
 
 # LLM trace capture (see /observability.md). On by default; traces land under
@@ -242,8 +252,9 @@ uv run --package worker-embed python -m worker_embed
 **worker-chunk notes:**
 - Requires `BERGET_API_KEY` in `.env` by default — summary generation calls the
   `summarize`-role model (Mistral Medium 3.5 by default) via Berget, through the
-  [ai package](/packages/ai.md). If `LLM_PROVIDER=gemini`, requires `GEMINI_API_KEY` and
-  a valid Gemini model in `LLM_MODEL_SUMMARIZE` instead.
+  [ai package](/packages/ai.md). If the `summarize` role is pointed at
+  `provider: gemini`, requires `GEMINI_API_KEY` and a valid Gemini model on that role
+  instead.
 
 **worker-embed notes:**
 - Default `EMBEDDING_PROVIDER=berget` calls Berget's hosted
@@ -321,14 +332,15 @@ where `alembic` comes from) and the whole workspace; a Cloud Run image wants nei
 | Concern | Env var | Local value | GCP value |
 |---|---|---|---|
 | Database | `DATABASE_URL` | `postgresql://...@localhost:5432/...` | Cloud SQL connection string |
+| Test database | `TEST_DATABASE_URL` | *(derived: `DATABASE_URL` + `_test`)* | Set explicitly in CI |
 | Storage | `STORAGE_BACKEND` | `local` (filesystem) | `gcs` |
 | Storage bucket | `GCS_BUCKET` | *(not needed)* | GCS bucket name |
 | Queue | `QUEUE_BACKEND` | `sync` (in-process) | `pubsub` |
 | Queue project | `PUBSUB_PROJECT_ID` | *(not needed)* | GCP project ID |
 | Secrets | — | `.env` file | Secret Manager |
-| Embedding dim | `EMBEDDING_DIMENSION` | `1024` | `1024` — must match `EMBEDDING_MODEL` in both environments |
-| LLM provider | `LLM_PROVIDER` | `berget` (default) or `gemini` | Same — no local/GCP distinction, just a config choice |
-| Embedding provider | `EMBEDDING_PROVIDER` | `berget` (default) or `local` | Same — `local` is an offline dev/test fallback, not a GCP-vs-local split |
+| Embedding dim | `EMBEDDING_DIMENSION` | `1024` | `1024` — must match `embedding.model` in both environments |
+| LLM provider | `llm_config.yaml` `roles.*.provider` | `berget` (default) or `gemini`, per role | Same — no local/GCP distinction, just a config choice |
+| Embedding provider | `llm_config.yaml` `embedding.provider` | `berget` (default) or `local` | Same — `local` is an offline dev/test fallback, not a GCP-vs-local split |
 
 Development defaults: `STORAGE_BACKEND=local` and `QUEUE_BACKEND=sync`. No GCS or Pub/Sub
 credentials required for local development. The full local↔GCP mapping and the
@@ -351,12 +363,18 @@ processes.
 docker compose up -d db                              # Linux
 brew install postgresql@17 pgvector && \
   brew services start postgresql@17 && \
-  createuser -s postgres && createdb -O postgres overklagan   # macOS
+  createuser -s postgres && \
+  createdb -O postgres overklagan && \
+  createdb -O postgres overklagan_test                        # macOS
 
 # 2. The rest is identical on both
 cp .env.example .env        # copy config template — DATABASE_URL needs no edit
 uv sync --all-packages      # install all workspace packages
 uv run alembic upgrade head # apply migrations; also creates the vector extension
+
+# 3. Check it works. Unit tests need none of the above; integration tests need all of it.
+uv run pytest               # unit only, by design
+uv run pytest -m integration
 ```
 
 Verify before going further — `psql -d overklagan -c '\dx'` lists `vector | 0.8.5`, and

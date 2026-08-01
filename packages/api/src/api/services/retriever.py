@@ -8,6 +8,7 @@ from datetime import date
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai import get_embedding_prefixes
 from ai.embedding import EmbeddingProvider
 from api.config import RetrievalSettings
 from api.services.query_planner import QueryPlan
@@ -23,9 +24,9 @@ from shared.search.rrf import rrf_fuse
 
 logger = logging.getLogger(__name__)
 
-# e5 models require the "query: " prefix for queries;
-# chunks are embedded with "passage: " by worker-embed.
-E5_QUERY_PREFIX = "query: "
+# The query side of the embedding model's asymmetric prefix pair. Both sides
+# come from `llm_config.yaml` so they cannot drift apart — worker-embed reads
+# the passage half from the same place.
 
 # Per-chunk snippet length shown to the reranker LLM; keeps the prompt bounded.
 SNIPPET_CHARS = 400
@@ -190,7 +191,8 @@ async def retrieve(
         else:
             candidate_ids = candidates
 
-    embeddings = await embedding_provider.embed([E5_QUERY_PREFIX + plan.semantic_query])
+    query_prefix, _ = get_embedding_prefixes()
+    embeddings = await embedding_provider.embed([query_prefix + plan.semantic_query])
     query_embedding = embeddings[0]
 
     sections = _sections_for(plan, settings)

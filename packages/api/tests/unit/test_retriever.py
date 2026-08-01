@@ -14,11 +14,26 @@ from shared.dtos.search import ChunkSearchResult, DocumentFilter
 from shared.enums import ChunkSection
 
 
-def _settings(**kwargs) -> RetrievalSettings:
-    defaults = dict(
-        retrieval_top_k=4, retrieval_search_limit=10, retrieval_rerank_enabled=False
+def _settings(
+    *,
+    retrieval_top_k: int = 4,
+    retrieval_search_limit: int = 10,
+    retrieval_rerank_enabled: bool = False,
+    retrieval_include_appendices: bool = False,
+) -> RetrievalSettings:
+    """Retrieval settings with test defaults.
+
+    Spelled out rather than `**kwargs` into a dict splat: the splat matched every
+    keyword-only parameter on `BaseSettings.__init__` (`_env_file`,
+    `_cli_settings_source`, …), which is 27 type errors and no protection against
+    a misspelled field name.
+    """
+    return RetrievalSettings(
+        retrieval_top_k=retrieval_top_k,
+        retrieval_search_limit=retrieval_search_limit,
+        retrieval_rerank_enabled=retrieval_rerank_enabled,
+        retrieval_include_appendices=retrieval_include_appendices,
     )
-    return RetrievalSettings(**{**defaults, **kwargs})
 
 
 def _plan(query: str = "kyrkorätt", **filter_kwargs) -> QueryPlan:
@@ -276,12 +291,19 @@ class TestRetrieve:
             mock_chunk.text_search = AsyncMock(return_value=[])
             mock_doc.get_by_id = AsyncMock(return_value=doc)
 
-            plan = _plan(query="kyrkorätt")
-            await retrieve(
-                plan, MagicMock(), embedding_provider=provider, settings=_settings()
-            )
+            # Patched rather than asserted against the shipped value: what
+            # matters is that the prefix comes from the configured pair, so it
+            # cannot drift from the passage half worker-embed applies.
+            with patch(
+                "api.services.retriever.get_embedding_prefixes",
+                return_value=("fråga: ", "stycke: "),
+            ):
+                plan = _plan(query="kyrkorätt")
+                await retrieve(
+                    plan, MagicMock(), embedding_provider=provider, settings=_settings()
+                )
 
-            provider.embed.assert_called_once_with(["query: kyrkorätt"])
+            provider.embed.assert_called_once_with(["fråga: kyrkorätt"])
 
 
 class TestSectionScoping:

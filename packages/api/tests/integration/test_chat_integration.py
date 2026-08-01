@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import re
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
@@ -16,16 +14,7 @@ from ai.dtos import DecomposeResult
 from api.main import create_app
 from api.routes.chat import _get_db
 from shared.repositories import session as session_repo
-
-pytestmark = pytest.mark.integration
-
-_DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/overklagan"
-)
-
-
-def _async_url(url: str) -> str:
-    return re.sub(r"^postgresql(\+\w+)?://", "postgresql+asyncpg://", url)
+from shared.testing import to_async_url
 
 
 def _parse_sse(text: str) -> list[dict[str, Any]]:
@@ -52,8 +41,10 @@ async def _stream_chat(client: httpx.AsyncClient, body: dict) -> list[dict[str, 
 
 
 @pytest.fixture
-async def api_app(truncate_sessions) -> AsyncGenerator[Any, None]:
-    engine = create_async_engine(_async_url(_DATABASE_URL))
+async def api_app(
+    clean_database: None, test_database_url: str
+) -> AsyncGenerator[Any, None]:
+    engine = create_async_engine(to_async_url(test_database_url))
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
     app = create_app()
@@ -87,8 +78,8 @@ def http_client(api_app) -> httpx.AsyncClient:
     )
 
 
-async def _load_session_from_db(session_id: uuid.UUID) -> Any:
-    engine = create_async_engine(_async_url(_DATABASE_URL))
+async def _load_session_from_db(database_url: str, session_id: uuid.UUID) -> Any:
+    engine = create_async_engine(to_async_url(database_url))
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as s:
         result = await session_repo.get_by_id(s, session_id)
@@ -158,7 +149,9 @@ class TestNewSessionRoundTrip:
         assert "session_id" in done["data"]
         assert uuid.UUID(done["data"]["session_id"])
 
-    async def test_history_persisted_to_db(self, http_client: httpx.AsyncClient):
+    async def test_history_persisted_to_db(
+        self, http_client: httpx.AsyncClient, test_database_url: str
+    ):
         with (
             patch(_FAKE_DECOMPOSE, side_effect=_fake_decompose()),
             patch(_FAKE_SYNTHESIZE, _fake_synthesize(_SWEDISH_TOKENS)),
@@ -169,7 +162,7 @@ class TestNewSessionRoundTrip:
         session_id = uuid.UUID(
             next(e for e in events if e["event"] == "done")["data"]["session_id"]
         )
-        db_session = await _load_session_from_db(session_id)
+        db_session = await _load_session_from_db(test_database_url, session_id)
 
         assert db_session is not None
         assert len(db_session.history) == 2
@@ -250,7 +243,7 @@ class TestMidStreamFailure:
         assert not any(e["event"] == "done" for e in events)
 
     async def test_history_not_persisted_on_failure(
-        self, http_client: httpx.AsyncClient
+        self, http_client: httpx.AsyncClient, test_database_url: str
     ):
         with (
             patch(_FAKE_DECOMPOSE, side_effect=_fake_decompose()),
@@ -262,7 +255,7 @@ class TestMidStreamFailure:
         # No done event means no session_id was given, but a session was created.
         # Verify it has empty history (append_turn was never called).
         # We check by looking for any session created during this test.
-        engine = create_async_engine(_async_url(_DATABASE_URL))
+        engine = create_async_engine(to_async_url(test_database_url))
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as s:
             from sqlalchemy import select

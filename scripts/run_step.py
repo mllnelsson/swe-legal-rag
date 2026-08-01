@@ -57,6 +57,7 @@ from dotenv import load_dotenv
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai import install_file_tracing, trace_context
 from shared.config import Settings, get_settings
 from shared.db import get_async_session
 from shared.dtos.document import DocumentCreate, DocumentUpdate
@@ -84,6 +85,9 @@ from shared.storage import create_storage_backend
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("run_step")
+
+# Attribution for traces from this script; inner calls name themselves.
+_SOURCE = "scripts.run_step"
 
 # Ingestion order. Value is the step each stage hands off to (None = terminal).
 PIPELINE: dict[PipelineStep, PipelineStep | None] = {
@@ -275,98 +279,107 @@ async def _run_step(
     repos = ctx.repos
     session = ctx.session
 
-    match step:
-        case PipelineStep.CRAWL:
-            raise SystemExit("Use the `crawl` command to run the crawl step.")
-        case PipelineStep.DOWNLOAD:
-            from worker_download.config import get_download_settings
-            from worker_download.service import process_download
+    # Mirrors the workers: every LLM/embedding call this script makes is
+    # billed, so it is attributed to the document that caused it.
+    with trace_context(
+        document_id=str(document_id), task_id=str(task_id), source=_SOURCE
+    ):
+        match step:
+            case PipelineStep.CRAWL:
+                raise SystemExit("Use the `crawl` command to run the crawl step.")
+            case PipelineStep.DOWNLOAD:
+                from worker_download.config import get_download_settings
+                from worker_download.service import process_download
 
-            ds = get_download_settings()
-            await process_download(
-                QueueMessage(task_id=task_id, document_id=document_id),
-                session=session,
-                document_repo=repos.document,
-                task_repo=repos.task,
-                storage=create_storage_backend(settings.storage),
-                queue_publisher=publisher,
-                timeout=ds.download_request_timeout,
-                max_retries=ds.download_max_retries,
-                rate_limit_delay=ds.download_rate_limit_delay,
-                next_topic=ds.download_next_topic,
-            )
-        case PipelineStep.PARSE:
-            from worker_parse.parser import parse_pdf_with_pypdfium2
-            from worker_parse.service import process_parse
+                ds = get_download_settings()
+                await process_download(
+                    QueueMessage(task_id=task_id, document_id=document_id),
+                    session=session,
+                    document_repo=repos.document,
+                    task_repo=repos.task,
+                    storage=create_storage_backend(settings.storage),
+                    queue_publisher=publisher,
+                    timeout=ds.download_request_timeout,
+                    max_retries=ds.download_max_retries,
+                    rate_limit_delay=ds.download_rate_limit_delay,
+                    next_topic=ds.download_next_topic,
+                )
+            case PipelineStep.PARSE:
+                from worker_parse.parser import parse_pdf_with_pypdfium2
+                from worker_parse.service import process_parse
 
-            await process_parse(
-                document_id=document_id,
-                task_id=task_id,
-                storage=create_storage_backend(settings.storage),
-                document_repo=repos.document,
-                task_repo=repos.task,
-                queue_publisher=publisher,
-                parser=parse_pdf_with_pypdfium2,
-                session=session,
-                next_topic=_next_topic(PipelineStep.PARSE),
-            )
-        case PipelineStep.METADATA:
-            from worker_metadata.__main__ import _no_llm_extractor
-            from worker_metadata.patterns import extract_metadata_rule_based
-            from worker_metadata.service import process_metadata
+                await process_parse(
+                    document_id=document_id,
+                    task_id=task_id,
+                    storage=create_storage_backend(settings.storage),
+                    document_repo=repos.document,
+                    task_repo=repos.task,
+                    queue_publisher=publisher,
+                    parser=parse_pdf_with_pypdfium2,
+                    session=session,
+                    next_topic=_next_topic(PipelineStep.PARSE),
+                )
+            case PipelineStep.METADATA:
+                from worker_metadata.__main__ import _no_llm_extractor
+                from worker_metadata.patterns import extract_metadata_rule_based
+                from worker_metadata.service import process_metadata
 
-            await process_metadata(
-                document_id=document_id,
-                task_id=task_id,
-                document_repo=repos.document,
-                task_repo=repos.task,
-                queue_publisher=publisher,
-                rule_extractor=extract_metadata_rule_based,
-                llm_extractor=_no_llm_extractor,
-                session=session,
-                next_topic=_next_topic(PipelineStep.METADATA),
-            )
-        case PipelineStep.EXTRACT:
-            from worker_extract.services.extraction_service import process_extraction
+                await process_metadata(
+                    document_id=document_id,
+                    task_id=task_id,
+                    document_repo=repos.document,
+                    task_repo=repos.task,
+                    queue_publisher=publisher,
+                    rule_extractor=extract_metadata_rule_based,
+                    llm_extractor=_no_llm_extractor,
+                    session=session,
+                    next_topic=_next_topic(PipelineStep.METADATA),
+                )
+            case PipelineStep.EXTRACT:
+                from worker_extract.services.extraction_service import (
+                    process_extraction,
+                )
 
-            await process_extraction(
-                document_id=document_id,
-                task_id=task_id,
-                document_repo=repos.document,
-                task_repo=repos.task,
-                entity_repo=repos.entity,
-                doc_entity_repo=repos.doc_entity,
-                ref_repo=repos.ref,
-                unresolved_repo=repos.unresolved,
-                queue_publisher=publisher,
-                session=session,
-                next_topic=_next_topic(PipelineStep.EXTRACT),
-            )
-        case PipelineStep.CHUNK:
-            from worker_chunk.service import process_chunking
+                await process_extraction(
+                    document_id=document_id,
+                    task_id=task_id,
+                    document_repo=repos.document,
+                    task_repo=repos.task,
+                    entity_repo=repos.entity,
+                    doc_entity_repo=repos.doc_entity,
+                    ref_repo=repos.ref,
+                    unresolved_repo=repos.unresolved,
+                    queue_publisher=publisher,
+                    session=session,
+                    next_topic=_next_topic(PipelineStep.EXTRACT),
+                )
+            case PipelineStep.CHUNK:
+                from worker_chunk.service import process_chunking
 
-            await process_chunking(
-                document_id=document_id,
-                task_id=task_id,
-                document_repo=repos.document,
-                chunk_repo=repos.chunk,
-                task_repo=repos.task,
-                queue_publisher=publisher,
-                session=session,
-                next_topic=_next_topic(PipelineStep.CHUNK),
-            )
-        case PipelineStep.EMBED:
-            from ai import create_embedding_provider
-            from worker_embed.service import process_embedding
+                await process_chunking(
+                    document_id=document_id,
+                    task_id=task_id,
+                    document_repo=repos.document,
+                    chunk_repo=repos.chunk,
+                    task_repo=repos.task,
+                    queue_publisher=publisher,
+                    session=session,
+                    next_topic=_next_topic(PipelineStep.CHUNK),
+                )
+            case PipelineStep.EMBED:
+                from ai import create_embedding_provider, get_embedding_prefixes
+                from worker_embed.service import process_embedding
 
-            await process_embedding(
-                document_id=document_id,
-                task_id=task_id,
-                chunk_repo=repos.chunk,
-                task_repo=repos.task,
-                embedding_provider=create_embedding_provider(),
-                session=session,
-            )
+                _, passage_prefix = get_embedding_prefixes()
+                await process_embedding(
+                    document_id=document_id,
+                    task_id=task_id,
+                    chunk_repo=repos.chunk,
+                    task_repo=repos.task,
+                    embedding_provider=create_embedding_provider(),
+                    session=session,
+                    passage_prefix=passage_prefix,
+                )
 
     final = await repos.task.get_by_id(session, task_id)
     status = final.status if final else "unknown"
@@ -466,6 +479,10 @@ async def _list_docs(ctx: Ctx) -> None:
 
 async def _dispatch(args: argparse.Namespace) -> None:
     load_dotenv()
+    # Before anything constructs a provider: metadata, extract, chunk and embed
+    # all make billed calls from this script, and the wiring invariant in
+    # documentation/observability.md applies to it as much as to the workers.
+    install_file_tracing()
     if args.store == "fs":
         # fs mode never connects to Postgres, but Settings still validates a
         # DATABASE_URL — supply a throwaway one so the playground needs no DB.

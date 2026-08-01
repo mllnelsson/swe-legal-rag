@@ -25,7 +25,10 @@ def create_queue_publisher(settings: QueueSettings) -> QueuePublisher:
         case QueueBackendType.PUBSUB:
             from shared.queue.pubsub import PubSubQueuePublisher
 
-            return PubSubQueuePublisher(settings.pubsub_project_id)  # type: ignore[arg-type]
+            # `QueueSettings`' model_validator rejects the pubsub backend without
+            # a project id, so settings could not have been constructed at all.
+            assert settings.pubsub_project_id is not None
+            return PubSubQueuePublisher(settings.pubsub_project_id)
         case _:
             raise BackendConfigError(f"Unknown queue backend: {settings.queue_backend}")
 
@@ -41,6 +44,8 @@ def create_queue_subscriber(settings: QueueSettings) -> QueueSubscriber:
         case QueueBackendType.PUBSUB:
             from shared.queue.pubsub import PubSubQueueSubscriber
 
-            return PubSubQueueSubscriber(settings.pubsub_project_id)  # type: ignore[arg-type]
+            # See the publisher above: settings cannot exist without the id.
+            assert settings.pubsub_project_id is not None
+            return PubSubQueueSubscriber(settings.pubsub_project_id)
         case _:
             raise BackendConfigError(f"Unknown queue backend: {settings.queue_backend}")

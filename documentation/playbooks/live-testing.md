@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-07-27T00:00:00Z
+timestamp: 2026-08-01T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -41,20 +41,26 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/overklagan
 STORAGE_BACKEND=local
 LOCAL_STORAGE_PATH=./data/pdfs
 QUEUE_BACKEND=sync
-LLM_PROVIDER=berget
-LLM_MODEL_STRUCTURED=mistralai/Mistral-Small-3.2-24B-Instruct-2506
-LLM_MODEL_SUMMARIZE=mistralai/Mistral-Medium-3.5-128B
-LLM_MODEL_CHAT=zai-org/GLM-5.2
-EMBEDDING_PROVIDER=berget
-EMBEDDING_MODEL=intfloat/multilingual-e5-large
 EMBEDDING_DIMENSION=1024
 LLM_TRACE_ENABLED=true
 ```
 
-To run on Gemini instead, set `LLM_PROVIDER=gemini`, provide `GEMINI_API_KEY`, and set
-the three `LLM_MODEL_*` vars to valid live Gemini models (e.g. `gemini-2.5-flash-lite` —
-`gemini-2.0-flash` was shut down, see [LLM pricing](/reference/llm-pricing.md)). Set
-`EMBEDDING_PROVIDER=local` for a fully offline embedding path.
+**Which model and provider each task uses is not set here.** It lives in
+`llm_config.yaml` at the repo root — see
+[llm_config.yaml](/reference/llm-config.md), which is the single source of truth and
+carries the full env-var registry. Only secrets belong in `.env`.
+
+This block used to restate the model assignment, and it drifted from the real defaults
+once already (see [the log](/log.md)); it is now deliberately short.
+
+To run a task on Gemini instead, give that role `provider: gemini` and a live Gemini
+model in `llm_config.yaml` (e.g. `gemini-2.5-flash-lite` — `gemini-2.0-flash` was shut
+down, see [LLM pricing](/reference/llm-pricing.md)) and provide `GEMINI_API_KEY`. Set
+`embedding.provider: local` for a fully offline embedding path.
+
+Note that `LLM_PROVIDER` in `.env` overrides **every** role's provider and so defeats a
+per-role choice; leave it unset unless that is what you want. `ai` logs a warning when
+it masks one.
 
 ## Pipeline Overview
 
@@ -309,20 +315,55 @@ rm -rf ./data/pdfs/*
 > This also wipes `data/pdfs/llm-traces/`, since traces share the storage root. Copy
 > that directory first if the cost history from the run matters — nothing else holds it.
 
+## Re-embedding after an embedding-config change
+
+Stored vectors are only comparable to queries embedded the same way. Changing any of
+`embedding.model`, `embedding.query_prefix` or `embedding.passage_prefix` in
+[`llm_config.yaml`](/reference/llm-config.md) **invalidates every stored embedding** —
+retrieval keeps working, silently and badly, so nothing will tell you.
+
+This is not hypothetical: the `passage_prefix` was previously never applied even though
+queries were prefixed, so any corpus embedded before that fix must be rebuilt.
+
+```bash
+# 1. Clear the vectors, keeping documents, chunks and everything upstream
+psql "$DATABASE_URL" -c "UPDATE chunks SET embedding = NULL;"
+
+# 2. Reset the embed task so the step will run again
+psql "$DATABASE_URL" -c "UPDATE tasks SET status = 'pending', error_message = NULL, started_at = NULL, completed_at = NULL WHERE step = 'embed';"
+
+# 3. Re-run the embed step for each document
+uv run python scripts/run_step.py docs                 # list document ids
+uv run python scripts/run_step.py embed <document_id>  # once per document
+```
+
+Then confirm: `SELECT count(*) FROM chunks WHERE embedding IS NULL;` should be `0`, and a
+query that previously returned a known document should still return it. A change in
+`embedding.dimension` additionally requires a migration recreating the `chunks.embedding`
+column at the new width — see
+[embedding dimension](/decisions/embedding-dimension.md).
+
 ## Running Tests
 
 ```bash
-# All unit tests (fast, no infra needed)
-uv run pytest -m "not integration"
+# Unit tests — the default. Fast, hermetic, needs no infrastructure.
+uv run pytest
 
-# Integration tests (requires Postgres running)
+# Integration tests alone. Needs Postgres and the overklagan_test database.
 uv run pytest -m integration
+
+# Everything.
+uv run pytest -m ""
 
 # Single package
 uv run pytest packages/worker-crawl/tests/
 uv run pytest packages/worker-parse/tests/
 uv run pytest packages/worker-metadata/tests/
 ```
+
+Integration tests run against `overklagan_test`, never the `overklagan` database this
+playbook fills — so a test run cannot destroy a live pipeline corpus, and a
+misconfigured `TEST_DATABASE_URL` aborts the run rather than truncating.
 
 See the [testing strategy](/testing.md) for the full unit/integration split.
 
@@ -337,6 +378,8 @@ See the [testing strategy](/testing.md) for the full unit/integration split.
 | `role "postgres" does not exist` | macOS only — Homebrew's initdb made your macOS user the superuser | `createuser -s postgres` — see [local dev](/playbooks/local-dev.md) |
 | `psql: command not found` | macOS only — `postgresql@17` is keg-only, so its `bin` is not linked onto `PATH` | Add `$(brew --prefix)/opt/postgresql@17/bin` to `PATH` in your shell profile |
 | `relation "documents" does not exist` | Migrations not applied | `uv run alembic upgrade head` |
+| `database "overklagan_test" does not exist` on `-m integration` | The test database was never created | `createdb -O postgres overklagan_test` — see [local dev](/playbooks/local-dev.md) |
+| `Integration tests would run against the development database` | `TEST_DATABASE_URL` names the same database as `DATABASE_URL` | Unset it to use the derived `_test` default, or point it elsewhere. Nothing was truncated |
 | `berget_api_key is required` (or `gemini_api_key is required`) | LLM/embedding provider key not set | Add `BERGET_API_KEY` (default provider) — or `GEMINI_API_KEY` if `LLM_PROVIDER=gemini` — to `.env` |
 | Crawl finds 0 new documents | All URLs already in DB | Reset state (see above) or use a different source URL |
 | Permission denied writing PDFs | `LOCAL_STORAGE_PATH` dir missing | `mkdir -p ./data/pdfs` |

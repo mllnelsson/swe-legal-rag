@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,7 +67,6 @@ def _make_kwargs(
     )
 
 
-@pytest.mark.integration
 async def test_full_crawl_creates_documents_and_tasks(
     session: AsyncSession,
     document_repo,
@@ -111,7 +109,6 @@ async def test_full_crawl_creates_documents_and_tasks(
     assert len(download_tasks) == 3
 
 
-@pytest.mark.integration
 async def test_crawl_persists_listing_metadata(
     session: AsyncSession,
     document_repo,
@@ -136,7 +133,6 @@ async def test_crawl_persists_listing_metadata(
     assert doc.source_url == DOCUMENT_URL_TEMPLATE.format(document_id=2953158)
 
 
-@pytest.mark.integration
 async def test_crawl_idempotent_rerun(
     session: AsyncSession,
     document_repo,

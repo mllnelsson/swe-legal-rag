@@ -29,13 +29,18 @@ Unless stated otherwise in the atm skill a task is done when:
   - build attempted (when source code changed),
   - linting run (when source code changed),
   - errors/warnings addressed (or explicitly listed and agreed as out-of-scope),
-  - plus tests/typecheck as applicable,
+  - plus tests/typecheck as applicable. `uv run pytest` is the test command: it
+    runs unit tests only and needs no infrastructure. Integration tests are
+    opt-in — `uv run pytest -m integration` — and need Postgres plus the
+    `overklagan_test` database. Do not run them unless asked.
 - documentation is updated exhaustively for impacted areas,
 - impact is explained (what changed, where, why)
 
 ## Local database
 Assume Postgres + pgvector is already running on `localhost:5432` with the schema
-migrated — `DATABASE_URL` in `.env` works as shipped. How it got there is
+migrated — `DATABASE_URL` in `.env` works as shipped. Integration tests use a
+*second* database, `overklagan_test`, which they truncate; it is derived from
+`DATABASE_URL` and needs one `createdb`. How it got there is
 platform-dependent (Docker Compose on Linux, native Homebrew on macOS); the setup, the
 per-platform differences and the troubleshooting table live in
 [local dev](documentation/playbooks/local-dev.md). Read it before touching local DB

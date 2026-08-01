@@ -8,10 +8,32 @@ class AiError(Exception):
 
 
 class EmbeddingDimensionMismatchError(AiError):
-    """The embedding model's output width disagrees with EMBEDDING_DIMENSION.
+    """The embedding model's output width disagrees with the configured dimension.
 
-    Raised at startup rather than at embed time. The dimension is defined in three
-    uncoordinated places (`shared.config`, the Alembic migration, and implicitly the
-    configured model); without this check a mismatch only surfaces after the pipeline
-    has already done its expensive work, or as a failed user query on the API.
+    Raised at startup rather than at embed time. The dimension is defined in four
+    uncoordinated places (`llm_config.yaml`, `shared.config`, the Alembic migration,
+    and implicitly the configured model); without this check a mismatch only surfaces
+    after the pipeline has already done its expensive work, or as a failed user query
+    on the API.
     """
+
+
+class LLMConfigError(AiError):
+    """Base class for problems with `llm_config.yaml`."""
+
+
+class LLMConfigNotFoundError(LLMConfigError):
+    """No `llm_config.yaml` could be located.
+
+    Deliberately fatal rather than falling back to built-in defaults: a silent
+    fallback is how the documented model set and the one actually in use drift
+    apart, which has already happened once in this project.
+    """
+
+
+class LLMConfigInvalidError(LLMConfigError):
+    """`llm_config.yaml` was found but is malformed or internally inconsistent."""
+
+
+class UnknownLLMRoleError(LLMConfigError):
+    """A provider was requested for a role that `llm_config.yaml` does not declare."""

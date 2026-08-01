@@ -3,7 +3,6 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.config import EMBEDDING_DIMENSION
@@ -14,8 +13,6 @@ from shared.dtos.document_reference import DocumentReferenceCreate
 from shared.dtos.entity import EntityCreate
 from shared.dtos.search import DocumentFilter
 from shared.search.rrf import rrf_fuse
-
-pytestmark = pytest.mark.integration
 
 _SWEDISH_TEXT = "Kyrkorådet beslutade att bifalla överklagandet."
 
@@ -37,8 +34,9 @@ async def _seed_document(
     category: str | None = None,
     raw_text: str = _SWEDISH_TEXT,
 ) -> uuid.UUID:
-    doc = await document_repo.create(DocumentCreate(source_url=source_url))
+    doc = await document_repo.create(session, DocumentCreate(source_url=source_url))
     await document_repo.update(
+        session,
         doc.id,
         DocumentUpdate(
             raw_text=raw_text,
@@ -63,6 +61,7 @@ async def _seed_chunk(
     if embedding is None:
         embedding = [0.1] * EMBEDDING_DIMENSION
     chunk = await chunk_repo.bulk_create(
+        session,
         [
             ChunkCreate(
                 document_id=document_id,
@@ -70,7 +69,7 @@ async def _seed_chunk(
                 chunk_text=chunk_text,
                 embedding=embedding,
             )
-        ]
+        ],
     )
     await session.commit()
     return chunk[0].id
@@ -90,7 +89,7 @@ class TestSearchRepositoryMetadataFiltering:
             document_repo, session, source_url="https://a.com/2.pdf"
         )
 
-        results = await search_repo.find_candidate_documents(DocumentFilter())
+        results = await search_repo.find_candidate_documents(session, DocumentFilter())
 
         assert doc1_id in results
         assert doc2_id in results
@@ -115,7 +114,7 @@ class TestSearchRepositoryMetadataFiltering:
         )
 
         results = await search_repo.find_candidate_documents(
-            DocumentFilter(date_from=date(2022, 1, 1))
+            session, DocumentFilter(date_from=date(2022, 1, 1))
         )
 
         assert new_id in results
@@ -141,7 +140,7 @@ class TestSearchRepositoryMetadataFiltering:
         )
 
         results = await search_repo.find_candidate_documents(
-            DocumentFilter(date_to=date(2021, 12, 31))
+            session, DocumentFilter(date_to=date(2021, 12, 31))
         )
 
         assert old_id in results
@@ -167,7 +166,7 @@ class TestSearchRepositoryMetadataFiltering:
         )
 
         results = await search_repo.find_candidate_documents(
-            DocumentFilter(category="kyrkogård")
+            session, DocumentFilter(category="kyrkogård")
         )
 
         assert match_id in results
@@ -190,16 +189,19 @@ class TestSearchRepositoryEntityFiltering:
             document_repo, session, source_url="https://a.com/ent2.pdf"
         )
 
-        entity = await entity_repo.upsert(EntityCreate(name="kyrkorådet", type="role"))
+        entity = await entity_repo.upsert(
+            session, EntityCreate(name="kyrkorådet", type="role")
+        )
         await doc_entity_repo.upsert(
+            session,
             DocumentEntityCreate(
                 document_id=match_id, entity_id=entity.id, relevance="primary"
-            )
+            ),
         )
         await session.commit()
 
         results = await search_repo.find_candidate_documents(
-            DocumentFilter(entity_names=["kyrkorådet"])
+            session, DocumentFilter(entity_names=["kyrkorådet"])
         )
 
         assert match_id in results
@@ -218,17 +220,18 @@ class TestSearchRepositoryEntityFiltering:
         )
 
         entity = await entity_repo.upsert(
-            EntityCreate(name="Skattkärrens församling", type="parish")
+            session, EntityCreate(name="Skattkärrens församling", type="parish")
         )
         await doc_entity_repo.upsert(
+            session,
             DocumentEntityCreate(
                 document_id=match_id, entity_id=entity.id, relevance="mentioned"
-            )
+            ),
         )
         await session.commit()
 
         results = await search_repo.find_candidate_documents(
-            DocumentFilter(entity_names=["skattkärren"])
+            session, DocumentFilter(entity_names=["skattkärren"])
         )
 
         assert match_id in results
@@ -256,15 +259,16 @@ class TestSearchRepositoryReferenceTraversal:
             case_number="2021/001",
         )
         await doc_ref_repo.upsert(
+            session,
             DocumentReferenceCreate(
                 source_document_id=doc1_id, target_document_id=doc2_id
-            )
+            ),
         )
         await session.commit()
 
         # Searching for "2020/001" (doc1's case) → related_as_source gives doc2
         results = await search_repo.find_candidate_documents(
-            DocumentFilter(references_case_number="2020/001")
+            session, DocumentFilter(references_case_number="2020/001")
         )
 
         assert doc2_id in results
@@ -290,15 +294,16 @@ class TestSearchRepositoryReferenceTraversal:
             case_number="2021/002",
         )
         await doc_ref_repo.upsert(
+            session,
             DocumentReferenceCreate(
                 source_document_id=doc1_id, target_document_id=doc2_id
-            )
+            ),
         )
         await session.commit()
 
         # Searching for "2021/002" (doc2's case) → related_as_target gives doc1
         results = await search_repo.find_candidate_documents(
-            DocumentFilter(references_case_number="2021/002")
+            session, DocumentFilter(references_case_number="2021/002")
         )
 
         assert doc1_id in results
@@ -330,20 +335,22 @@ class TestSearchRepositoryReferenceTraversal:
             case_number="2021/003",
         )
         await doc_ref_repo.upsert(
+            session,
             DocumentReferenceCreate(
                 source_document_id=doc1_id, target_document_id=pivot_id
-            )
+            ),
         )
         await doc_ref_repo.upsert(
+            session,
             DocumentReferenceCreate(
                 source_document_id=pivot_id, target_document_id=doc2_id
-            )
+            ),
         )
         await session.commit()
 
         # Pivot is cited by doc1 AND cites doc2 → both should appear
         results = await search_repo.find_candidate_documents(
-            DocumentFilter(references_case_number="2020/003")
+            session, DocumentFilter(references_case_number="2020/003")
         )
 
         assert doc1_id in results
@@ -377,7 +384,7 @@ class TestChunkRepositoryVectorSearch:
 
         query_vec = _unit_vector(0)
         results = await chunk_repo.vector_search(
-            embedding=query_vec, document_ids=None, limit=10
+            session, embedding=query_vec, document_ids=None, limit=10
         )
 
         result_ids = [r.id for r in results]
@@ -404,6 +411,7 @@ class TestChunkRepositoryVectorSearch:
 
         # Only search in doc2 — doc1 chunk should not appear
         results = await chunk_repo.vector_search(
+            session,
             embedding=_unit_vector(0),
             document_ids=[doc2_id],
             limit=10,
@@ -434,7 +442,7 @@ class TestChunkRepositoryTextSearch:
 
         # Querying with the stem — websearch_to_tsquery('swedish', 'beslut') should match
         results = await chunk_repo.text_search(
-            query="beslut", document_ids=None, limit=10
+            session, query="beslut", document_ids=None, limit=10
         )
 
         assert len(results) >= 1
@@ -461,7 +469,7 @@ class TestChunkRepositoryTextSearch:
 
         # Query with a different inflection of the same root
         results = await chunk_repo.text_search(
-            query="överklaganden", document_ids=None, limit=10
+            session, query="överklaganden", document_ids=None, limit=10
         )
 
         assert len(results) >= 1
@@ -483,7 +491,7 @@ class TestChunkRepositoryTextSearch:
         )
 
         results = await chunk_repo.text_search(
-            query="skattedeklaration", document_ids=None, limit=10
+            session, query="skattedeklaration", document_ids=None, limit=10
         )
 
         assert results == []
@@ -520,10 +528,10 @@ class TestRrfFuseOnRealSearchResults:
 
         query_vec = _unit_vector(0)
         vector_results = await chunk_repo.vector_search(
-            embedding=query_vec, document_ids=None, limit=10
+            session, embedding=query_vec, document_ids=None, limit=10
         )
         text_results = await chunk_repo.text_search(
-            query="beslut", document_ids=None, limit=10
+            session, query="beslut", document_ids=None, limit=10
         )
 
         fused = rrf_fuse(

@@ -17,6 +17,14 @@ required-environments = [
 ]
 constraint-dependencies = [
     "torch<=2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # torch 2.2.2 is compiled against the NumPy 1.x C ABI. NumPy 2 removed
+    # `_ARRAY_API`, so torch's numpy bridge fails to initialise and
+    # `transformers.is_torch_available()` silently returns False — which makes
+    # importing transformers raise `NameError: name 'nn' is not defined`.
+    "numpy<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # transformers 5 requires torch >= 2.4 and disables torch entirely below it,
+    # which breaks its own imports. transformers 4 supports torch 2.2.
+    "transformers<5; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
 [dependency-groups]
@@ -54,10 +62,51 @@ api = { workspace = true }
 target-version = "py312"
 src = ["packages/*/src"]
 
+[tool.ty.environment]
+python-version = "3.12"
+
+# The GCP client libraries are deliberately optional — local dev runs
+# STORAGE_BACKEND=local and QUEUE_BACKEND=sync, so google-cloud-storage and
+# google-cloud-pubsub are not dev dependencies. Both adapters guard their import
+# with try/except ImportError and raise an install message at construction time;
+# ty cannot see through that, so it reports the missing module and then reports
+# every attribute on the `None` fallback binding.
+#
+# Scoped to these two files on purpose. Ignoring unresolved-import repo-wide
+# would hide a genuinely misspelled import anywhere else, and this is the only
+# place the pattern is used. Installing the two packages would also silence it —
+# at the cost of adding heavyweight GCP deps to every local install.
+[[tool.ty.overrides]]
+include = [
+    "packages/shared/src/shared/queue/pubsub.py",
+    "packages/shared/src/shared/storage/gcs.py",
+]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = ["--import-mode=importlib"]
-testpaths = ["packages/shared/tests", "packages/worker-crawl/tests", "packages/worker-download/tests", "packages/worker-parse/tests", "packages/worker-metadata/tests", "packages/ai/tests", "packages/worker-extract/tests", "packages/worker-chunk/tests", "packages/worker-embed/tests", "packages/api/tests", "packages/llm-core/tests"]
+# Integration tests are excluded by default: they need a Postgres and they
+# truncate every table, so running them has to be a deliberate act. A `-m` on the
+# command line overrides the one here — `-m integration` for those alone, `-m ""`
+# for everything.
+addopts = ["--import-mode=importlib", "-m", "not integration", "--strict-markers"]
+testpaths = [
+    "packages/shared/tests",
+    "packages/worker-crawl/tests",
+    "packages/worker-download/tests",
+    "packages/worker-parse/tests",
+    "packages/worker-metadata/tests",
+    "packages/ai/tests",
+    "packages/worker-extract/tests",
+    "packages/worker-chunk/tests",
+    "packages/worker-embed/tests",
+    "packages/api/tests",
+    "packages/llm-core/tests",
+    "scripts/tests",
+]
 markers = [
-    "integration: marks tests as integration tests requiring a running database",
+    "integration: needs a Postgres on TEST_DATABASE_URL; applied automatically to everything under tests/integration/ by the root conftest",
 ]

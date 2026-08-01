@@ -1,0 +1,63 @@
+# Which model and which provider each task uses.
+#
+# This file is the source of truth. Environment variables still override it —
+# see documentation/reference/llm-config.md for the precedence table.
+#
+# API keys are NEVER written here. A provider names the environment variable
+# its key is read from; the value stays in .env / Secret Manager.
+
+version: 1
+
+# Declared once, referenced by name from `roles` and `embedding`.
+providers:
+  berget:
+    kind: openai_compatible
+    base_url: https://api.berget.ai/v1
+    api_key_env: BERGET_API_KEY
+  gemini:
+    kind: gemini
+    api_key_env: GEMINI_API_KEY
+
+# Inherited by every role that omits the field.
+defaults:
+  provider: berget
+  temperature: 0.0
+  max_tokens: null
+  # Asking for token usage on a stream is an extra request parameter, and a host
+  # that rejects it fails the whole call. Streaming is the user-facing chat path.
+  stream_usage: true
+
+# One entry per task. Add a role here and call `create_llm_provider("<name>")` —
+# no Python change is needed to introduce one.
+roles:
+  # High-volume, JSON-schema output: query decomposition, metadata and entity
+  # extraction, reranking. Runs at ingestion scale, so it wants a cheap model.
+  structured:
+    model: mistralai/Mistral-Small-3.2-24B-Instruct-2506
+
+  # One call per ingested document, no structured output, sees whole documents —
+  # so it wants context length more than it wants to be cheap.
+  summarize:
+    model: mistralai/Mistral-Medium-3.5-128B
+
+  # Low-volume, streaming, user-facing answer synthesis. Not run at ingestion
+  # scale, so it can afford to be the strongest model here.
+  chat:
+    model: zai-org/GLM-5.2
+
+embedding:
+  # A name from `providers` above, or the literal "local" to run
+  # sentence-transformers in-process (no API key, no network).
+  provider: berget
+  model: intfloat/multilingual-e5-large
+  # Must match the model's output width (e5-large=1024, e5-base=768) AND
+  # EMBEDDING_DIMENSION AND the chunks.embedding column. verify_embedding_dimension()
+  # checks all of them agree at startup.
+  dimension: 1024
+  # e5 is an asymmetric model: the two sides of retrieval are prefixed
+  # differently, and BOTH must be applied or queries and passages land in
+  # systematically offset regions of the space. Set both to "" for a model that
+  # does not use prefixes (bge-m3, jina).
+  # Changing either value invalidates every stored embedding.
+  query_prefix: "query: "
+  passage_prefix: "passage: "

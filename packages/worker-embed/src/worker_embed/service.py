@@ -25,7 +25,17 @@ async def process_embedding(
     task_repo: TaskRepo,
     embedding_provider: EmbeddingProvider,
     session: AsyncSession,
+    passage_prefix: str,
 ) -> None:
+    """Embed every chunk of a document.
+
+    `passage_prefix` is the document side of the embedding model's asymmetric
+    prefix pair (`ai.get_embedding_prefixes`). It has no default: prefixing only
+    one side of an asymmetric model puts queries and passages in systematically
+    offset regions of the space, and that is precisely what a forgotten default
+    would reintroduce. Pass `""` for a model that uses no prefixes.
+    """
+
     async def body() -> None:
         chunks = await chunk_repo.get_by_document_id(session, document_id)
         if not chunks:
@@ -33,7 +43,10 @@ async def process_embedding(
                 f"No chunks found for document {document_id} — chunk worker must run first"
             )
 
-        texts = [chunk.contextual_text or chunk.chunk_text for chunk in chunks]
+        texts = [
+            passage_prefix + (chunk.contextual_text or chunk.chunk_text)
+            for chunk in chunks
+        ]
 
         vectors = await embedding_provider.embed(texts)
 
