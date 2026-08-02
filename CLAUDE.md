@@ -36,6 +36,12 @@ Unless stated otherwise in the atm skill a task is done when:
 - documentation is updated exhaustively for impacted areas,
 - impact is explained (what changed, where, why)
 
+## Project state
+Nothing is deployed and no corpus has been ingested — see
+[deployment state](documentation/reference/deployment-state.md). Breaking changes,
+schema recreation and embedding-model changes are all free right now. Do not plan
+around migrations, re-embeds or deployed consumers unless that doc says otherwise.
+
 ## Local database
 Assume Postgres + pgvector is already running on `localhost:5432` with the schema
 migrated — `DATABASE_URL` in `.env` works as shipped. Integration tests use a
