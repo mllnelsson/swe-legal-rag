@@ -57,7 +57,7 @@ from dotenv import load_dotenv
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai import install_file_tracing, trace_context
+from ai import LLMRole, create_llm_provider, install_file_tracing, trace_context
 from shared.config import Settings, get_settings
 from shared.db import get_async_session
 from shared.dtos.document import DocumentCreate, DocumentUpdate
@@ -372,6 +372,12 @@ async def _run_step(
                     queue_publisher=publisher,
                     session=session,
                     next_topic=_next_topic(PipelineStep.CHUNK),
+                    # Named explicitly: omitting it falls through to
+                    # `llm_core.LLMConfig()`, which reads the process-wide
+                    # LLM_MODEL and so summarises with a different model than
+                    # worker-chunk does — the point of hand-testing a step is
+                    # that it runs what the worker runs.
+                    llm_provider=create_llm_provider(LLMRole.SUMMARIZE),
                 )
             case PipelineStep.EMBED:
                 from ai import (

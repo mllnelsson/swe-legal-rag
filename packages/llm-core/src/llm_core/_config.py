@@ -14,10 +14,15 @@ class ProviderKind(StrEnum):
     A *kind* is a wire protocol, not a vendor: every host speaking the OpenAI
     chat-completions API is one `OPENAI_COMPATIBLE` entry apart, distinguished
     by `base_url` alone. Adding such a host needs no code.
+
+    `NONE` is a kind too, not the absence of one: "there is deliberately no
+    model here" is a configuration, and making it a member keeps the dispatch
+    below exhaustive instead of adding a second switch beside it.
     """
 
     OPENAI_COMPATIBLE = "openai_compatible"
     GEMINI = "gemini"
+    NONE = "none"
 
 
 class LLMConfig(BaseSettings):
@@ -60,3 +65,7 @@ def create_provider(config: LLMConfig | None = None) -> LLMProvider:
             from llm_core.providers._openai_compatible import OpenAiCompatibleProvider
 
             return OpenAiCompatibleProvider(config)
+        case ProviderKind.NONE:
+            from llm_core.providers._null import NullProvider
+
+            return NullProvider(config)

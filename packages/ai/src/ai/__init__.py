@@ -43,7 +43,7 @@ from ai.llm_config import (
     resolve_embedding_config,
     resolve_role_config,
 )
-from ai.providers.roles import LLMRole, create_llm_provider
+from ai.providers.roles import LLMRole, create_llm_provider, llm_role_is_disabled
 from ai.services import (
     decompose_query,
     extract_entities,
@@ -70,6 +70,7 @@ __all__ = [
     # entry under `roles:` in llm_config.yaml; both halves are required.
     "create_llm_provider",
     "LLMRole",
+    "llm_role_is_disabled",
     # Configuration
     "LLMConfigDocument",
     "EmbeddingBackend",

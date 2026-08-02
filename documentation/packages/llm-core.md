@@ -20,24 +20,29 @@ lives in the [ai package](/packages/ai.md).
   `StreamChunk` each carry `usage`, `model` and `provider`; `Usage` fields are
   `None` when the provider reported nothing, which is not the same as zero.
 - **`_exceptions.py`** — `LLMError` base, `ProviderError`, `MissingCredentialError` (a
-  provider constructed without the API key or base URL it needs), `ToolExecutionError`,
-  `MaxIterationsError`.
+  provider constructed without the API key or base URL it needs), `LLMDisabledError`
+  (something called a provider deliberately configured as absent — the mirror image of
+  `MissingCredentialError`, which means the configuration was meant to be there and was
+  not), `ToolExecutionError`, `MaxIterationsError`.
 - **`_protocol.py`** — `LLMProvider` Protocol (`@runtime_checkable`) with `generate()`
   and `generate_stream()`. Providers do one round-trip; the tool-call loop is in the
   service layer.
-- **`_config.py`** — `ProviderKind` (`StrEnum`): `OPENAI_COMPATIBLE` or `GEMINI`, the
-  client implementation a provider entry maps onto. A *kind* is a wire protocol, not a
-  vendor — every host speaking the OpenAI chat-completions API is one
+- **`_config.py`** — `ProviderKind` (`StrEnum`): `OPENAI_COMPATIBLE`, `GEMINI` or
+  `NONE`, the client implementation a provider entry maps onto. A *kind* is a wire
+  protocol, not a vendor — every host speaking the OpenAI chat-completions API is one
   `OPENAI_COMPATIBLE` entry apart, distinguished by `base_url` alone, so adding such a
-  host needs no code.
+  host needs no code. `NONE` is a kind too, not the absence of one: "there is
+  deliberately no model here" is a configuration, and making it a member keeps dispatch
+  exhaustive instead of putting a second switch beside it.
 
   `LLMConfig(BaseSettings)` reads `LLM_PROVIDER` (default `openai_compatible`, typed as
   `ProviderKind`), `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_API_KEY`,
   `LLM_BASE_URL`, `LLM_STREAM_USAGE`. `create_provider()` is a factory with lazy-import
   dispatch on `config.provider`: `ProviderKind.GEMINI` → `GeminiProvider`,
-  `ProviderKind.OPENAI_COMPATIBLE` → `OpenAiCompatibleProvider`. There is no fallback
-  `case` — `provider` is a `ProviderKind`, so pydantic rejects an unrecognized value when
-  the config is built, at the point the bad setting was supplied rather than at dispatch.
+  `ProviderKind.OPENAI_COMPATIBLE` → `OpenAiCompatibleProvider`, `ProviderKind.NONE` →
+  `NullProvider`. There is no fallback `case` — `provider` is a `ProviderKind`, so
+  pydantic rejects an unrecognized value when the config is built, at the point the bad
+  setting was supplied rather than at dispatch.
 
   `api_key` is the **only** credential field — a host-agnostic value populated by the
   caller, as [`ai.llm_config`](/reference/llm-config.md) does, from the variable each
@@ -67,6 +72,15 @@ lives in the [ai package](/packages/ai.md).
   `Message`/`ToolDefinition`/`response_schema` to OpenAI's chat-completions shape (tool
   calls, `response_format` json_schema for structured output) and wraps SDK exceptions
   in `ProviderError`.
+- **`providers/_null.py`** — `NullProvider`, a provider configured to not exist.
+  Constructing it always succeeds: no key, no base URL, no client library, so a process
+  whose LLM steps are switched off starts normally instead of dying on a credential it
+  will never use. Every call raises `LLMDisabledError` naming the operation and the
+  model that was requested. `generate_stream` refuses on `await`, not part-way through
+  an `async for` — it is a coroutine returning an iterator, the same shape as the real
+  providers. Selected with `kind: none` in
+  [`llm_config.yaml`](/reference/llm-config.md) or `LLM_PROVIDER=none`; what each
+  pipeline step then does is tabulated there.
 - **`_service.py`** — the higher-level API: `generate()`, `generate_structured()`,
   `generate_stream()`, `tool_loop()` with optional callbacks. All four emit one trace
   record per billed provider round-trip. `generate_structured[T: BaseModel]` is generic

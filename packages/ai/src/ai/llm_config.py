@@ -81,7 +81,18 @@ class ProviderSpec(BaseModel):
 
     kind: ProviderKind
     base_url: str | None = None
-    api_key_env: str
+    # Optional in the schema but required by the validator below for every kind
+    # that talks to a host. `none` has nowhere to send a key.
+    api_key_env: str | None = None
+
+    @model_validator(mode="after")
+    def _check_api_key_env(self) -> ProviderSpec:
+        if self.kind is not ProviderKind.NONE and self.api_key_env is None:
+            raise ValueError(
+                f"a provider of kind {self.kind.value!r} must name its "
+                f"api_key_env; only {ProviderKind.NONE.value!r} may omit it"
+            )
+        return self
 
 
 class RoleDefaults(BaseModel):
@@ -270,7 +281,7 @@ def resolve_role_config(
     inherited = {
         "provider": provider.kind,
         "base_url": provider.base_url,
-        "api_key": os.environ.get(provider.api_key_env),
+        "api_key": _api_key_for(provider),
         "temperature": _first_set(spec.temperature, defaults.temperature),
         "max_tokens": _first_set(spec.max_tokens, defaults.max_tokens),
         "stream_usage": _first_set(spec.stream_usage, defaults.stream_usage),
@@ -304,9 +315,20 @@ def resolve_embedding_config(
         provider = document.providers[spec.provider]
         values["provider"] = _embedding_backend_for(spec.provider, provider.kind)
         values["base_url"] = provider.base_url
-        values["api_key"] = os.environ.get(provider.api_key_env)
+        values["api_key"] = _api_key_for(provider)
 
     return EmbeddingConfig(**_without_env_overrides(EmbeddingConfig, values))
+
+
+def _api_key_for(provider: ProviderSpec) -> str | None:
+    """The key value for a provider entry, read from the variable it names.
+
+    `api_key_env` is unset only for `kind: none`, which has no host to send a
+    key to — see `ProviderSpec._check_api_key_env`.
+    """
+    if provider.api_key_env is None:
+        return None
+    return os.environ.get(provider.api_key_env)
 
 
 def _embedding_backend_for(name: str, kind: ProviderKind) -> EmbeddingBackend:
@@ -319,12 +341,13 @@ def _embedding_backend_for(name: str, kind: ProviderKind) -> EmbeddingBackend:
     match kind:
         case ProviderKind.OPENAI_COMPATIBLE:
             return EmbeddingBackend.OPENAI_COMPATIBLE
-        case ProviderKind.GEMINI:
+        case ProviderKind.GEMINI | ProviderKind.NONE:
             raise UnsupportedEmbeddingBackendError(
                 f"embedding.provider names {name!r}, whose kind is "
                 f"{kind.value!r} — no embeddings client is wired up for it. Use "
                 f"an {ProviderKind.OPENAI_COMPATIBLE.value!r} host or "
-                f"{EmbeddingBackend.LOCAL.value!r}."
+                f"{EmbeddingBackend.LOCAL.value!r}, which needs no key and runs "
+                f"in-process."
             )
 
 

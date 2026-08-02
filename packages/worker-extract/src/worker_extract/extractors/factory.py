@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import logging
 from functools import partial
 
 from ai.dtos import EntityResult, ExtractedReference
-from ai.providers.roles import LLMRole, create_llm_provider
+from ai.providers.roles import LLMRole, create_llm_provider, llm_role_is_disabled
+from llm_core import LLMDisabledError
 from shared.segmentation import DocumentSegments
 from worker_extract.config import ExtractStrategyMode, get_extract_settings
 from worker_extract.entities import deduplicate_entities
 from worker_extract.extractors.base import ExtractionStrategy
 from worker_extract.extractors.llm import extract_with_llm
 from worker_extract.extractors.rule_based import extract_rule_based_strategy
+
+logger = logging.getLogger(__name__)
 
 # How much body text the regex pass is expected to yield one entity from. Below
 # that rate the pass is treated as having missed, and the LLM is asked as well.
@@ -57,7 +61,11 @@ def create_extraction_strategy() -> ExtractionStrategy:
     construct an LLM provider, and every other worker builds its provider at
     startup and injects it.
     """
-    match get_extract_settings().extract_strategy:
+    mode = get_extract_settings().extract_strategy
+    if llm_role_is_disabled(LLMRole.STRUCTURED):
+        return _strategy_without_llm(mode)
+
+    match mode:
         case ExtractStrategyMode.RULE_BASED:
             return extract_rule_based_strategy
         case ExtractStrategyMode.LLM:
@@ -71,4 +79,35 @@ def create_extraction_strategy() -> ExtractionStrategy:
                     extract_with_llm,
                     provider=create_llm_provider(LLMRole.STRUCTURED),
                 ),
+            )
+
+
+def _strategy_without_llm(mode: ExtractStrategyMode) -> ExtractionStrategy:
+    """What each mode becomes when the `structured` role is `kind: none`.
+
+    The fallback mode degrades to its regex half: it already treats the model as
+    optional, and an off switch you have to remember to set twice is not an off
+    switch. `LLM` refuses instead — it was asked for explicitly, and silently
+    running the regex pass would be running something the operator did not ask
+    for, on a step whose output nothing downstream re-checks.
+    """
+    match mode:
+        case ExtractStrategyMode.RULE_BASED:
+            return extract_rule_based_strategy
+        case ExtractStrategyMode.RULE_BASED_WITH_LLM_FALLBACK:
+            logger.warning(
+                "Role %r is configured as %r, so EXTRACT_STRATEGY=%s runs its "
+                "rule-based half only; entities the regex pass misses stay missed.",
+                LLMRole.STRUCTURED.value,
+                "none",
+                mode.value,
+            )
+            return extract_rule_based_strategy
+        case ExtractStrategyMode.LLM:
+            raise LLMDisabledError(
+                f"EXTRACT_STRATEGY={mode.value} needs a model, but the "
+                f"{LLMRole.STRUCTURED.value!r} role resolves to a provider of "
+                f"kind 'none'. Use EXTRACT_STRATEGY="
+                f"{ExtractStrategyMode.RULE_BASED.value}, or point the role at a "
+                f"real provider."
             )

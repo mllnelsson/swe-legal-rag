@@ -23,7 +23,7 @@ from ai.errors import (
     UnknownLLMRoleError,
     UnsupportedEmbeddingBackendError,
 )
-from ai.providers.roles import LLMRole
+from ai.providers.roles import LLMRole, llm_role_is_disabled
 from ai.llm_config import (
     CONFIG_FILENAME,
     CONFIG_PATH_ENV,
@@ -84,6 +84,18 @@ _DOCUMENT: dict[str, Any] = {
         "dimension": 1024,
         "query_prefix": "query: ",
         "passage_prefix": "passage: ",
+    },
+}
+
+
+# The same document with the `structured` role switched off, so the tests that
+# care about a disabled provider can also assert the other roles are unaffected.
+_DOCUMENT_WITH_NONE: dict[str, Any] = {
+    **_DOCUMENT,
+    "providers": {**_DOCUMENT["providers"], "off": {"kind": "none"}},
+    "roles": {
+        **_DOCUMENT["roles"],
+        "structured": {"provider": "off", "model": "unused-model"},
     },
 }
 
@@ -300,6 +312,81 @@ class TestValidation:
 
         with pytest.raises(LLMConfigInvalidError, match="mapping"):
             load_config_document(path)
+
+
+class TestDisabledProvider:
+    """`kind: none` — a provider that is configured to not exist.
+
+    Its whole reason to be is that resolving and constructing it must succeed
+    with no credentials, so a process can run its non-LLM steps with no keys.
+    """
+
+    def test_none_kind_needs_no_api_key_env(self, tmp_path: Path) -> None:
+        document = load_config_document(_write(tmp_path, _DOCUMENT_WITH_NONE))
+
+        assert document.providers["off"].api_key_env is None
+        assert document.providers["off"].kind == ProviderKind.NONE
+
+    def test_every_other_kind_must_name_its_api_key_env(
+        self, tmp_path: Path
+    ) -> None:
+        """Making the field optional must not let a real host omit its key by
+        accident — that would resolve to `api_key=None` and fail much later."""
+        document = {
+            **_DOCUMENT,
+            "providers": {"berget": {"kind": "openai_compatible"}},
+            "defaults": {"provider": "berget"},
+        }
+
+        with pytest.raises(LLMConfigInvalidError, match="api_key_env"):
+            load_config_document(_write(tmp_path, document))
+
+    def test_role_pointed_at_it_resolves_with_no_credentials(
+        self, tmp_path: Path
+    ) -> None:
+        document = load_config_document(_write(tmp_path, _DOCUMENT_WITH_NONE))
+
+        config = resolve_role_config("structured", document)
+
+        assert config.provider == ProviderKind.NONE
+        assert config.api_key is None
+        assert config.base_url is None
+
+    def test_other_roles_are_untouched(self, tmp_path: Path) -> None:
+        """One role off is not every role off — that is what naming a provider
+        per role buys."""
+        document = load_config_document(_write(tmp_path, _DOCUMENT_WITH_NONE))
+
+        assert resolve_role_config("chat", document).provider == (
+            ProviderKind.OPENAI_COMPATIBLE
+        )
+
+    def test_llm_provider_env_disables_every_role(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The process-wide off switch, for running the pipeline with no keys."""
+        monkeypatch.setenv("LLM_PROVIDER", "none")
+        document = load_config_document(_write(tmp_path))
+
+        for role in ("structured", "chat", "elsewhere"):
+            assert resolve_role_config(role, document).provider == ProviderKind.NONE
+
+    def test_llm_role_is_disabled_reports_it(self, tmp_path: Path) -> None:
+        document = load_config_document(_write(tmp_path, _DOCUMENT_WITH_NONE))
+
+        assert llm_role_is_disabled(LLMRole.STRUCTURED, document) is True
+        assert llm_role_is_disabled(LLMRole.CHAT, document) is False
+
+    def test_embedding_cannot_use_it(self, tmp_path: Path) -> None:
+        """There is no null embedder and no need for one: `local` already
+        embeds with no host and no key."""
+        document = {
+            **_DOCUMENT_WITH_NONE,
+            "embedding": {**_DOCUMENT["embedding"], "provider": "off"},
+        }
+
+        with pytest.raises(UnsupportedEmbeddingBackendError, match="off"):
+            resolve_embedding_config(load_config_document(_write(tmp_path, document)))
 
 
 class TestDiscovery:

@@ -14,6 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai.dtos import EntityResult
+from llm_core import LLMDisabledError
 from shared.segmentation import split_document
 from worker_extract.config import ExtractStrategyMode, get_extract_settings
 from worker_extract.extractors.factory import create_extraction_strategy
@@ -41,9 +42,13 @@ def _uncached_settings(monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture
 def no_provider(monkeypatch: pytest.MonkeyPatch):
     """The two LLM modes build a provider at selection time. Selection is what
-    is under test here, not provider construction."""
+    is under test here — not provider construction, and not what the shipped
+    `llm_config.yaml` happens to assign the `structured` role."""
     monkeypatch.setattr(
         "worker_extract.extractors.factory.create_llm_provider", lambda role: None
+    )
+    monkeypatch.setattr(
+        "worker_extract.extractors.factory.llm_role_is_disabled", lambda role: False
     )
 
 
@@ -119,6 +124,59 @@ class TestStrategySelection:
 
         with pytest.raises(ValidationError, match="invalid_value"):
             create_extraction_strategy()
+
+
+class TestDisabledLLMRole:
+    """`structured` resolving to `kind: none` — no model configured at all.
+
+    The decision is taken here, at selection time, rather than by letting each
+    document hit a provider that refuses: it is the same startup moment every
+    other worker picks its provider at.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "worker_extract.extractors.factory.llm_role_is_disabled", lambda role: True
+        )
+
+    async def test_fallback_mode_degrades_to_its_regex_half(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The default mode already treats the model as optional, so an off
+        switch you have to remember to set twice is not an off switch."""
+        monkeypatch.setenv(
+            "EXTRACT_STRATEGY", ExtractStrategyMode.RULE_BASED_WITH_LLM_FALLBACK
+        )
+        strategy = create_extraction_strategy()
+
+        with patch(
+            "worker_extract.extractors.llm.extract_entities", AsyncMock()
+        ) as llm:
+            result = await strategy(split_document(_NO_ENTITIES), None)
+
+        llm.assert_not_called()
+        assert isinstance(result, EntityResult)
+
+    def test_llm_mode_refuses_at_startup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Asked for explicitly, so it is not quietly swapped for something
+        else — the worker fails to start instead."""
+        monkeypatch.setenv("EXTRACT_STRATEGY", ExtractStrategyMode.LLM)
+
+        with pytest.raises(LLMDisabledError, match="structured"):
+            create_extraction_strategy()
+
+    async def test_rule_based_mode_is_unaffected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("EXTRACT_STRATEGY", ExtractStrategyMode.RULE_BASED)
+        strategy = create_extraction_strategy()
+
+        result = await strategy(split_document(_WITH_REFERENCE), None)
+
+        assert len(result.references) == 1
 
 
 class TestStrategies:

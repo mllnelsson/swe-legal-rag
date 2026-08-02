@@ -59,6 +59,20 @@ close over it with `functools.partial`; `process_extraction()` takes the resulti
 same "build once, inject" pattern every other worker uses for its provider — see
 [worker patterns](/pipeline/worker-patterns.md).
 
+### When the `structured` role has no model
+
+If [`llm_config.yaml`](/reference/llm-config.md) resolves `structured` to `kind: none`,
+`create_extraction_strategy()` decides what that means at startup — the same moment it
+picks a provider — rather than letting each document reach one that refuses:
+
+| Value | Behaviour with no model |
+|---|---|
+| `rule_based` | Unchanged; it never built a provider |
+| `rule_based_with_llm_fallback` | Degrades to its regex half, with a warning. The mode already treats the model as optional, and an off switch you have to remember to set twice is not an off switch |
+| `llm` | **Refuses to start** (`LLMDisabledError`). It was asked for explicitly, and quietly running the regex pass instead would run something the operator did not ask for, on a step whose output nothing downstream re-checks |
+
+This is what lets the pipeline run crawl through extract with no API key configured.
+
 ### Rule-based extraction
 
 Pure functions, no I/O:

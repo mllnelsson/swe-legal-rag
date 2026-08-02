@@ -63,10 +63,10 @@ embedding:
 | Section | Purpose |
 |---|---|
 | `version` | Must equal `1` — the only version this build understands. Load fails otherwise. |
-| `providers` | Named hosts. `kind` is a `llm_core.ProviderKind` — `openai_compatible` or `gemini` — the client implementation dispatched on. `api_key_env` names the environment variable holding that host's key. `openai_compatible` also requires `base_url`: there is no built-in default, and a host missing either raises `llm_core.MissingCredentialError` at construction. |
+| `providers` | Named hosts. `kind` is a `llm_core.ProviderKind` — `openai_compatible`, `gemini` or `none` — the client implementation dispatched on. `api_key_env` names the environment variable holding that host's key, and is **required for every kind except `none`**, which has no host to send one to. `openai_compatible` also requires `base_url`: there is no built-in default, and a host missing either raises `llm_core.MissingCredentialError` at construction. |
 | `defaults` | Inherited by every role that omits the field: `provider`, `temperature`, `max_tokens`, `stream_usage`. |
 | `roles` | One entry per task. `model` is required; `provider`/`temperature`/`max_tokens`/`stream_usage` are optional per-role overrides of `defaults`. |
-| `embedding` | The embedder's `provider` (a `providers` name, or the literal `"local"` for in-process `sentence-transformers`), `model`, `dimension`, and the retrieval `query_prefix`/`passage_prefix` pair. Naming a provider whose `kind` has no embeddings client (`gemini` today) raises `ai.errors.UnsupportedEmbeddingBackendError` at resolution time, naming the offending key. |
+| `embedding` | The embedder's `provider` (a `providers` name, or the literal `"local"` for in-process `sentence-transformers`), `model`, `dimension`, and the retrieval `query_prefix`/`passage_prefix` pair. Naming a provider whose `kind` has no embeddings client (`gemini` and `none`) raises `ai.errors.UnsupportedEmbeddingBackendError` at resolution time, naming the offending key. |
 
 Every document model uses `extra="forbid"` — a typo'd or unrecognized key fails to
 load rather than silently doing nothing. A missing file is fatal
@@ -144,12 +144,55 @@ new `providers:` entry naming its `base_url` and `api_key_env` (see
 [llm-core](/packages/llm-core.md)). Loading fails with a clear message if the name
 is not declared.
 
+## Running with no LLM
+
+`kind: none` declares a provider that is configured to not exist. It resolves and
+constructs with no `base_url` and no `api_key_env`, and raises
+`llm_core.LLMDisabledError` if anything calls it. That ordering is the whole point: a
+process whose LLM steps are switched off starts normally instead of dying on a
+credential it will never use, which is otherwise what happens — every worker builds
+its provider in `subscribe()`, before the first message.
+
+Two ways to reach it:
+
+```yaml
+providers:
+  off:
+    kind: none          # no base_url, no api_key_env
+
+roles:
+  summarize:
+    provider: off       # this role only
+```
+
+or `LLM_PROVIDER=none` in the environment, which disables **every** role at once and
+needs no YAML change. The masking warning fires, correctly — that is exactly what is
+happening.
+
+What each pipeline step then does:
+
+| Step | Behaviour |
+|---|---|
+| [crawl](/pipeline/crawl.md), [download](/pipeline/download.md), [parse](/pipeline/parse.md) | Unaffected — no LLM in the path |
+| [metadata](/pipeline/metadata.md) | Starts. The rule-based pass runs; the LLM fallback raises and is caught, so the document is saved with whatever the regex pass found. Expect one warning per incomplete document |
+| [extract](/pipeline/extract.md) | `EXTRACT_STRATEGY=rule_based` builds nothing. The default fallback mode degrades to its regex half at startup, with a warning. `EXTRACT_STRATEGY=llm` refuses to start |
+| [chunk](/pipeline/chunk.md) | Starts, then **fails every document**. The summary is prepended to every chunk, so there is no honest degraded mode — this is where a no-LLM run stops |
+| [embed](/pipeline/embed.md) | Unaffected when `embedding.provider` is `local`, which needs no host and no key. A hosted embedder still needs its key; `kind: none` is refused for `embedding.provider` |
+| [API](/packages/api.md) | Starts; `/api/chat` fails at the first model call |
+
+`ai.llm_role_is_disabled(role)` answers "is this role `kind: none`?" without building
+a provider, for the callers that have a real no-model path and want to choose it at
+startup, where every other provider decision is made. worker-extract is the only one
+today. Everything else just builds the provider and lets it refuse.
+
+See [live testing](/playbooks/live-testing.md) for the commands.
+
 ## Env-var registry
 
 | Variable | Scope | Effect |
 |---|---|---|
 | `LLM_CONFIG_PATH` | Global | Points at a config file directly, skipping the walk-up-from-cwd discovery. A missing file at this path is fatal. |
-| `LLM_PROVIDER` | Every role | Overrides every role's provider **kind** (`openai_compatible` or `gemini` — a `ProviderKind` value, not a `providers:` name), flattening them onto one host. Logs a warning when it masks a role's own `provider:`. |
+| `LLM_PROVIDER` | Every role | Overrides every role's provider **kind** (`openai_compatible`, `gemini` or `none` — a `ProviderKind` value, not a `providers:` name), flattening them onto one host. Logs a warning when it masks a role's own `provider:`. `LLM_PROVIDER=none` is the process-wide LLM off switch — see [running with no LLM](#running-with-no-llm). |
 | `LLM_MODEL_<ROLE>` | One role | Overrides that role's `model`. Exists for free for any role declared in the YAML — `LLM_MODEL_STRUCTURED`, `LLM_MODEL_SUMMARIZE`, `LLM_MODEL_CHAT` today. |
 | `LLM_MODEL` | — | Deliberately ignored by role resolution. Pre-dates roles. |
 | `LLM_TEMPERATURE` | Every role | Overrides `temperature` for whichever role is being resolved. |

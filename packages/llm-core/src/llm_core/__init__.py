@@ -1,5 +1,6 @@
 from llm_core._config import LLMConfig, ProviderKind, create_provider
 from llm_core._exceptions import (
+    LLMDisabledError,
     LLMError,
     MaxIterationsError,
     MissingCredentialError,
@@ -72,6 +73,7 @@ __all__ = [
     "LLMError",
     "ProviderError",
     "MissingCredentialError",
+    "LLMDisabledError",
     "ToolExecutionError",
     "MaxIterationsError",
 ]

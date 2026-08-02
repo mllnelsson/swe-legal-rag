@@ -9,6 +9,12 @@
 version: 1
 
 # Declared once, referenced by name from `roles` and `embedding`.
+#
+# `kind` is the wire protocol: openai_compatible, gemini, or none. A `none`
+# provider needs no base_url and no api_key_env — it constructs without
+# credentials and raises LLMDisabledError if anything calls it, which is how a
+# process runs its non-LLM steps with no keys configured. Declare one and point
+# a single role at it, or set LLM_PROVIDER=none to disable every role at once.
 providers:
   berget:
     kind: openai_compatible

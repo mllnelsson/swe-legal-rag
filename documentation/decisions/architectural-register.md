@@ -57,11 +57,19 @@ selection](/decisions/llm-model-selection.md), embedding
   entry; that is the price of a misspelled role being a type error. See
   [the decision](/decisions/llm-model-selection.md).
 - **A provider *kind* is a closed enum; a provider *name* is arbitrary** —
-  `llm_core.ProviderKind` (`openai_compatible`, `gemini`) is the set of client
+  `llm_core.ProviderKind` (`openai_compatible`, `gemini`, `none`) is the set of client
   implementations, and dispatch on it is exhaustive, so adding a kind without wiring it
   up is a type error. The names under `providers:` in the YAML are free-form labels for
   hosts. The same split governs roles: `LLMRole` is closed, the `roles:` keys are file
   data. See [llm_config.yaml](/reference/llm-config.md).
+- **"No model here" is a provider kind, not a missing configuration** — `kind: none`
+  builds a `NullProvider` that constructs without credentials and raises
+  `LLMDisabledError` on use. Modelling it as a kind rather than an `LLM_ENABLED` flag
+  keeps the one exhaustive dispatch instead of putting a second switch beside it, and
+  gets per-role granularity for free — a flag would only ever be process-wide. The
+  ordering is the point: every worker builds its provider in `subscribe()`, so without
+  this the LLM-free steps cannot run without a key for the steps that were never going
+  to execute. See [running with no LLM](/reference/llm-config.md).
 - **No built-in default host or per-vendor credential fields** — a provider requires
   `base_url` and `api_key`, and refuses to start without them. A defaulted base URL
   sends traffic to the wrong host silently, which is harder to diagnose than a refusal.

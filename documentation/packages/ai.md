@@ -24,7 +24,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `embedding.py` | `EmbeddingProvider` Protocol, `create_embedding_provider` factory, `verify_embedding_dimension` |
 | `providers/openai_compatible_embeddings.py` | `OpenAiCompatibleEmbeddingProvider` — any OpenAI-compatible embeddings endpoint (Berget hosted, by default) |
 | `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers` (offline dev/test fallback) |
-| `providers/roles.py` | `LLMRole` (the closed role set) + `create_llm_provider(role)` (per-task model assignment, below) |
+| `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
 | `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step` (see [worker patterns](/pipeline/worker-patterns.md)) |
 | `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |
 | `prompts/_templates.py` | The five template constants |
@@ -135,6 +135,14 @@ sites pass.
 Each composition root constructs the role-appropriate provider(s) once at startup and
 threads them into the call sites via the `provider=` keyword — no hidden global default
 in production.
+
+`llm_role_is_disabled(role, document=None)` answers whether the YAML assigns a role
+`kind: none` — no model at all — without building anything. It is for the callers that
+have a genuine no-model path and want to choose it at startup:
+[worker-extract](/pipeline/extract.md) is the only one today. Everything else builds the
+provider and lets it refuse, since constructing a `none` provider always succeeds and
+raises `LLMDisabledError` at the call that wanted a model. See
+[running with no LLM](/reference/llm-config.md).
 
 **Gemini caveat.** The defaults above are Berget model IDs and will not resolve against
 Gemini's API, so pointing a role at `provider: gemini` means changing its `model:` in the

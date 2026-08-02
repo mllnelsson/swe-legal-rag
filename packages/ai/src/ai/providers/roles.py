@@ -20,11 +20,11 @@ from __future__ import annotations
 
 from enum import StrEnum, auto
 
-from llm_core import LLMProvider, create_provider
+from llm_core import LLMProvider, ProviderKind, create_provider
 
 from ai.llm_config import LLMConfigDocument, resolve_role_config
 
-__all__ = ["LLMRole", "create_llm_provider"]
+__all__ = ["LLMRole", "create_llm_provider", "llm_role_is_disabled"]
 
 
 class LLMRole(StrEnum):
@@ -46,3 +46,16 @@ def create_llm_provider(
     Raises `UnknownLLMRoleError` if the file declares no such role.
     """
     return create_provider(resolve_role_config(role, document))
+
+
+def llm_role_is_disabled(
+    role: LLMRole, document: LLMConfigDocument | None = None
+) -> bool:
+    """Whether `llm_config.yaml` assigns `role` no model at all — `kind: none`.
+
+    For the callers that have a genuine no-model path and want to choose it at
+    startup, where every other provider decision is made. Everyone else should
+    just build the provider: constructing a `none` one always succeeds, and it
+    raises `LLMDisabledError` at the call that wanted a model.
+    """
+    return resolve_role_config(role, document).provider is ProviderKind.NONE
