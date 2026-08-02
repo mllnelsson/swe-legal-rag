@@ -5,7 +5,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai import EmbeddingProvider
+from ai import SPECIAL_TOKEN_COUNT, CountTokens, EmbeddingProvider
 from shared.pipeline import run_pipeline_step
 from shared.repositories import ChunkRepo, TaskRepo
 from worker_embed.errors import (
@@ -26,6 +26,8 @@ async def process_embedding(
     session: AsyncSession,
     passage_prefix: str,
     expected_dimension: int,
+    count_tokens: CountTokens,
+    max_input_tokens: int,
 ) -> None:
     """Embed every chunk of a document.
 
@@ -40,6 +42,14 @@ async def process_embedding(
     configured for rather than against a process-wide constant that nothing
     ties to it. `ai.verify_embedding_dimension` has already reconciled that
     width with `shared.config.EMBEDDING_DIMENSION` at startup.
+
+    An input longer than `max_input_tokens` is *warned about and embedded anyway*.
+    The embedding model truncates it silently, so the warning is the only signal
+    that a chunk's tail never reached its vector — but one over-long chunk is
+    degraded retrieval for that chunk alone, whereas raising would fail the
+    document's terminal step and have the message redelivered forever. The chunk
+    worker is where the length is actually decided; this is the check that says so
+    out loud.
     """
 
     async def body() -> None:
@@ -53,6 +63,19 @@ async def process_embedding(
             passage_prefix + (chunk.contextual_text or chunk.chunk_text)
             for chunk in chunks
         ]
+
+        for chunk, text in zip(chunks, texts):
+            length = count_tokens(text) + SPECIAL_TOKEN_COUNT
+            if length > max_input_tokens:
+                logger.warning(
+                    "Chunk %s (document %s, index %d) is %d tokens and will be "
+                    "silently truncated to %d by the embedding model",
+                    chunk.id,
+                    document_id,
+                    chunk.chunk_index,
+                    length,
+                    max_input_tokens,
+                )
 
         vectors = await embedding_provider.embed(texts)
 

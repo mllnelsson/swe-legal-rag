@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # Local Development Environment
@@ -255,6 +255,23 @@ uv run --package worker-embed python -m worker_embed
   [ai package](/packages/ai.md). If the `summarize` role is pointed at
   `provider: gemini`, requires `GEMINI_API_KEY` and a valid Gemini model on that role
   instead.
+- **Needs the embedding model's tokenizer files at startup**, which it did not before.
+  `subscribe()` builds an `ai.EmbeddingRuler` (`ai.create_embedding_ruler()`) to derive
+  its chunk token budget — see [embedding window](/decisions/embedding-window.md) — and
+  `AutoTokenizer.from_pretrained("intfloat/multilingual-e5-large")` contacts the
+  HuggingFace hub unless the tokenizer files are already in the local HF cache. A machine
+  with no hub access and no warm cache fails to start. Run the worker once with hub
+  access to populate `~/.cache/huggingface`, or pre-warm it directly:
+  `uv run --package worker-chunk python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('intfloat/multilingual-e5-large')"`.
+  The [container path](#running-in-containers) below has the same requirement and no
+  built-in cache — see its note.
+- **Or opt out entirely**: `EMBEDDING_WINDOW_OVERRIDE=512` starts the worker with no
+  tokenizer at all, taking the window on trust and estimating chunk sizes from character
+  counts. Verified to start with an empty `HF_HOME` and `HF_HUB_OFFLINE=1`, where the
+  default path fails with `LocalEntryNotFoundError`. The number must match the model —
+  512 is correct for e5-large — and chunks come out roughly half size, so this is the
+  fallback for a machine that cannot reach the tokenizer, not a default. See
+  [embedding window](/decisions/embedding-window.md).
 
 **worker-embed notes:**
 - Default `EMBEDDING_PROVIDER=berget` calls Berget's hosted
@@ -289,6 +306,16 @@ a publish is a direct call into a handler registered in the *same* process, so e
 worker container would hold an empty broker and fail on its first publish. Seven
 containers matching the Cloud Run topology need a real queue backend first — that is
 [story 12 / GCP layout](/reference/gcp-layout.md) territory.
+
+**No HuggingFace cache is baked into the image or mounted by Compose.** The `pipeline`
+container's chunk step now needs the e5 tokenizer files at startup (see the worker-chunk
+note above), and neither the Dockerfile nor `./data:/data` provides them — `./data` is
+the PDF/trace mount, not the HF cache. Until this is added, either build the tokenizer
+into the image with a `RUN` layer after `uv sync` (`python -c "from transformers import
+AutoTokenizer; AutoTokenizer.from_pretrained('intfloat/multilingual-e5-large')"`) or mount
+an `HF_HOME` volume pointing at a warm host cache. Without one, `docker compose run --rm
+pipeline` fails at the chunk step's startup check the first time it runs with no network
+egress to the hub.
 
 ```bash
 docker compose build

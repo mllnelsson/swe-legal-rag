@@ -1,6 +1,7 @@
 from __future__ import annotations
 from shared.enums import ChunkSection, PipelineStep
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,9 +11,22 @@ import pytest
 from shared.dtos.chunk import ChunkRead
 from shared.dtos.document import DocumentRead
 from shared.dtos.task import TaskRead
+from worker_chunk.budget import ChunkBudget
 from worker_chunk.service import process_chunking
 
 _NOW = datetime.now(tz=timezone.utc)
+
+
+def _count_words(text: str) -> int:
+    """Words stand in for the embedding model's tokens.
+
+    The service takes its counter as a parameter so the unit suite never loads a
+    tokenizer; the budget below is in the same units.
+    """
+    return len(text.split())
+
+
+_BUDGET = ChunkBudget(max_tokens=50, overlap_tokens=5, summary_reserve_tokens=20)
 
 
 def _make_document(raw_text: str | None = "Swedish legal text.") -> DocumentRead:
@@ -103,6 +117,8 @@ class TestProcessChunkingSuccess:
                 task_repo=task_repo,
                 queue_publisher=publisher,
                 session=session,
+                count_tokens=_count_words,
+                budget=_BUDGET,
             )
 
         document_repo.update.assert_awaited_once()
@@ -147,6 +163,8 @@ class TestProcessChunkingSuccess:
                 task_repo=task_repo,
                 queue_publisher=publisher,
                 session=session,
+                count_tokens=_count_words,
+                budget=_BUDGET,
             )
 
         chunk_repo.delete_by_document_id.assert_awaited_once_with(session, document.id)
@@ -199,12 +217,129 @@ class TestProcessChunkingSuccess:
                 task_repo=task_repo,
                 queue_publisher=publisher,
                 session=session,
+                count_tokens=_count_words,
+                budget=_BUDGET,
             )
 
         assert len(captured_dtos) > 0
         for dto in captured_dtos:
             assert dto.contextual_text is not None
             assert dto.contextual_text.startswith(canned_summary)
+
+    async def test_long_summary_is_truncated_before_storage_and_prepending(
+        self,
+    ) -> None:
+        # One summary value: what is stored is what was embedded. Truncating only
+        # on the way into contextual_text would leave documents.summary claiming
+        # a text that never reached a vector.
+        document = _make_document("Kyrkoherden överklagade beslutet.")
+        task = _make_task()
+        embed_task = TaskRead(**{**_make_task().model_dump(), "step": "embed"})
+
+        captured_dtos: list = []
+
+        async def capture_bulk_create(_session, dtos: list) -> list:
+            captured_dtos.extend(dtos)
+            return []
+
+        document_repo = MagicMock()
+        document_repo.get_by_id = AsyncMock(return_value=document)
+        document_repo.update = AsyncMock(return_value=document)
+
+        chunk_repo = MagicMock()
+        chunk_repo.delete_by_document_id = AsyncMock(return_value=0)
+        chunk_repo.bulk_create = AsyncMock(side_effect=capture_bulk_create)
+
+        task_repo = MagicMock()
+        task_repo.get_by_id = AsyncMock(return_value=task)
+        task_repo.get_by_document_and_step = AsyncMock(return_value=None)
+        task_repo.update_status = AsyncMock(return_value=task)
+        task_repo.create = AsyncMock(return_value=embed_task)
+
+        publisher = MagicMock()
+        session = MagicMock()
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+
+        long_summary = " ".join(f"Mening nummer {i} om beslutet." for i in range(20))
+
+        with patch(
+            "worker_chunk.service.summarize_document", new=AsyncMock()
+        ) as mock_summarize:
+            from ai.dtos import SummarizeResult
+
+            mock_summarize.return_value = SummarizeResult(summary=long_summary)
+            await process_chunking(
+                document_id=document.id,
+                task_id=task.id,
+                document_repo=document_repo,
+                chunk_repo=chunk_repo,
+                task_repo=task_repo,
+                queue_publisher=publisher,
+                session=session,
+                count_tokens=_count_words,
+                budget=_BUDGET,
+            )
+
+        stored_summary = document_repo.update.call_args[0][2].summary
+        assert stored_summary != long_summary
+        assert _count_words(stored_summary) <= _BUDGET.summary_reserve_tokens
+        assert captured_dtos
+        for dto in captured_dtos:
+            assert dto.contextual_text is not None
+            assert dto.contextual_text.startswith(stored_summary)
+
+    async def test_chunk_over_the_budget_is_warned_about(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A single sentence larger than the budget is emitted whole, and the
+        # embedding model will drop its tail. The step still succeeds.
+        document = _make_document("ord " * 200)
+        task = _make_task()
+        embed_task = TaskRead(**{**_make_task().model_dump(), "step": "embed"})
+
+        document_repo = MagicMock()
+        document_repo.get_by_id = AsyncMock(return_value=document)
+        document_repo.update = AsyncMock(return_value=document)
+
+        chunk_repo = MagicMock()
+        chunk_repo.delete_by_document_id = AsyncMock(return_value=0)
+        chunk_repo.bulk_create = AsyncMock(return_value=[])
+
+        task_repo = MagicMock()
+        task_repo.get_by_id = AsyncMock(return_value=task)
+        task_repo.get_by_document_and_step = AsyncMock(return_value=None)
+        task_repo.update_status = AsyncMock(return_value=task)
+        task_repo.create = AsyncMock(return_value=embed_task)
+
+        publisher = MagicMock()
+        session = MagicMock()
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+
+        with patch(
+            "worker_chunk.service.summarize_document", new=AsyncMock()
+        ) as mock_summarize:
+            from ai.dtos import SummarizeResult
+
+            mock_summarize.return_value = SummarizeResult(summary="Sammanfattning.")
+            with caplog.at_level(logging.WARNING, logger="worker_chunk.service"):
+                await process_chunking(
+                    document_id=document.id,
+                    task_id=task.id,
+                    document_repo=document_repo,
+                    chunk_repo=chunk_repo,
+                    task_repo=task_repo,
+                    queue_publisher=publisher,
+                    session=session,
+                    count_tokens=_count_words,
+                    budget=_BUDGET,
+                )
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert str(document.id) in warnings[0].getMessage()
+        chunk_repo.bulk_create.assert_awaited_once()
 
     async def test_publishes_to_embed_queue(self) -> None:
         document = _make_document("Legal text.")
@@ -244,6 +379,8 @@ class TestProcessChunkingSuccess:
                 task_repo=task_repo,
                 queue_publisher=publisher,
                 session=session,
+                count_tokens=_count_words,
+                budget=_BUDGET,
                 next_topic=PipelineStep.EMBED,
             )
 
@@ -278,6 +415,8 @@ class TestProcessChunkingErrorCases:
             task_repo=task_repo,
             queue_publisher=publisher,
             session=session,
+            count_tokens=_count_words,
+            budget=_BUDGET,
         )
 
         update_calls = task_repo.update_status.call_args_list
@@ -310,6 +449,8 @@ class TestProcessChunkingErrorCases:
             task_repo=task_repo,
             queue_publisher=publisher,
             session=session,
+            count_tokens=_count_words,
+            budget=_BUDGET,
         )
 
         update_calls = task_repo.update_status.call_args_list
@@ -338,6 +479,8 @@ class TestProcessChunkingErrorCases:
             task_repo=task_repo,
             queue_publisher=publisher,
             session=session,
+            count_tokens=_count_words,
+            budget=_BUDGET,
         )
 
         document_repo.get_by_id.assert_not_awaited()
@@ -375,6 +518,8 @@ class TestProcessChunkingErrorCases:
                     task_repo=task_repo,
                     queue_publisher=publisher,
                     session=session,
+                    count_tokens=_count_words,
+                    budget=_BUDGET,
                 )
 
         update_calls = task_repo.update_status.call_args_list

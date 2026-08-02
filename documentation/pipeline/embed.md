@@ -19,24 +19,43 @@ bulk UPDATE on the chunks table (no downstream publish).
 |---|---|
 | `config.py` | `EmbedSettings(BaseSettings)` — `EMBED_TOPIC` (`PipelineStep.EMBED`). `get_embed_settings()` is `@lru_cache`. |
 | `service.py` | `process_embedding()` async function — orchestration via functional DI. |
-| `__main__.py` | Entry point — `subscribe()` builds the embedding provider, runs `ai.verify_embedding_dimension()` before registering the handler (see [embedding dimension](/decisions/embedding-dimension.md)), and passes the observed dimension into every `process_embedding()` call; `main()` calls `shared.worker.serve()`. |
+| `__main__.py` | Entry point — `subscribe()` builds the embedding provider, runs `ai.verify_embedding_dimension()` (see [embedding dimension](/decisions/embedding-dimension.md)) and `ai.verify_embedding_window()` (see [embedding window](/decisions/embedding-window.md)) before registering the handler, and passes the observed dimension and window into every `process_embedding()` call; `main()` calls `shared.worker.serve()`. |
 
 ## `process_embedding()`
 
 `process_embedding(document_id, task_id, chunk_repo, task_repo, embedding_provider,
-session, passage_prefix, expected_dimension)` defines a `body()`:
+session, passage_prefix, expected_dimension, count_tokens, max_input_tokens)` defines a
+`body()`:
 
 1. Fetches all chunks via `chunk_repo.get_by_document_id(...)` — raises `NoChunksError`
    if empty (the chunk worker must run first).
 2. Extracts embed texts: `passage_prefix + (chunk.contextual_text or chunk.chunk_text)`
    per chunk.
-3. Calls `embedding_provider.embed(texts)` — a single batch call for all chunks. The
-   default provider is [Berget-hosted](/decisions/embedding-hosting.md); `local`
-   (`sentence-transformers`) remains available.
-4. Validates: vector count matches chunk count (`EmbeddingCountMismatchError`); each
+3. For each text, checks `count_tokens(text) + SPECIAL_TOKEN_COUNT` against
+   `max_input_tokens` and logs a WARNING naming the chunk, document and token count for
+   any that exceed it — see [input-length warning](#input-length-warning) below.
+4. Calls `embedding_provider.embed(texts)` — a single batch call for all chunks. `local`
+   (`sentence-transformers`, in-process) and `berget` (hosted) are both fully supported;
+   which one runs is `embedding.provider` in
+   [`llm_config.yaml`](/reference/llm-config.md) — see [embedding
+   hosting](/decisions/embedding-hosting.md) for the trade-offs between them.
+5. Validates: vector count matches chunk count (`EmbeddingCountMismatchError`); each
    vector is exactly `expected_dimension` (`EmbeddingDimensionError`).
-5. Calls `chunk_repo.update_embeddings(session, [(chunk_id, vector), ...])` — a bulk
+6. Calls `chunk_repo.update_embeddings(session, [(chunk_id, vector), ...])` — a bulk
    UPDATE of the `embedding` column only.
+
+### Input-length warning
+
+`count_tokens` and `max_input_tokens` are both required, with no defaults — like
+`expected_dimension`, they describe the model actually configured rather than a
+process-wide constant nothing ties to it. An input longer than `max_input_tokens` is
+**warned about and embedded anyway, untruncated** — never raised. The embedding model
+truncates it silently regardless, so the warning is the only signal that a chunk's tail
+never reached its vector, but one over-long chunk is degraded retrieval for that chunk
+alone, whereas raising would fail the document's terminal step and have the message
+redelivered forever. The [chunk worker](/pipeline/chunk.md) is where a chunk's length is
+actually decided, via its own token budget — this check is what says out loud, at embed
+time, whether that budget held.
 
 `expected_dimension` is a required parameter, supplied by `__main__.py` from the width
 `verify_embedding_dimension` actually observed the configured model producing — not read
@@ -44,6 +63,19 @@ back from `shared.config.EMBEDDING_DIMENSION` inside the service. `verify_embedd
 has already reconciled that constant with the resolved `EmbeddingConfig` at startup (see
 [embedding dimension](/decisions/embedding-dimension.md)); this check validates each
 batch against the provider that produced it.
+
+`max_input_tokens` is supplied the same way, but from `ai.verify_embedding_window()`
+rather than a declared constant: `__main__.py` builds an `ai.EmbeddingRuler`
+(`ai.create_embedding_ruler()`) and calls
+`verify_embedding_window(ruler, reserved_tokens=ruler.count_tokens(passage_prefix) +
+SPECIAL_TOKEN_COUNT)`, logs `Embedding sequence window: <n> tokens`, and threads
+`ruler.count_tokens` and the returned window into every `process_embedding()` call. The
+dimension is declared in `llm_config.yaml` because the `chunks.embedding` column must
+independently agree with it; the sequence window has no such counterpart, so — as with
+the [chunk worker's](/pipeline/chunk.md) budget — it is read off the tokenizer instead of
+declared anywhere. See [embedding window](/decisions/embedding-window.md) for the full
+rationale; this is the principle's second instance in this codebase, after
+`embedding.dimension` vs. the observed model width above.
 
 ## The passage prefix
 

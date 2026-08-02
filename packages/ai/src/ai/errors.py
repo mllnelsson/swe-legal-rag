@@ -18,6 +18,18 @@ class EmbeddingDimensionMismatchError(AiError):
     """
 
 
+class EmbeddingWindowError(AiError):
+    """The embedding model's sequence window is unusable or cannot be observed.
+
+    Raised at startup rather than at embed time. The window is declared nowhere —
+    it is read off the tokenizer — so this is the only place a model whose
+    tokenizer config omits `model_max_length`, or whose window is too small for
+    the fixed overhead, can be caught. Text that overruns the window is truncated
+    silently by the embedding model, which is why an unobservable window must
+    stop the process instead of being guessed at.
+    """
+
+
 class UnsupportedEmbeddingBackendError(AiError):
     """`embedding.provider` names a host whose kind has no embeddings client.
 

@@ -3,7 +3,7 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # Architectural Decision Register
@@ -11,8 +11,9 @@ timestamp: 2026-08-01T00:00:00Z
 A consolidated register of the system-shaping decisions. Model and embedding decisions
 have their own records: [per-task LLM model and provider
 selection](/decisions/llm-model-selection.md), embedding
-[model](/decisions/embedding-model.md), [hosting](/decisions/embedding-hosting.md) and
-[dimension](/decisions/embedding-dimension.md); the mandatory crawl
+[model](/decisions/embedding-model.md), [hosting](/decisions/embedding-hosting.md),
+[dimension](/decisions/embedding-dimension.md) and [sequence
+window](/decisions/embedding-window.md); the mandatory crawl
 [tag filter](/decisions/tag-filter.md) is also separate. All entries below are
 **Accepted**.
 

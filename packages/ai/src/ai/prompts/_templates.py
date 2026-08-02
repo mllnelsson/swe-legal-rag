@@ -160,12 +160,15 @@ ENTITY_EXTRACTION = PromptTemplate(
 
 _DOCUMENT_SUMMARIZATION_SYSTEM = """\
 Du är ett system som sammanfattar svenska kyrkorättsliga beslut.
-Skriv en kortfattad sammanfattning på svenska (2–4 meningar) som fångar:
+Skriv en kortfattad sammanfattning på svenska (högst 3 meningar och högst 60 ord)
+som fångar:
 - Ärendets kärna och det centrala beslutet
 - Berörda parter (roller, inte nödvändigtvis namn)
 - Beslutets utfall
 
-Returnera enbart löpande text på svenska, inga rubriker eller JSON."""
+Returnera enbart löpande text på svenska, inga rubriker eller JSON.
+Överskrid inte 60 ord — sammanfattningen används som inbäddningskontext för varje
+textstycke och kapas annars."""
 
 _DOCUMENT_SUMMARIZATION_USER = """\
 Dokumenttext:

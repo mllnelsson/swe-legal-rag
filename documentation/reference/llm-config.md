@@ -45,6 +45,7 @@ roles:
     model: mistralai/Mistral-Small-3.2-24B-Instruct-2506
   summarize:
     model: mistralai/Mistral-Medium-3.5-128B
+    max_tokens: 256            # coarse stop on runaway generation — see below
   chat:
     model: zai-org/GLM-5.2
     # provider: gemini        # optional per-role override of defaults.provider
@@ -56,6 +57,7 @@ embedding:
   provider: berget            # a name from `providers`, or the literal "local"
   model: intfloat/multilingual-e5-large
   dimension: 1024
+  # No `max_sequence_tokens` key — deliberately. See below.
   query_prefix: "query: "
   passage_prefix: "passage: "
 ```
@@ -73,6 +75,31 @@ load rather than silently doing nothing. A missing file is fatal
 (`LLMConfigNotFoundError`): there is no built-in fallback model set, deliberately,
 because a silent fallback is how the documented models and the ones actually running
 have already drifted apart once (see [LLM model selection](/decisions/llm-model-selection.md)).
+
+## `summarize.max_tokens`
+
+The `summarize` role sets `max_tokens: 256`, unlike the other roles which leave it at
+`defaults.max_tokens: null`. The document summary this role produces is prepended to
+every chunk before embedding, so an unbounded summary silently displaces chunk text
+inside the embedding model's window rather than overflowing it. `256` is a coarse stop on
+runaway generation, sized so a compliant ~60-word Swedish summary is never cut by it —
+it is not the enforced ceiling. That ceiling is
+[worker-chunk](/pipeline/chunk.md)'s `truncate_summary()`, applied after the LLM call,
+because a provider-side cut at `max_tokens` lands mid-word and mid-sentence, which a
+purpose-built truncation function does not. See [embedding
+window](/decisions/embedding-window.md) for the full budget this protects.
+
+## No sequence-window key under `embedding:`
+
+`embedding.dimension` is declared because a second artefact — the `chunks.embedding`
+column — must independently agree with it, and nothing else can reconcile the two. The
+embedding model's max sequence length has no such counterpart: nothing outside the
+process is constrained by it, so a declared `max_sequence_tokens` key could only ever
+drift out of step with the tokenizer that actually enforces it. Instead,
+[worker-chunk](/pipeline/chunk.md) and [worker-embed](/pipeline/embed.md) read it off
+`AutoTokenizer.from_pretrained(embedding.model).model_max_length` at startup via
+`ai.create_embedding_ruler()` and `ai.verify_embedding_window()`. See [embedding
+window](/decisions/embedding-window.md).
 
 ## API keys are never in the YAML
 
@@ -204,6 +231,7 @@ See [live testing](/playbooks/live-testing.md) for the commands.
 | `EMBEDDING_PROVIDER` | Embedding | Overrides `embedding.provider`. Takes an `EmbeddingBackend` **kind** (`openai_compatible` or `local`) rather than a `providers:` name — setting it to a host name like `berget` is not valid. |
 | `EMBEDDING_MODEL` | Embedding | Overrides `embedding.model`. |
 | `EMBEDDING_DIMENSION` | Embedding | Overrides `embedding.dimension`. Must agree with `embedding.dimension` and the `chunks.embedding` column width — see [embedding dimension](/decisions/embedding-dimension.md). |
+| `EMBEDDING_WINDOW_OVERRIDE` | Embedding | **Overrides nothing in the file** — there is no `embedding:` key for the sequence window, by design. Set it and no tokenizer is loaded: the window is this number and chunk sizes are estimated from character counts, roughly halving them. For a process that cannot reach the tokenizer; the number's correctness is the operator's, and it is logged at WARNING. See [embedding window](/decisions/embedding-window.md). |
 
 All of these are optional. Leave them unset in `.env` unless deliberately overriding
 the file — a stale value left over from a previous experiment silently wins over the

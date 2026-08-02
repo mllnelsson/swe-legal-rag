@@ -14,6 +14,12 @@ dependencies = [
     # transitively via sentence-transformers too, but a direct import is a direct
     # dependency. The Intel Mac ceiling is pinned in the root pyproject.
     "numpy",
+    # Imported directly by ai.tokenization to measure text in the embedding
+    # model's own tokens. Same story as numpy: transitive via
+    # sentence-transformers, but a direct import is a direct dependency. No upper
+    # bound here — the Intel Mac ceiling is pinned in the root pyproject, and a
+    # second ceiling would fight it.
+    "transformers>=4.40",
 ]
 
 [tool.uv.sources]

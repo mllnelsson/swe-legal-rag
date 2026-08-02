@@ -3,7 +3,7 @@ type: Decision
 title: Appendices are labelled, not dropped
 description: Why appended lower-instance decisions stay in the index with a section marker rather than being discarded or left undistinguished.
 tags: [segmentation, appendix, bilaga, chunking, extraction]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # Appendices are labelled, not dropped
@@ -58,7 +58,45 @@ columns, and no `EntityType` for a deciding body was added. Lower-instance ident
 (`SS 2025-0135`, `SS § 70`) are not extracted.
 
 Nothing in the [PRD](/prd.md) asks for it, and the anchors have only been verified
-against the corpus sample — not all ~1073 documents. Revisit once segmentation has run
-over the full corpus and the `Bilaga` layout is known to hold. Until then the appendix
-is retrievable prose, correctly attributed, which is enough to answer questions about
-the instance below.
+against the corpus sample — not all ~1073 documents. Until then the appendix is
+retrievable prose, correctly attributed, which is enough to answer questions about the
+instance below.
+
+### The shape it would take
+
+The candidate design is **one [`documents`](/data-model/documents.md) row per appendix**,
+related to the decision it was appealed from, rather than more columns on the parent. It
+is an evolution of this decision, not an addition to it: `chunks.section` and
+`appendix_label` largely dissolve into the relation, and
+[body-first retrieval](/decisions/body-first-retrieval.md) becomes a filter on document
+kind rather than a chunk column.
+
+What it unlocks that `section` structurally cannot:
+
+* The prior instance carries its own metadata — deciding body, date, diarienummer —
+  instead of being anonymous prose.
+* Lower-instance citations gain a resolution target, so `SS 2025-0135` can travel the
+  existing [document references](/data-model/document-references.md) machinery.
+* Aggregate questions over the instance below become expressible.
+
+### What blocks it
+
+`documents` is one row per PDF, and an appendix has no PDF of its own:
+
+| Assumption | Why an appendix breaks it |
+|---|---|
+| `source_url` UNIQUE is the dedup key | An appendix has no URL — needs nullability plus a document kind, or a synthetic URL |
+| `gcs_uri` points at the row's own PDF | The appendix lives inside the parent's; citation honesty requires parent PDF plus an offset range, per the [parse worker](/pipeline/parse.md) |
+| `tasks` is unique on `(document_id, step)` over a fixed `PIPELINE` | An appendix row never crawls, downloads or parses |
+
+The payoff also depends on lower-instance metadata extraction existing. Without it an
+appendix row is a text blob with a parent FK — more machinery than `chunks.section` for
+the same answers.
+
+### Revisit when both hold
+
+1. Segmentation has run over the full corpus and the `Bilaga` layout is known to hold —
+   an identity model built on unverified anchors inherits their failure modes.
+2. A real query has appeared that the current model cannot answer. *"Vad beslutade
+   stiftet?"* is answerable today from appendix chunks; *"which stift is overturned most
+   often?"* is not, and that class of question is what justifies the table.

@@ -174,6 +174,10 @@ class TestDocumentSummarization:
         system = DOCUMENT_SUMMARIZATION.system_prompt
         assert "svenska" in system.lower()
         assert "sammanfattning" in system.lower()
+        # The summary is prepended to every chunk, so its length is budgeted
+        # against the embedding window. Changing the reserve without changing the
+        # prompt should fail here.
+        assert "60 ord" in system
 
     def test_very_long_raw_text(self):
         long_text = _LEGAL_TEXT * 100

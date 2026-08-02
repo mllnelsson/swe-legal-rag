@@ -5,7 +5,6 @@ requires-python = ">=3.12"
 dependencies = [
     "shared",
     "ai",
-    "tiktoken>=0.9",
 ]
 
 [tool.uv.sources]

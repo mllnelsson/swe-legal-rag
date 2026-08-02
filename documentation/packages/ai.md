@@ -22,6 +22,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `services.py` | Five async service functions (below) |
 | `llm_config.py` | Reads `llm_config.yaml` — document models, discovery, and role/embedding resolution |
 | `embedding.py` | `EmbeddingProvider` Protocol, `create_embedding_provider` factory, `verify_embedding_dimension` |
+| `tokenization.py` | Measures text in the embedding model's own tokens: `EmbeddingRuler`, `create_embedding_ruler()`, `verify_embedding_window()`, `SPECIAL_TOKEN_COUNT`. The only module that imports `transformers`. |
 | `providers/openai_compatible_embeddings.py` | `OpenAiCompatibleEmbeddingProvider` — any OpenAI-compatible embeddings endpoint (Berget hosted, by default) |
 | `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers` (offline dev/test fallback) |
 | `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
@@ -208,6 +209,39 @@ whatever the API reports back overrides the seed. See
 See the [embedding hosting](/decisions/embedding-hosting.md) decision. The width
 constraint and its startup verification (`verify_embedding_dimension`) are covered in
 [embedding dimension](/decisions/embedding-dimension.md).
+
+## Token budgeting (`ai/tokenization.py`)
+
+Measures text in the embedding model's own tokens — the question that decides whether a
+chunk survives embedding intact, which a general-purpose tokenizer (tiktoken) does not
+answer. `EmbeddingRuler` is a frozen dataclass carrying `count_tokens`
+(`Callable[[str], int]`, content tokens only — no special tokens) and
+`max_sequence_tokens`. `create_embedding_ruler(config=None)` loads
+`transformers.AutoTokenizer.from_pretrained(embedding.model)` (`@lru_cache`d, since
+`scripts/run_pipeline.py` composes the chunk and embed workers into one process) and
+observes the window from `tokenizer.model_max_length`. `verify_embedding_window(ruler, *,
+reserved_tokens)` is the startup guard: it rejects a non-positive window, a window at or
+above the `int(1e30)` sentinel `transformers` reports for a tokenizer config missing
+`model_max_length`, and a window too small for the caller's fixed overhead, raising
+`EmbeddingWindowError` in each case. `SPECIAL_TOKEN_COUNT = 2` is the `<s>`/`</s>` pair an
+XLM-R-style tokenizer wraps around one encoded input — added once by the caller
+composing several pieces, not once per piece.
+
+`EmbeddingRuler` is a value carrying a callable rather than a Protocol with an
+implementation behind it, deliberately: a fake for tests is a lambda, so nothing needs
+patching and no unit test risks importing `transformers` (and with it torch). See
+[testing](/testing.md).
+
+Consumed by [worker-chunk](/pipeline/chunk.md) (deriving its chunk token budget) and
+[worker-embed](/pipeline/embed.md) (the input-length warning). Full rationale — why the
+window is observed rather than declared, and the budget arithmetic it feeds — is in
+[embedding window](/decisions/embedding-window.md).
+
+`transformers` is a **direct** dependency of this package (`packages/ai/pyproject.toml`),
+same story as the existing `numpy` entry: it already arrives transitively via
+`sentence-transformers`, but `ai/tokenization.py` imports it directly, so it is declared
+directly. No upper bound is pinned here — the Intel Mac `transformers<5` ceiling lives in
+the root `pyproject.toml`, and a second ceiling here would only fight it.
 
 ## Trace recording (`ai/_observability.py`)
 

@@ -10,6 +10,7 @@ from shared.dtos.document import DocumentCreate, DocumentUpdate
 from shared.dtos.task import TaskCreate
 from shared.testing.pipeline import redrive_task
 from shared.queue.sync import SyncQueuePublisher
+from worker_chunk.budget import ChunkBudget
 from worker_chunk.service import process_chunking
 
 _SWEDISH_LEGAL_TEXT = """
@@ -64,6 +65,21 @@ _CANNED_SUMMARY = (
 )
 
 
+def _count_words(text: str) -> int:
+    """Words, deliberately not the embedding model's tokenizer.
+
+    What this file tests is the database round-trip and the task envelope. Using
+    the real ruler would make the integration suite need the HuggingFace hub or a
+    warm cache before it could start.
+    """
+    return len(text.split())
+
+
+# The canned summary is ~40 words, comfortably inside the reserve, so nothing
+# here is truncated and the summary assertions stay exact.
+_BUDGET = ChunkBudget(max_tokens=60, overlap_tokens=6, summary_reserve_tokens=60)
+
+
 @pytest.fixture
 async def document_with_text(
     document_repo,
@@ -116,6 +132,8 @@ async def _run_chunking(
             task_repo=task_repo,
             queue_publisher=sync_publisher,
             session=session,
+            count_tokens=_count_words,
+            budget=_BUDGET,
         )
 
 
@@ -217,6 +235,37 @@ class TestChunkPipelineEndToEnd:
         for chunk in chunks:
             assert chunk.contextual_text is not None
             assert _CANNED_SUMMARY in chunk.contextual_text
+
+    async def test_stored_summary_is_the_one_that_was_embedded(
+        self,
+        document_with_text,
+        chunk_task,
+        document_repo,
+        chunk_repo,
+        task_repo,
+        sync_publisher: SyncQueuePublisher,
+        session: AsyncSession,
+    ) -> None:
+        # One summary value survives the round-trip: whatever documents.summary
+        # holds is exactly what every contextual_text was built from.
+        await _run_chunking(
+            document_with_text.id,
+            chunk_task.id,
+            document_repo,
+            chunk_repo,
+            task_repo,
+            sync_publisher,
+            session,
+        )
+
+        document = await document_repo.get_by_id(session, document_with_text.id)
+        assert document is not None
+        assert document.summary
+        chunks = await chunk_repo.get_by_document_id(session, document_with_text.id)
+        assert chunks
+        for chunk in chunks:
+            assert chunk.contextual_text is not None
+            assert chunk.contextual_text.startswith(document.summary)
 
     async def test_chunk_text_does_not_contain_summary(
         self,

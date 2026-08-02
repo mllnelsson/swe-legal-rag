@@ -198,6 +198,12 @@ class EmbeddingConfig(BaseSettings):
     dimension: int = Field(default=1024, alias="EMBEDDING_DIMENSION")
     api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
+    # Escape hatch, environment-only and deliberately absent from `embedding:` in
+    # llm_config.yaml: set it and no tokenizer is loaded at all. Declaring the
+    # window in the file would be a second source of truth competing with the
+    # model; declaring it in one environment is an operator saying "this box
+    # cannot reach the tokenizer, here is the number, I take responsibility".
+    window_override: int | None = Field(default=None, alias="EMBEDDING_WINDOW_OVERRIDE")
 
 
 def find_config_path() -> Path:

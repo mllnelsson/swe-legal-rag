@@ -361,8 +361,32 @@ async def _run_step(
                     next_topic=_next_topic(PipelineStep.EXTRACT),
                 )
             case PipelineStep.CHUNK:
+                from ai import (
+                    create_embedding_ruler,
+                    get_embedding_prefixes,
+                    verify_embedding_window,
+                )
+                from worker_chunk.budget import (
+                    compute_chunk_budget,
+                    fixed_overhead_tokens,
+                )
+                from worker_chunk.chunker import CONTEXTUAL_SEPARATOR
                 from worker_chunk.service import process_chunking
 
+                # Same derivation as worker-chunk's startup: the budget has to be
+                # the one the worker would use, or hand-testing measures a
+                # different chunker than the pipeline runs.
+                ruler = create_embedding_ruler()
+                _, chunk_passage_prefix = get_embedding_prefixes()
+                prefix_tokens = ruler.count_tokens(chunk_passage_prefix)
+                separator_tokens = ruler.count_tokens(CONTEXTUAL_SEPARATOR)
+                verify_embedding_window(
+                    ruler,
+                    reserved_tokens=fixed_overhead_tokens(
+                        prefix_tokens=prefix_tokens,
+                        separator_tokens=separator_tokens,
+                    ),
+                )
                 await process_chunking(
                     document_id=document_id,
                     task_id=task_id,
@@ -371,6 +395,12 @@ async def _run_step(
                     task_repo=repos.task,
                     queue_publisher=publisher,
                     session=session,
+                    count_tokens=ruler.count_tokens,
+                    budget=compute_chunk_budget(
+                        window_tokens=ruler.max_sequence_tokens,
+                        prefix_tokens=prefix_tokens,
+                        separator_tokens=separator_tokens,
+                    ),
                     next_topic=_next_topic(PipelineStep.CHUNK),
                     # Named explicitly: omitting it falls through to
                     # `llm_core.LLMConfig()`, which reads the process-wide
@@ -381,14 +411,23 @@ async def _run_step(
                 )
             case PipelineStep.EMBED:
                 from ai import (
+                    SPECIAL_TOKEN_COUNT,
                     create_embedding_provider,
+                    create_embedding_ruler,
                     get_embedding_prefixes,
                     resolve_embedding_config,
+                    verify_embedding_window,
                 )
                 from worker_embed.service import process_embedding
 
                 _, passage_prefix = get_embedding_prefixes()
                 embedding_config = resolve_embedding_config()
+                embed_ruler = create_embedding_ruler(embedding_config)
+                window = verify_embedding_window(
+                    embed_ruler,
+                    reserved_tokens=embed_ruler.count_tokens(passage_prefix)
+                    + SPECIAL_TOKEN_COUNT,
+                )
                 await process_embedding(
                     document_id=document_id,
                     task_id=task_id,
@@ -398,6 +437,8 @@ async def _run_step(
                     session=session,
                     passage_prefix=passage_prefix,
                     expected_dimension=embedding_config.dimension,
+                    count_tokens=embed_ruler.count_tokens,
+                    max_input_tokens=window,
                 )
 
     final = await repos.task.get_by_id(session, task_id)

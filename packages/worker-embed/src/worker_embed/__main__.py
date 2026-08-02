@@ -7,10 +7,13 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import (
+    SPECIAL_TOKEN_COUNT,
     create_embedding_provider,
+    create_embedding_ruler,
     get_embedding_prefixes,
     install_file_tracing,
     verify_embedding_dimension,
+    verify_embedding_window,
     worker_trace_scope,
 )
 from shared.config import get_settings
@@ -43,6 +46,16 @@ def subscribe() -> QueueSubscriber:
     dimension = asyncio.run(verify_embedding_dimension(embedding_provider))
     logger.info("Embedding dimension verified: %d", dimension)
 
+    # The passage prefix and the tokenizer's special tokens are all this worker
+    # adds around a chunk; everything else was already budgeted by the chunk
+    # worker. Like the dimension, the window is observed rather than declared.
+    ruler = create_embedding_ruler()
+    window = verify_embedding_window(
+        ruler,
+        reserved_tokens=ruler.count_tokens(passage_prefix) + SPECIAL_TOKEN_COUNT,
+    )
+    logger.info("Embedding sequence window: %d tokens", window)
+
     async def handle(message: QueueMessage, session: AsyncSession) -> None:
         await process_embedding(
             document_id=message.document_id,
@@ -53,6 +66,8 @@ def subscribe() -> QueueSubscriber:
             session=session,
             passage_prefix=passage_prefix,
             expected_dimension=dimension,
+            count_tokens=ruler.count_tokens,
+            max_input_tokens=window,
         )
 
     return subscribe_step(

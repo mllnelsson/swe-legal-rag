@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -20,6 +21,19 @@ from worker_embed.service import process_embedding
 _NOW = datetime.now(tz=timezone.utc)
 # Derived from config so the suite follows a model/dimension change automatically.
 _EMBEDDING_DIM = EMBEDDING_DIMENSION
+
+
+def _count_words(text: str) -> int:
+    """Words stand in for the embedding model's tokens.
+
+    The service takes its counter as a parameter so the unit suite never loads a
+    tokenizer.
+    """
+    return len(text.split())
+
+
+# Generous enough that only the tests about the length warning trip it.
+_MAX_INPUT_TOKENS = 512
 
 
 def _make_chunk(
@@ -92,6 +106,8 @@ class TestPassagePrefix:
             session=session,
             passage_prefix=passage_prefix,
             expected_dimension=_EMBEDDING_DIM,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
         return embedding_provider
 
@@ -105,6 +121,79 @@ class TestPassagePrefix:
         embedding_provider = await self._embed_one_chunk("")
 
         embedding_provider.embed.assert_awaited_once_with(["ctx text"])
+
+
+class TestInputLengthWarning:
+    """Over-long inputs are reported, never rejected and never trimmed.
+
+    The embedding model truncates silently, so the warning is the only signal
+    that a chunk's tail never reached its vector. Raising instead would fail the
+    document's terminal step and have the message redelivered forever, so these
+    tests pin "warn and proceed" against a later reader turning it into a raise.
+    """
+
+    async def _embed(
+        self, contextual_text: str, max_input_tokens: int
+    ) -> tuple[MagicMock, MagicMock, ChunkRead]:
+        document_id = uuid.uuid4()
+        task = _make_task()
+        chunk = _make_chunk(document_id, 0, contextual_text=contextual_text)
+
+        chunk_repo = MagicMock()
+        chunk_repo.get_by_document_id = AsyncMock(return_value=[chunk])
+        chunk_repo.update_embeddings = AsyncMock()
+
+        task_repo = MagicMock()
+        task_repo.get_by_id = AsyncMock(return_value=task)
+        task_repo.update_status = AsyncMock(return_value=task)
+
+        embedding_provider = MagicMock()
+        embedding_provider.embed = AsyncMock(return_value=_make_vectors(1))
+
+        session = MagicMock()
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+
+        await process_embedding(
+            document_id=document_id,
+            task_id=task.id,
+            chunk_repo=chunk_repo,
+            task_repo=task_repo,
+            embedding_provider=embedding_provider,
+            session=session,
+            passage_prefix="",
+            expected_dimension=_EMBEDDING_DIM,
+            count_tokens=_count_words,
+            max_input_tokens=max_input_tokens,
+        )
+        return embedding_provider, task_repo, chunk
+
+    async def test_over_long_input_is_warned_about_and_still_embedded(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        text = "ord " * 20
+
+        with caplog.at_level(logging.WARNING, logger="worker_embed.service"):
+            embedding_provider, task_repo, chunk = await self._embed(
+                text, max_input_tokens=10
+            )
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert str(chunk.id) in warnings[0].getMessage()
+        # Untruncated: trimming here would hide the problem rather than report it.
+        embedding_provider.embed.assert_awaited_once_with([text])
+        statuses = [c[0][2].status for c in task_repo.update_status.call_args_list]
+        assert "completed" in statuses
+        assert "failed" not in statuses
+
+    async def test_input_within_the_window_is_not_warned_about(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="worker_embed.service"):
+            await self._embed("kort text", max_input_tokens=_MAX_INPUT_TOKENS)
+
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
 
 
 class TestProcessEmbeddingSuccess:
@@ -137,6 +226,8 @@ class TestProcessEmbeddingSuccess:
             session=session,
             passage_prefix="",
             expected_dimension=_EMBEDDING_DIM,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         embedding_provider.embed.assert_awaited_once_with(["contextual text"])
@@ -170,6 +261,8 @@ class TestProcessEmbeddingSuccess:
             session=session,
             passage_prefix="",
             expected_dimension=_EMBEDDING_DIM,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         assert embedding_provider.embed.await_count == 1
@@ -204,6 +297,8 @@ class TestProcessEmbeddingSuccess:
             session=session,
             passage_prefix="",
             expected_dimension=_EMBEDDING_DIM,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         chunk_repo.update_embeddings.assert_awaited_once()
@@ -239,6 +334,8 @@ class TestProcessEmbeddingSuccess:
             session=session,
             passage_prefix="",
             expected_dimension=_EMBEDDING_DIM,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         embedding_provider.embed.assert_awaited_once_with(["raw chunk text"])
@@ -272,6 +369,8 @@ class TestProcessEmbeddingErrorCases:
                 session=session,
                 passage_prefix="",
                 expected_dimension=_EMBEDDING_DIM,
+                count_tokens=_count_words,
+                max_input_tokens=_MAX_INPUT_TOKENS,
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -307,6 +406,8 @@ class TestProcessEmbeddingErrorCases:
                 session=session,
                 passage_prefix="",
                 expected_dimension=_EMBEDDING_DIM,
+                count_tokens=_count_words,
+                max_input_tokens=_MAX_INPUT_TOKENS,
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -342,6 +443,8 @@ class TestProcessEmbeddingErrorCases:
                 session=session,
                 passage_prefix="",
                 expected_dimension=_EMBEDDING_DIM,
+                count_tokens=_count_words,
+                max_input_tokens=_MAX_INPUT_TOKENS,
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -379,6 +482,8 @@ class TestProcessEmbeddingErrorCases:
                 session=session,
                 passage_prefix="",
                 expected_dimension=_EMBEDDING_DIM,
+                count_tokens=_count_words,
+                max_input_tokens=_MAX_INPUT_TOKENS,
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -406,6 +511,8 @@ class TestProcessEmbeddingErrorCases:
             session=session,
             passage_prefix="",
             expected_dimension=_EMBEDDING_DIM,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         chunk_repo.get_by_document_id = MagicMock()

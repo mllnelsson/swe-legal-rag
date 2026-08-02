@@ -21,6 +21,19 @@ _CONTEXTUAL_TEXT = "Kyrkoherden överklagade beslutet.\n\n---\n\n" + _SWEDISH_TE
 _PLACEHOLDER_EMBEDDING = [0.0] * EMBEDDING_DIMENSION
 
 
+def _count_words(text: str) -> int:
+    """Words, deliberately not the embedding model's tokenizer.
+
+    This file tests the database round-trip; the real ruler would make the
+    integration suite need the HuggingFace hub or a warm cache to start.
+    """
+    return len(text.split())
+
+
+# Generous: nothing here is meant to trip the input-length warning.
+_MAX_INPUT_TOKENS = 512
+
+
 def _make_deterministic_vectors(count: int) -> list[list[float]]:
     return [[float(i + 1) / 1000] * EMBEDDING_DIMENSION for i in range(count)]
 
@@ -83,6 +96,8 @@ class TestEmbedPipelineEndToEnd:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -115,6 +130,8 @@ class TestEmbedPipelineEndToEnd:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -146,6 +163,8 @@ class TestEmbedPipelineEndToEnd:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         result = await session.execute(
@@ -179,6 +198,8 @@ class TestEmbedPipelineEndToEnd:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         result = await session.execute(
@@ -217,6 +238,8 @@ class TestEmbedPipelineEndToEnd:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         updated_task = await task_repo.get_by_id(session, task.id)
@@ -250,6 +273,8 @@ class TestIndexFunctionality:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         query_vector = "[" + ",".join(["0.001"] * EMBEDDING_DIMENSION) + "]"
@@ -290,6 +315,8 @@ class TestIndexFunctionality:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         result = await session.execute(
@@ -332,6 +359,8 @@ class TestEmbedPipelineIdempotency:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         await redrive_task(session, task_repo, task1.id)
@@ -348,6 +377,8 @@ class TestEmbedPipelineIdempotency:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         updated = await chunk_repo.get_by_document_id(session, document_id)
@@ -380,6 +411,8 @@ class TestEmbedPipelineIdempotency:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         await redrive_task(session, task_repo, task1.id)
@@ -394,6 +427,8 @@ class TestEmbedPipelineIdempotency:
             session=session,
             passage_prefix="",
             expected_dimension=EMBEDDING_DIMENSION,
+            count_tokens=_count_words,
+            max_input_tokens=_MAX_INPUT_TOKENS,
         )
 
         final_chunks = await chunk_repo.get_by_document_id(session, document_id)

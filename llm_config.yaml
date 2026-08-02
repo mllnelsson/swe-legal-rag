@@ -45,6 +45,13 @@ roles:
   # so it wants context length more than it wants to be cheap.
   summarize:
     model: mistralai/Mistral-Medium-3.5-128B
+    stream_usage: false
+    # The summary is prepended to every chunk before embedding, so a long one
+    # displaces chunk text inside the embedding model's window. This is the coarse
+    # stop on runaway generation, sized so a compliant 60-word Swedish summary is
+    # never cut; the enforced ceiling is worker-chunk's sentence-boundary
+    # truncation, because a provider-side cut lands mid-word.
+    max_tokens: 256
 
   # Low-volume, streaming, user-facing answer synthesis. Not run at ingestion
   # scale, so it can afford to be the strongest model here.
@@ -54,12 +61,24 @@ roles:
 embedding:
   # A name from `providers` above, or the literal "local" to run
   # sentence-transformers in-process (no API key, no network).
-  provider: berget
+  provider: local
   model: intfloat/multilingual-e5-large
   # Must match the model's output width (e5-large=1024, e5-base=768) AND
   # EMBEDDING_DIMENSION AND the chunks.embedding column. verify_embedding_dimension()
   # checks all of them agree at startup.
   dimension: 1024
+  # The model's max sequence length is deliberately NOT declared here. Unlike the
+  # dimension — which the chunks.embedding column must independently agree with —
+  # nothing outside the process constrains the window, so the tokenizer is its
+  # only honest source. worker-chunk reads it at startup and derives its token
+  # budget from it; see /decisions/embedding-window.md.
+  #
+  # A process that cannot reach the tokenizer at all sets EMBEDDING_WINDOW_OVERRIDE
+  # in the environment: the window becomes that number, no tokenizer is loaded, and
+  # chunk sizes fall back to a pessimistic character estimate. Environment-only on
+  # purpose — one machine opting out is not the same as the file declaring a second
+  # source of truth for every machine.
+  #
   # e5 is an asymmetric model: the two sides of retrieval are prefixed
   # differently, and BOTH must be applied or queries and passages land in
   # systematically offset regions of the space. Set both to "" for a model that

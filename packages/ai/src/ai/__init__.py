@@ -28,6 +28,7 @@ from ai.embedding import (
 from ai.errors import (
     AiError,
     EmbeddingDimensionMismatchError,
+    EmbeddingWindowError,
     LLMConfigError,
     LLMConfigInvalidError,
     LLMConfigNotFoundError,
@@ -50,6 +51,13 @@ from ai.services import (
     extract_metadata,
     summarize_document,
     synthesize_answer,
+)
+from ai.tokenization import (
+    SPECIAL_TOKEN_COUNT,
+    CountTokens,
+    EmbeddingRuler,
+    create_embedding_ruler,
+    verify_embedding_window,
 )
 from ai.worker import worker_trace_scope
 
@@ -83,9 +91,17 @@ __all__ = [
     "EmbeddingConfig",
     "create_embedding_provider",
     "verify_embedding_dimension",
+    # Token budgeting. Text is measured with the embedding model's own tokenizer,
+    # and the sequence window is observed from it rather than declared.
+    "CountTokens",
+    "EmbeddingRuler",
+    "SPECIAL_TOKEN_COUNT",
+    "create_embedding_ruler",
+    "verify_embedding_window",
     # Errors
     "AiError",
     "EmbeddingDimensionMismatchError",
+    "EmbeddingWindowError",
     "UnsupportedEmbeddingBackendError",
     "MissingApiKeyError",
     "LLMConfigError",

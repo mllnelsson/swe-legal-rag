@@ -3,7 +3,7 @@ type: Concept
 title: Testing Strategy
 description: The two-level (unit + integration) testing approach — what to test, what to mock, how the split is enforced, and the separate database integration tests run against.
 tags: [testing, pytest, strategy]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # Testing Strategy
@@ -65,6 +65,16 @@ A unit test also must not name a heavyweight optional dependency as a patch targ
 *imports* sentence-transformers — and with it torch — into a suite that is meant to be
 fast and offline. Patch a seam you own (`LocalEmbeddingProvider._get_model`), or put a
 stub module in `sys.modules` when the guard being tested is the import itself.
+
+A third way to dodge the same problem, used by `ai.tokenization`: hand the consumer a
+**value carrying the callable** rather than a Protocol with an implementation behind it.
+`EmbeddingRuler.count_tokens` is a plain `Callable[[str], int]`, so a test double is a
+lambda (or, in the [chunk](/pipeline/chunk.md)/[embed](/pipeline/embed.md) pipeline
+integration suites, a word counter) — there is nothing to patch, and `transformers`
+(which would pull in torch the same way sentence-transformers does) never has to import
+in a suite that needs to stay fast and offline. Both new integration tests keep the word
+counter deliberately, so the suite needs no HuggingFace hub access or a warm tokenizer
+cache to run.
 
 ## Unit Tests
 

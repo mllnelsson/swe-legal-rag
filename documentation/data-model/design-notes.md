@@ -3,7 +3,7 @@ type: Concept
 title: Data Model Design Notes
 description: Cross-cutting rationale behind the schema — progressive metadata, contextual text, idempotency, the graph-in-Postgres tables, and enum-backed columns.
 tags: [data-model, design, rationale]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # Data Model Design Notes
@@ -49,9 +49,17 @@ reset its tasks. Simple at this scale.
 
 ## Chunk sizing rationale
 
-~500 tokens per chunk balances retrieval granularity with context preservation.
-Sentence-aware boundaries prevent mid-sentence splits. 50-token overlap preserves
-cross-boundary context for embedding.
+The chunk token budget is **derived**, not hand-picked: it is the embedding model's
+sequence window (512 for e5-large) minus the fixed overhead every chunk carries into
+embedding — special tokens, the passage prefix, the prepended summary's reserve, the
+separator, and a safety margin — leaving **349 tokens** for chunk text at a 34-token
+overlap. This is a hard ceiling, not a granularity choice: past it,
+`sentence-transformers` truncates the embedding input silently, and the tail of the chunk
+never reaches its vector. See [embedding window](/decisions/embedding-window.md) for the
+full arithmetic and why the window is observed from the tokenizer rather than declared as
+a constant. Sentence-aware boundaries prevent mid-sentence splits; overlap is a fixed
+share (10%) of the budget so it tracks the budget rather than drifting independently of
+it — see [chunk worker](/pipeline/chunk.md).
 
 ## Task-queue alignment
 
