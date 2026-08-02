@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -19,24 +19,37 @@ lives in the [ai package](/packages/ai.md).
   `LLMResponse`, `StreamChunk`, `Usage`, `Role` (StrEnum). `LLMResponse` and
   `StreamChunk` each carry `usage`, `model` and `provider`; `Usage` fields are
   `None` when the provider reported nothing, which is not the same as zero.
-- **`_exceptions.py`** — `LLMError` base, `ProviderError`, `ToolExecutionError`,
-  `MaxIterationsError`.
+- **`_exceptions.py`** — `LLMError` base, `ProviderError`, `MissingCredentialError` (a
+  provider constructed without the API key or base URL it needs), `LLMDisabledError`
+  (something called a provider deliberately configured as absent — the mirror image of
+  `MissingCredentialError`, which means the configuration was meant to be there and was
+  not), `ToolExecutionError`, `MaxIterationsError`.
 - **`_protocol.py`** — `LLMProvider` Protocol (`@runtime_checkable`) with `generate()`
   and `generate_stream()`. Providers do one round-trip; the tool-call loop is in the
   service layer.
-- **`_config.py`** — `LLMConfig(BaseSettings)` reading `LLM_PROVIDER` (default
-  `"berget"`), `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_API_KEY`,
-  `GEMINI_API_KEY`, `BERGET_API_KEY`, `LLM_BASE_URL`, `LLM_STREAM_USAGE`, plus the
-  `BERGET_BASE_URL` constant. `create_provider()` is a factory with lazy-import dispatch
-  on the provider **kind**: `"gemini"` → `GeminiProvider`, `"openai_compatible"` →
-  `OpenAiCompatibleProvider`. `"berget"` is accepted as an alias for the latter, so an
-  environment that still sets `LLM_PROVIDER=berget` keeps resolving.
+- **`_config.py`** — `ProviderKind` (`StrEnum`): `OPENAI_COMPATIBLE`, `GEMINI` or
+  `NONE`, the client implementation a provider entry maps onto. A *kind* is a wire
+  protocol, not a vendor — every host speaking the OpenAI chat-completions API is one
+  `OPENAI_COMPATIBLE` entry apart, distinguished by `base_url` alone, so adding such a
+  host needs no code. `NONE` is a kind too, not the absence of one: "there is
+  deliberately no model here" is a configuration, and making it a member keeps dispatch
+  exhaustive instead of putting a second switch beside it.
 
-  `api_key` is the host-agnostic field, populated when the caller resolved the key
-  itself — as [`ai.llm_config`](/reference/llm-config.md) does, from the variable each
-  provider entry names. Each provider reads `config.api_key` first and falls back to its
-  own named field (`berget_api_key` / `gemini_api_key`), which is the
-  straight-from-the-environment path.
+  `LLMConfig(BaseSettings)` reads `LLM_PROVIDER` (default `openai_compatible`, typed as
+  `ProviderKind`), `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_API_KEY`,
+  `LLM_BASE_URL`, `LLM_STREAM_USAGE`. `create_provider()` is a factory with lazy-import
+  dispatch on `config.provider`: `ProviderKind.GEMINI` → `GeminiProvider`,
+  `ProviderKind.OPENAI_COMPATIBLE` → `OpenAiCompatibleProvider`, `ProviderKind.NONE` →
+  `NullProvider`. There is no fallback `case` — `provider` is a `ProviderKind`, so
+  pydantic rejects an unrecognized value when the config is built, at the point the bad
+  setting was supplied rather than at dispatch.
+
+  `api_key` is the **only** credential field — a host-agnostic value populated by the
+  caller, as [`ai.llm_config`](/reference/llm-config.md) does, from the variable each
+  provider entry's `api_key_env` names. There is no per-host named field (no
+  `berget_api_key` / `gemini_api_key`) and no built-in default `base_url`; a provider
+  constructed without either raises `MissingCredentialError` rather than silently
+  falling back.
 
   Note that in this project nothing resolves a role's model through `LLM_MODEL` —
   see [per-task model selection](/packages/ai.md).
@@ -49,14 +62,25 @@ lives in the [ai package](/packages/ai.md).
   `LLM_PROVIDER=gemini`.
 - **`providers/_openai_compatible.py`** — `OpenAiCompatibleProvider`, a generic client
   for any OpenAI-chat-completions-compatible API using the `openai` SDK (`AsyncOpenAI`).
-  [Berget.ai](https://docs.berget.ai) is the first and default host (base URL
-  `https://api.berget.ai/v1`, the `BERGET_BASE_URL` fallback). The class is not
-  Berget-specific, and this is now literally true rather than aspirational: a second
-  OpenAI-compatible host (Groq, Together, a local vLLM) is a new entry under `providers:`
-  in [`llm_config.yaml`](/reference/llm-config.md) naming its `base_url` and
-  `api_key_env` — no new provider class, and no code change at all. Maps `Message`/`ToolDefinition`/`response_schema` to OpenAI's
-  chat-completions shape (tool calls, `response_format` json_schema for structured
-  output) and wraps SDK exceptions in `ProviderError`.
+  [Berget.ai](https://docs.berget.ai) is the vendor this project points it at by default,
+  but the class takes no Berget-specific behavior: both `api_key` and `base_url` are
+  required constructor inputs (raising `MissingCredentialError` if either is missing)
+  rather than defaulted, so a second OpenAI-compatible host (Groq, Together, a local
+  vLLM) is a new entry under `providers:` in
+  [`llm_config.yaml`](/reference/llm-config.md) naming its `base_url` and `api_key_env`
+  — no new provider class, and no code change at all. Maps
+  `Message`/`ToolDefinition`/`response_schema` to OpenAI's chat-completions shape (tool
+  calls, `response_format` json_schema for structured output) and wraps SDK exceptions
+  in `ProviderError`.
+- **`providers/_null.py`** — `NullProvider`, a provider configured to not exist.
+  Constructing it always succeeds: no key, no base URL, no client library, so a process
+  whose LLM steps are switched off starts normally instead of dying on a credential it
+  will never use. Every call raises `LLMDisabledError` naming the operation and the
+  model that was requested. `generate_stream` refuses on `await`, not part-way through
+  an `async for` — it is a coroutine returning an iterator, the same shape as the real
+  providers. Selected with `kind: none` in
+  [`llm_config.yaml`](/reference/llm-config.md) or `LLM_PROVIDER=none`; what each
+  pipeline step then does is tabulated there.
 - **`_service.py`** — the higher-level API: `generate()`, `generate_structured()`,
   `generate_stream()`, `tool_loop()` with optional callbacks. All four emit one trace
   record per billed provider round-trip. `generate_structured[T: BaseModel]` is generic

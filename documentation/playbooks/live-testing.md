@@ -206,10 +206,35 @@ cat ./data/store/documents.json    # inspect the raw_text the parser produced
 ```
 
 Per-step external dependencies (same in both stores): `crawl`/`download` need network;
-`metadata` and `chunk` call the configured LLM provider (Berget by default, or Gemini);
-`embed` calls the configured embedding provider (Berget by default, or the local e5
-model with `EMBEDDING_PROVIDER=local` — no API, no DB). `--store fs` synthesizes a
-throwaway `DATABASE_URL` when none is set, so it works with no `.env` database config.
+`chunk` calls the configured LLM provider (Berget by default, or Gemini); `embed` calls
+the configured embedding provider (Berget by default, or the local e5 model with
+`EMBEDDING_PROVIDER=local` — no API, no DB). `metadata` reaches no model here — the
+script injects `worker_metadata.service.no_llm_extractor`, so only its rule-based pass
+runs, unlike the worker. `extract` reaches one only when `EXTRACT_STRATEGY` asks it to.
+`--store fs` synthesizes a throwaway `DATABASE_URL` when none is set, so it works with
+no `.env` database config.
+
+#### Running with no LLM at all
+
+Useful for iterating on crawling, parsing and rule-based extraction without a key, a
+bill, or a network round-trip per document:
+
+```bash
+export LLM_PROVIDER=none          # every role resolves to a provider that refuses
+export EXTRACT_STRATEGY=rule_based
+
+uv run python scripts/run_step.py crawl --years 2024
+uv run python scripts/run_step.py docs                       # pick a document id
+uv run python scripts/run_step.py chain <doc_id> --until extract
+```
+
+All five tasks reach `completed`. Going one step further —
+`chain <doc_id> --until chunk` — leaves the chunk task `failed` with
+`LLMDisabledError` in `error_message`: the summary is prepended to every chunk, so
+chunk is where a no-LLM run stops. This works for the workers too
+(`python -m worker_metadata`, `scripts/run_pipeline.py`), which otherwise refuse to
+start without a key. See [running with no LLM](/reference/llm-config.md) for what each
+step does and how to disable a single role instead of all of them.
 
 ## Running the API Server
 

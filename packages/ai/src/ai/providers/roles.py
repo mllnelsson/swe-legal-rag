@@ -5,43 +5,57 @@ call. This project wants a different model per task, and sometimes a different
 *provider* per task, so the assignment lives in `llm_config.yaml` under `roles`
 and is resolved by `ai.llm_config`.
 
-A role is just a name. Declaring one in the YAML is enough to use it; the three
-constants below exist because they have call sites, not because the set is
-closed. See documentation/reference/llm-config.md.
+A role has two halves that must agree: an `LLMRole` member here, which is what
+code asks for, and an entry under `roles:` in the YAML, which says what that
+resolves to. Adding a task means adding both. The enum is what makes a
+misspelled role a type error instead of a runtime one, and what lets
+`create_llm_provider` be a single function rather than one wrapper per task.
 
-Each composition root constructs the role-appropriate provider(s) once at startup
-and threads them into the call sites via the `provider=` keyword — there is no
-hidden global default in production.
+Each composition root constructs the role-appropriate provider(s) once at
+startup and threads them into the call sites via the `provider=` keyword — there
+is no hidden global default in production.
 """
 
 from __future__ import annotations
 
-from llm_core import LLMProvider, create_provider
+from enum import StrEnum, auto
+
+from llm_core import LLMProvider, ProviderKind, create_provider
 
 from ai.llm_config import LLMConfigDocument, resolve_role_config
 
-ROLE_STRUCTURED = "structured"
-ROLE_SUMMARIZE = "summarize"
-ROLE_CHAT = "chat"
+__all__ = ["LLMRole", "create_llm_provider", "llm_role_is_disabled"]
+
+
+class LLMRole(StrEnum):
+    """The tasks this project assigns models to.
+
+    Values match the keys under `roles:` in `llm_config.yaml`.
+    """
+
+    STRUCTURED = auto()
+    SUMMARIZE = auto()
+    CHAT = auto()
 
 
 def create_llm_provider(
-    role: str, document: LLMConfigDocument | None = None
+    role: LLMRole, document: LLMConfigDocument | None = None
 ) -> LLMProvider:
     """Build the provider `llm_config.yaml` assigns to `role`.
 
-    Raises `UnknownLLMRoleError` if the role is not declared.
+    Raises `UnknownLLMRoleError` if the file declares no such role.
     """
     return create_provider(resolve_role_config(role, document))
 
 
-def create_structured_llm_provider() -> LLMProvider:
-    return create_llm_provider(ROLE_STRUCTURED)
+def llm_role_is_disabled(
+    role: LLMRole, document: LLMConfigDocument | None = None
+) -> bool:
+    """Whether `llm_config.yaml` assigns `role` no model at all — `kind: none`.
 
-
-def create_summarize_llm_provider() -> LLMProvider:
-    return create_llm_provider(ROLE_SUMMARIZE)
-
-
-def create_chat_llm_provider() -> LLMProvider:
-    return create_llm_provider(ROLE_CHAT)
+    For the callers that have a genuine no-model path and want to choose it at
+    startup, where every other provider decision is made. Everyone else should
+    just build the provider: constructing a `none` one always succeeds, and it
+    raises `LLMDisabledError` at the call that wanted a model.
+    """
+    return resolve_role_config(role, document).provider is ProviderKind.NONE

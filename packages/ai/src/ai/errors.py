@@ -18,6 +18,18 @@ class EmbeddingDimensionMismatchError(AiError):
     """
 
 
+class UnsupportedEmbeddingBackendError(AiError):
+    """`embedding.provider` names a host whose kind has no embeddings client.
+
+    Raised while resolving the config, not at dispatch, so the message can name
+    the YAML key at fault.
+    """
+
+
+class MissingApiKeyError(AiError):
+    """An embedding provider was constructed without the API key it needs."""
+
+
 class LLMConfigError(AiError):
     """Base class for problems with `llm_config.yaml`."""
 

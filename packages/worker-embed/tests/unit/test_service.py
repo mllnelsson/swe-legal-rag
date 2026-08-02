@@ -91,6 +91,7 @@ class TestPassagePrefix:
             embedding_provider=embedding_provider,
             session=session,
             passage_prefix=passage_prefix,
+            expected_dimension=_EMBEDDING_DIM,
         )
         return embedding_provider
 
@@ -135,6 +136,7 @@ class TestProcessEmbeddingSuccess:
             embedding_provider=embedding_provider,
             session=session,
             passage_prefix="",
+            expected_dimension=_EMBEDDING_DIM,
         )
 
         embedding_provider.embed.assert_awaited_once_with(["contextual text"])
@@ -167,6 +169,7 @@ class TestProcessEmbeddingSuccess:
             embedding_provider=embedding_provider,
             session=session,
             passage_prefix="",
+            expected_dimension=_EMBEDDING_DIM,
         )
 
         assert embedding_provider.embed.await_count == 1
@@ -200,6 +203,7 @@ class TestProcessEmbeddingSuccess:
             embedding_provider=embedding_provider,
             session=session,
             passage_prefix="",
+            expected_dimension=_EMBEDDING_DIM,
         )
 
         chunk_repo.update_embeddings.assert_awaited_once()
@@ -234,6 +238,7 @@ class TestProcessEmbeddingSuccess:
             embedding_provider=embedding_provider,
             session=session,
             passage_prefix="",
+            expected_dimension=_EMBEDDING_DIM,
         )
 
         embedding_provider.embed.assert_awaited_once_with(["raw chunk text"])
@@ -266,6 +271,7 @@ class TestProcessEmbeddingErrorCases:
                 embedding_provider=embedding_provider,
                 session=session,
                 passage_prefix="",
+                expected_dimension=_EMBEDDING_DIM,
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -300,6 +306,7 @@ class TestProcessEmbeddingErrorCases:
                 embedding_provider=embedding_provider,
                 session=session,
                 passage_prefix="",
+                expected_dimension=_EMBEDDING_DIM,
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -334,6 +341,7 @@ class TestProcessEmbeddingErrorCases:
                 embedding_provider=embedding_provider,
                 session=session,
                 passage_prefix="",
+                expected_dimension=_EMBEDDING_DIM,
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -370,6 +378,7 @@ class TestProcessEmbeddingErrorCases:
                 embedding_provider=embedding_provider,
                 session=session,
                 passage_prefix="",
+                expected_dimension=_EMBEDDING_DIM,
             )
 
         update_calls = task_repo.update_status.call_args_list
@@ -396,6 +405,7 @@ class TestProcessEmbeddingErrorCases:
             embedding_provider=embedding_provider,
             session=session,
             passage_prefix="",
+            expected_dimension=_EMBEDDING_DIM,
         )
 
         chunk_repo.get_by_document_id = MagicMock()

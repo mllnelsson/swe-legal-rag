@@ -8,7 +8,7 @@ from shared.enums import PipelineStep
 class MetadataSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
-    metadata_topic: str = "metadata"
+    metadata_topic: PipelineStep = PipelineStep.METADATA
     metadata_next_topic: PipelineStep = PipelineStep.EXTRACT
 
 

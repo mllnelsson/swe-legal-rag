@@ -6,3 +6,4 @@
 * [llm_config.yaml — LLM and Embedding Configuration](llm-config.md) - The single source of truth for which model and provider each LLM role and the embedder use — file format, precedence rules against environment variables, and the full env-var registry.
 * [LLM Pricing Prerequisites](llm-pricing.md) - Verified per-token rates and the rules for applying them when analyzing LLM trace records. Reference data, not implemented anywhere in the repo.
 * [Decision Document Structure](document-structure.md) - The anatomy of an Överklagandenämnden decision PDF — header, holding, trailer and appendices — and the anchors the pipeline segments it with.
+* [Deployment and Data State](deployment-state.md) - What is actually deployed and ingested right now — nothing — and which classes of change are therefore free rather than breaking.

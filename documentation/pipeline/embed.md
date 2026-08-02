@@ -4,7 +4,7 @@ title: Embed Worker
 description: Terminal pipeline worker that generates vector embeddings for a document's chunks and bulk-updates the chunks table.
 resource: packages/worker-embed
 tags: [pipeline, worker, embed, vector, terminal]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # Embed Worker (`packages/worker-embed/`)
@@ -17,14 +17,14 @@ bulk UPDATE on the chunks table (no downstream publish).
 
 | Module | Role |
 |---|---|
-| `config.py` | `EmbedSettings(BaseSettings)` — `EMBED_TOPIC` (`embed`). `get_embed_settings()` is `@lru_cache`. |
+| `config.py` | `EmbedSettings(BaseSettings)` — `EMBED_TOPIC` (`PipelineStep.EMBED`). `get_embed_settings()` is `@lru_cache`. |
 | `service.py` | `process_embedding()` async function — orchestration via functional DI. |
-| `__main__.py` | Entry point — wires dependencies, registers handler, calls `subscriber.start()`. Runs `ai.verify_embedding_dimension()` before subscribing (see [embedding dimension](/decisions/embedding-dimension.md)). |
+| `__main__.py` | Entry point — `subscribe()` builds the embedding provider, runs `ai.verify_embedding_dimension()` before registering the handler (see [embedding dimension](/decisions/embedding-dimension.md)), and passes the observed dimension into every `process_embedding()` call; `main()` calls `shared.worker.serve()`. |
 
 ## `process_embedding()`
 
 `process_embedding(document_id, task_id, chunk_repo, task_repo, embedding_provider,
-session, passage_prefix)` defines a `body()`:
+session, passage_prefix, expected_dimension)` defines a `body()`:
 
 1. Fetches all chunks via `chunk_repo.get_by_document_id(...)` — raises `NoChunksError`
    if empty (the chunk worker must run first).
@@ -34,9 +34,16 @@ session, passage_prefix)` defines a `body()`:
    default provider is [Berget-hosted](/decisions/embedding-hosting.md); `local`
    (`sentence-transformers`) remains available.
 4. Validates: vector count matches chunk count (`EmbeddingCountMismatchError`); each
-   vector is exactly `EMBEDDING_DIMENSION` (`EmbeddingDimensionError`).
+   vector is exactly `expected_dimension` (`EmbeddingDimensionError`).
 5. Calls `chunk_repo.update_embeddings(session, [(chunk_id, vector), ...])` — a bulk
    UPDATE of the `embedding` column only.
+
+`expected_dimension` is a required parameter, supplied by `__main__.py` from the width
+`verify_embedding_dimension` actually observed the configured model producing — not read
+back from `shared.config.EMBEDDING_DIMENSION` inside the service. `verify_embedding_dimension`
+has already reconciled that constant with the resolved `EmbeddingConfig` at startup (see
+[embedding dimension](/decisions/embedding-dimension.md)); this check validates each
+batch against the provider that produced it.
 
 ## The passage prefix
 

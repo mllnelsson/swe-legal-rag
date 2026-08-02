@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import signal
 
 from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai import install_file_tracing, trace_context
+from ai import install_file_tracing, worker_trace_scope
 from shared.config import get_settings
-from shared.db import get_async_session
-from shared.queue import create_queue_publisher, create_queue_subscriber
-from shared.queue.base import QueueMessage
+from shared.queue import create_queue_publisher
+from shared.queue.base import QueueMessage, QueueSubscriber
 from shared.repositories import (
     document,
     document_entity,
@@ -19,67 +17,53 @@ from shared.repositories import (
     task,
     unresolved_reference,
 )
+from shared.worker import serve, subscribe_step
 from worker_extract.config import get_extract_settings
+from worker_extract.extractors.factory import create_extraction_strategy
 from worker_extract.services.extraction_service import process_extraction
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Attribution for traces from this worker; inner calls name themselves.
-_SOURCE = "worker-extract"
+NAME = "worker-extract"
 
 
-def main() -> None:
+def subscribe() -> QueueSubscriber:
     load_dotenv()
     settings = get_settings()
     extract_settings = get_extract_settings()
 
     install_file_tracing()
+    strategy = create_extraction_strategy()
 
     publisher = create_queue_publisher(settings.queue)
-    subscriber = create_queue_subscriber(settings.queue)
 
-    def handle_message(message: QueueMessage) -> None:
-        async def _handle() -> None:
-            async with get_async_session() as session:
-                await process_extraction(
-                    document_id=message.document_id,
-                    task_id=message.task_id,
-                    document_repo=document,
-                    task_repo=task,
-                    entity_repo=entity,
-                    doc_entity_repo=document_entity,
-                    ref_repo=document_reference,
-                    unresolved_repo=unresolved_reference,
-                    queue_publisher=publisher,
-                    session=session,
-                    next_topic=extract_settings.extract_next_topic,
-                )
+    async def handle(message: QueueMessage, session: AsyncSession) -> None:
+        await process_extraction(
+            document_id=message.document_id,
+            task_id=message.task_id,
+            document_repo=document,
+            task_repo=task,
+            entity_repo=entity,
+            doc_entity_repo=document_entity,
+            ref_repo=document_reference,
+            unresolved_repo=unresolved_reference,
+            queue_publisher=publisher,
+            session=session,
+            strategy=strategy,
+            next_topic=extract_settings.extract_next_topic,
+        )
 
-        # Set outside asyncio.run: the runner copies the current context when
-        # it builds the loop, so everything inside inherits it. The document id
-        # is what ties this worker's cost back to the document that caused it.
-        with trace_context(
-            document_id=str(message.document_id),
-            task_id=str(message.task_id),
-            source=_SOURCE,
-        ):
-            asyncio.run(_handle())
-
-    subscriber.subscribe(extract_settings.extract_topic, handle_message)
-
-    def shutdown_handler(_signum: int, _frame: object) -> None:
-        logger.info("Shutdown signal received, stopping...")
-        subscriber.shutdown()
-
-    signal.signal(signal.SIGTERM, shutdown_handler)
-    signal.signal(signal.SIGINT, shutdown_handler)
-
-    logger.info(
-        "Extract worker starting, subscribing to topic: %s",
-        extract_settings.extract_topic,
+    return subscribe_step(
+        topic=extract_settings.extract_topic,
+        queue_settings=settings.queue,
+        handle=handle,
+        scope=worker_trace_scope(NAME),
     )
-    subscriber.start()
+
+
+def main() -> None:
+    serve(subscribe(), name=NAME)
 
 
 if __name__ == "__main__":

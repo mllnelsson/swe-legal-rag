@@ -1,7 +1,9 @@
-from llm_core._config import BERGET_BASE_URL, LLMConfig, create_provider
+from llm_core._config import LLMConfig, ProviderKind, create_provider
 from llm_core._exceptions import (
+    LLMDisabledError,
     LLMError,
     MaxIterationsError,
+    MissingCredentialError,
     ProviderError,
     ToolExecutionError,
 )
@@ -39,7 +41,7 @@ from llm_core._types import (
 
 __all__ = [
     "LLMConfig",
-    "BERGET_BASE_URL",
+    "ProviderKind",
     "create_provider",
     "LLMProvider",
     "Message",
@@ -70,6 +72,8 @@ __all__ = [
     "ToolResultCallback",
     "LLMError",
     "ProviderError",
+    "MissingCredentialError",
+    "LLMDisabledError",
     "ToolExecutionError",
     "MaxIterationsError",
 ]

@@ -15,6 +15,7 @@ from shared.models.task import Task
 from shared.models.unresolved_reference import UnresolvedReference
 from shared.queue.base import QueueMessage
 from shared.queue.sync import SyncQueuePublisher
+from worker_extract.extractors.rule_based import extract_rule_based_strategy
 from worker_extract.services.extraction_service import process_extraction
 from worker_extract.services.reference_service import reconcile_references
 
@@ -68,6 +69,7 @@ async def _run_extraction(
         unresolved_repo=unresolved_repo,
         queue_publisher=sync_publisher,
         session=session,
+        strategy=extract_rule_based_strategy,
         next_topic=PipelineStep.CHUNK,
     )
     return doc, task
@@ -365,6 +367,7 @@ async def test_extraction_idempotency(
         unresolved_repo=unresolved_repo,
         queue_publisher=sync_publisher,
         session=session,
+        strategy=extract_rule_based_strategy,
         next_topic=PipelineStep.CHUNK,
     )
 

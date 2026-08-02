@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from worker_extract.models import ExtractionResult, EntityRelevance
+from ai.dtos import EntityResult
+from shared.enums import EntityRelevance
 from worker_extract.parsing import parse_llm_response
 
 _VALID_JSON = json.dumps(
@@ -68,7 +69,7 @@ _DUPLICATE_REF_JSON = json.dumps(
 class TestParseLLMResponse:
     def test_parse_valid_json_returns_extraction_result(self) -> None:
         result = parse_llm_response(_VALID_JSON)
-        assert isinstance(result, ExtractionResult)
+        assert isinstance(result, EntityResult)
         assert len(result.entities) == 2
         assert len(result.references) == 1
 

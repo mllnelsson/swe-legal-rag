@@ -4,7 +4,7 @@ title: Extract Worker
 description: Subscriber worker that extracts entities and cross-references from document text into the graph-in-Postgres tables, then enqueues chunk tasks.
 resource: packages/worker-extract
 tags: [pipeline, worker, extract, entities, references, graph]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # Extract Worker (`packages/worker-extract/`)
@@ -24,28 +24,54 @@ This populates the graph-in-Postgres layer used by the
 
 | Module | Role |
 |---|---|
-| `models.py` | `ExtractedEntity`, `ExtractedReference`, `ExtractionResult` DTOs. Re-exports `EntityType`/`EntityRelevance` from `shared.enums` (single source of truth). |
 | `entities.py` | `normalize_entity_name()` and `deduplicate_entities()` — one shared helper used across the package (previously three copies). |
-| `parsing.py` | `parse_llm_response(raw_json) -> ExtractionResult` — validates types/relevance, normalizes names, deduplicates keeping highest relevance. |
-| `extractors/base.py` | `ExtractionStrategy` Protocol: `async extract(segments, case_number=None) -> ExtractionResult`. Strategies take `DocumentSegments` so each decides what appendices mean to it. |
-| `extractors/rule_based.py` | Pure functions + `RuleBasedStrategy` — regex extraction, handles Swedish inflections. |
-| `extractors/llm.py` | `LLMStrategy` — constructor-injected `LLMProvider`, delegates to `ai.extract_entities()` with **`segments.body`** only. |
-| `extractors/factory.py` | `ExtractStrategyMode` StrEnum; `get_extraction_strategy()` factory; `_FallbackStrategy` merge logic. |
+| `parsing.py` | `parse_llm_response(raw_json) -> ai.dtos.EntityResult` — validates types/relevance, normalizes names, deduplicates keeping highest relevance. |
+| `extractors/base.py` | `ExtractionStrategy` — a type alias, `Callable[[DocumentSegments, str \| None], Awaitable[EntityResult]]`, not a Protocol: the interface is one call, so a class would add a name and an instantiation and nothing else. Strategies take `DocumentSegments` so each decides what appendices mean to it. |
+| `extractors/rule_based.py` | Pure functions + `extract_rule_based_strategy` — regex extraction, handles Swedish inflections. |
+| `extractors/llm.py` | `extract_with_llm(segments, case_number=None, *, provider)` — delegates to `ai.extract_entities()` with **`segments.body`** only. |
+| `extractors/factory.py` | `create_extraction_strategy()` — builds the `ExtractStrategyMode`-selected strategy, composing `functools.partial`s for the two LLM-backed modes. |
 | `services/entity_service.py` | `persist_entities()` — deduplicates and upserts to `entities` + `document_entities`. |
 | `services/reference_service.py` | `process_references()`, `reconcile_references()` — routes references and reconciles lazy-unresolved refs. |
-| `services/extraction_service.py` | `process_extraction()` — validates + runs strategy + persists inside a `body()` wrapped by the shared task envelope. |
-| `config.py` | `ExtractSettings(BaseSettings)` — `EXTRACT_TOPIC`, `EXTRACT_NEXT_TOPIC`. |
-| `__main__.py` | Entry point — wires repos, registers handler, calls `subscriber.start()`. |
+| `services/extraction_service.py` | `process_extraction()` — validates + runs the injected `strategy` + persists inside a `body()` wrapped by the shared task envelope. |
+| `config.py` | `ExtractSettings(BaseSettings)` — `EXTRACT_TOPIC`, `EXTRACT_NEXT_TOPIC`, `EXTRACT_STRATEGY` (`ExtractStrategyMode`). |
+| `__main__.py` | Entry point — `subscribe()` wires repos, builds the strategy once via `create_extraction_strategy()`, and registers the handler; `main()` calls `shared.worker.serve()`. |
+
+Entity and reference DTOs (`ExtractedEntity`, `ExtractedReference`, `EntityResult`) live
+in [`ai.dtos`](/packages/ai.md) — this package has no DTOs of its own, since they were an
+identity copy of the `ai` ones under different names.
 
 ## Extraction strategies
 
-Selected by `EXTRACT_STRATEGY` (default `rule_based_with_llm_fallback`):
+Selected by `EXTRACT_STRATEGY` (default `rule_based_with_llm_fallback`, typed as
+`ExtractStrategyMode`). An unrecognised value is **fatal at startup**, naming the bad
+value, rather than silently falling back to the default:
 
 | Value | Behaviour |
 |---|---|
 | `rule_based` | Only regex-based extraction — fast, no LLM cost |
 | `llm` | Only LLM extraction via `ai.extract_entities()` |
 | `rule_based_with_llm_fallback` | Rule-based first; LLM runs only when the result is incomplete (zero entities or count below a length threshold); merged with rule-based winning deduplication |
+
+`create_extraction_strategy()` is called **once per process**, at `subscribe()` time —
+not once per document. The two LLM-backed modes build their `LLMProvider` there and
+close over it with `functools.partial`; `process_extraction()` takes the resulting
+`strategy` as a required parameter rather than looking one up inside the step body, the
+same "build once, inject" pattern every other worker uses for its provider — see
+[worker patterns](/pipeline/worker-patterns.md).
+
+### When the `structured` role has no model
+
+If [`llm_config.yaml`](/reference/llm-config.md) resolves `structured` to `kind: none`,
+`create_extraction_strategy()` decides what that means at startup — the same moment it
+picks a provider — rather than letting each document reach one that refuses:
+
+| Value | Behaviour with no model |
+|---|---|
+| `rule_based` | Unchanged; it never built a provider |
+| `rule_based_with_llm_fallback` | Degrades to its regex half, with a warning. The mode already treats the model as optional, and an off switch you have to remember to set twice is not an off switch |
+| `llm` | **Refuses to start** (`LLMDisabledError`). It was asked for explicitly, and quietly running the regex pass instead would run something the operator did not ask for, on a step whose output nothing downstream re-checks |
+
+This is what lets the pipeline run crawl through extract with no API key configured.
 
 ### Rule-based extraction
 

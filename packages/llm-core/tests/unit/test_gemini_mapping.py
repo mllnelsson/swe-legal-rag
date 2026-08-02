@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from llm_core._config import ProviderKind
 from llm_core._types import (
     LLMResponse,
     Message,
@@ -22,7 +23,7 @@ def _make_provider() -> GeminiProvider:
     provider._temperature = 0.0
     provider._max_tokens = None
     provider._client = MagicMock()
-    provider._provider_name = "gemini"
+    provider._provider_name = ProviderKind.GEMINI
     return provider
 
 

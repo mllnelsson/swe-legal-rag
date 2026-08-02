@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import re
 
-from worker_extract.models import ExtractedEntity, EntityRelevance
+from ai.dtos import ExtractedEntity
+from shared.enums import EntityRelevance
 
 __all__ = ["normalize_entity_name", "deduplicate_entities"]
 

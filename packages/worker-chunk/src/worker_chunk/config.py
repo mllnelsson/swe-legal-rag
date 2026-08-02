@@ -8,7 +8,7 @@ from shared.enums import PipelineStep
 class ChunkSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
-    chunk_topic: str = "chunk"
+    chunk_topic: PipelineStep = PipelineStep.CHUNK
     chunk_next_topic: PipelineStep = PipelineStep.EMBED
 
 

@@ -17,7 +17,7 @@ from shared.repositories import (
     UnresolvedReferenceRepo,
 )
 from shared.segmentation import split_document
-from worker_extract.extractors.factory import get_extraction_strategy
+from worker_extract.extractors.base import ExtractionStrategy
 from worker_extract.services.entity_service import persist_entities
 from worker_extract.services.reference_service import (
     process_references,
@@ -47,8 +47,17 @@ async def process_extraction(
     unresolved_repo: UnresolvedReferenceRepo,
     queue_publisher: QueuePublisher,
     session: AsyncSession,
+    strategy: ExtractionStrategy,
     next_topic: PipelineStep = PipelineStep.CHUNK,
 ) -> None:
+    """Extract entities and references from one document.
+
+    `strategy` is injected rather than looked up here: two of the three modes
+    construct an LLM provider, and building one per document is what a
+    factory call inside the step body used to do. Every other worker builds its
+    provider once at startup and passes it in.
+    """
+
     async def body() -> None:
         document = await document_repo.get_by_id(session, document_id)
         if document is None:
@@ -57,8 +66,7 @@ async def process_extraction(
             raise StepInputError(f"Document {document_id} has no raw text")
 
         segments = split_document(document.raw_text)
-        strategy = get_extraction_strategy()
-        result = await strategy.extract(segments, case_number=document.case_number)
+        result = await strategy(segments, document.case_number)
 
         await persist_entities(
             session, entity_repo, doc_entity_repo, document_id, result.entities

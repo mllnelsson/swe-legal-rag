@@ -1,10 +1,12 @@
-"""Berget-hosted embedding provider (OpenAI-compatible embeddings endpoint)."""
+"""Embedding provider for any OpenAI-compatible embeddings endpoint."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 from llm_core import LLMOperation, Usage, trace_context, trace_outcome, traced_call
+
+from ai.errors import MissingApiKeyError
 
 if TYPE_CHECKING:
     from ai.embedding import EmbeddingConfig
@@ -31,20 +33,20 @@ def _usage_from_embeddings(usage: Any) -> Usage | None:
     )
 
 
-class BergetEmbeddingProvider:
-    def __init__(self, config: EmbeddingConfig, *, default_base_url: str) -> None:
+class OpenAiCompatibleEmbeddingProvider:
+    def __init__(self, config: EmbeddingConfig) -> None:
         from openai import AsyncOpenAI
 
-        api_key = config.api_key or config.berget_api_key
-        if not api_key:
-            raise ValueError(
-                "An API key is required for BergetEmbeddingProvider "
-                "(api_key or berget_api_key)"
+        if not config.api_key:
+            raise MissingApiKeyError(
+                "An API key is required for OpenAiCompatibleEmbeddingProvider. "
+                "Set it via the provider's api_key_env in llm_config.yaml, or "
+                "LLM_API_KEY."
             )
 
         self._client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=config.base_url or default_base_url,
+            api_key=config.api_key,
+            base_url=config.base_url,
         )
         self._model = config.model
         self._provider_name = config.provider

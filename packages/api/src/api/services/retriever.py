@@ -24,10 +24,6 @@ from shared.search.rrf import rrf_fuse
 
 logger = logging.getLogger(__name__)
 
-# The query side of the embedding model's asymmetric prefix pair. Both sides
-# come from `llm_config.yaml` so they cannot drift apart — worker-embed reads
-# the passage half from the same place.
-
 # Per-chunk snippet length shown to the reranker LLM; keeps the prompt bounded.
 SNIPPET_CHARS = 400
 
@@ -178,19 +174,23 @@ async def retrieve(
     settings: RetrievalSettings,
     llm_provider: LLMProvider | None = None,
 ) -> list[RetrievedChunk]:
-    candidate_ids: list[uuid.UUID] | None
-    if _filter_is_empty(plan.filter):
-        candidate_ids = None
-    else:
-        candidates = await search_repo.find_candidate_documents(session, plan.filter)
-        if not candidates:
+    # None means "search everything". An empty filter and a filter that matched
+    # nothing both land there — the second deliberately, since an answer drawn
+    # from a wider net beats no answer at all.
+    candidate_ids = None
+    if not _filter_is_empty(plan.filter):
+        candidate_ids = await search_repo.find_candidate_documents(
+            session, plan.filter
+        )
+        if not candidate_ids:
             logger.warning(
                 "Filter yielded no candidates; falling back to unfiltered search"
             )
             candidate_ids = None
-        else:
-            candidate_ids = candidates
 
+    # The query side of the embedding model's asymmetric prefix pair. Both sides
+    # come from `llm_config.yaml` so they cannot drift apart — worker-embed
+    # reads the passage half from the same place.
     query_prefix, _ = get_embedding_prefixes()
     embeddings = await embedding_provider.embed([query_prefix + plan.semantic_query])
     query_embedding = embeddings[0]

@@ -21,7 +21,9 @@ from ai.errors import (
     LLMConfigInvalidError,
     LLMConfigNotFoundError,
     UnknownLLMRoleError,
+    UnsupportedEmbeddingBackendError,
 )
+from ai.providers.roles import LLMRole, llm_role_is_disabled
 from ai.llm_config import (
     CONFIG_FILENAME,
     CONFIG_PATH_ENV,
@@ -82,6 +84,18 @@ _DOCUMENT: dict[str, Any] = {
         "dimension": 1024,
         "query_prefix": "query: ",
         "passage_prefix": "passage: ",
+    },
+}
+
+
+# The same document with the `structured` role switched off, so the tests that
+# care about a disabled provider can also assert the other roles are unaffected.
+_DOCUMENT_WITH_NONE: dict[str, Any] = {
+    **_DOCUMENT,
+    "providers": {**_DOCUMENT["providers"], "off": {"kind": "none"}},
+    "roles": {
+        **_DOCUMENT["roles"],
+        "structured": {"provider": "off", "model": "unused-model"},
     },
 }
 
@@ -187,8 +201,11 @@ class TestEnvironmentPrecedence:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Env winning is intended; doing it invisibly is not."""
-        monkeypatch.setenv("LLM_PROVIDER", "berget")
+        """Env winning is intended; doing it invisibly is not.
+
+        The `elsewhere` role asks for the gemini host by name, so any other kind
+        in the environment masks it."""
+        monkeypatch.setenv("LLM_PROVIDER", "openai_compatible")
         document = load_config_document(_write(tmp_path))
 
         with caplog.at_level("WARNING"):
@@ -228,6 +245,20 @@ class TestValidation:
 
         with pytest.raises(LLMConfigInvalidError, match="nope"):
             load_config_document(_write(tmp_path, document))
+
+    def test_embedding_host_without_an_embeddings_client_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """Gemini is a declarable LLM host but has no embeddings client wired
+        up. The refusal names the YAML key so the fix is obvious; deferring it
+        to dispatch would surface as a mystery at the first embed call."""
+        document = {
+            **_DOCUMENT,
+            "embedding": {**_DOCUMENT["embedding"], "provider": "gemini"},
+        }
+
+        with pytest.raises(UnsupportedEmbeddingBackendError, match="gemini"):
+            resolve_embedding_config(load_config_document(_write(tmp_path, document)))
 
     def test_embedding_provider_may_be_local(self, tmp_path: Path) -> None:
         document = {
@@ -283,6 +314,81 @@ class TestValidation:
             load_config_document(path)
 
 
+class TestDisabledProvider:
+    """`kind: none` — a provider that is configured to not exist.
+
+    Its whole reason to be is that resolving and constructing it must succeed
+    with no credentials, so a process can run its non-LLM steps with no keys.
+    """
+
+    def test_none_kind_needs_no_api_key_env(self, tmp_path: Path) -> None:
+        document = load_config_document(_write(tmp_path, _DOCUMENT_WITH_NONE))
+
+        assert document.providers["off"].api_key_env is None
+        assert document.providers["off"].kind == ProviderKind.NONE
+
+    def test_every_other_kind_must_name_its_api_key_env(
+        self, tmp_path: Path
+    ) -> None:
+        """Making the field optional must not let a real host omit its key by
+        accident — that would resolve to `api_key=None` and fail much later."""
+        document = {
+            **_DOCUMENT,
+            "providers": {"berget": {"kind": "openai_compatible"}},
+            "defaults": {"provider": "berget"},
+        }
+
+        with pytest.raises(LLMConfigInvalidError, match="api_key_env"):
+            load_config_document(_write(tmp_path, document))
+
+    def test_role_pointed_at_it_resolves_with_no_credentials(
+        self, tmp_path: Path
+    ) -> None:
+        document = load_config_document(_write(tmp_path, _DOCUMENT_WITH_NONE))
+
+        config = resolve_role_config("structured", document)
+
+        assert config.provider == ProviderKind.NONE
+        assert config.api_key is None
+        assert config.base_url is None
+
+    def test_other_roles_are_untouched(self, tmp_path: Path) -> None:
+        """One role off is not every role off — that is what naming a provider
+        per role buys."""
+        document = load_config_document(_write(tmp_path, _DOCUMENT_WITH_NONE))
+
+        assert resolve_role_config("chat", document).provider == (
+            ProviderKind.OPENAI_COMPATIBLE
+        )
+
+    def test_llm_provider_env_disables_every_role(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The process-wide off switch, for running the pipeline with no keys."""
+        monkeypatch.setenv("LLM_PROVIDER", "none")
+        document = load_config_document(_write(tmp_path))
+
+        for role in ("structured", "chat", "elsewhere"):
+            assert resolve_role_config(role, document).provider == ProviderKind.NONE
+
+    def test_llm_role_is_disabled_reports_it(self, tmp_path: Path) -> None:
+        document = load_config_document(_write(tmp_path, _DOCUMENT_WITH_NONE))
+
+        assert llm_role_is_disabled(LLMRole.STRUCTURED, document) is True
+        assert llm_role_is_disabled(LLMRole.CHAT, document) is False
+
+    def test_embedding_cannot_use_it(self, tmp_path: Path) -> None:
+        """There is no null embedder and no need for one: `local` already
+        embeds with no host and no key."""
+        document = {
+            **_DOCUMENT_WITH_NONE,
+            "embedding": {**_DOCUMENT["embedding"], "provider": "off"},
+        }
+
+        with pytest.raises(UnsupportedEmbeddingBackendError, match="off"):
+            resolve_embedding_config(load_config_document(_write(tmp_path, document)))
+
+
 class TestDiscovery:
     def test_config_path_env_wins(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -334,9 +440,11 @@ class TestRoles:
         assert "rerank" in str(excinfo.value)
         assert "structured" in str(excinfo.value)
 
-    def test_a_role_added_to_the_file_needs_no_code_change(
+    def test_the_resolver_accepts_any_role_key_in_the_file(
         self, tmp_path: Path
     ) -> None:
+        """The resolver works on file keys, which are arbitrary. Restricting the
+        set to `LLMRole` is the job of `create_llm_provider` one layer up."""
         document = {
             **_DOCUMENT,
             "roles": {**_DOCUMENT["roles"], "rerank": {"model": "rerank-model"}},
@@ -405,8 +513,15 @@ class TestEmbedding:
 
 
 class TestShippedConfig:
-    def test_the_repo_config_loads_and_declares_the_roles_in_use(self) -> None:
-        """The one test that reads the real file — it must at least be valid."""
+    def test_the_repo_config_loads_and_declares_every_role_code_asks_for(self) -> None:
+        """The one test that reads the real file.
+
+        A role has two halves — an `LLMRole` member and a `roles:` entry — and
+        nothing but this test makes them agree. Deriving the expected set from
+        the enum rather than restating it means adding a member without a YAML
+        entry fails here, at build time, instead of at the first call that asks
+        for that provider.
+        """
         document = load_config_document(find_config_path())
 
-        assert {"structured", "summarize", "chat"} <= set(document.roles)
+        assert {role.value for role in LLMRole} <= set(document.roles)

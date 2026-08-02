@@ -8,6 +8,7 @@ import pytest
 from openai import omit
 from pydantic import BaseModel
 
+from llm_core._config import ProviderKind
 from llm_core._exceptions import ProviderError
 from llm_core._types import (
     LLMResponse,
@@ -30,7 +31,7 @@ def _make_provider(stream_usage: bool = True) -> OpenAiCompatibleProvider:
     provider._temperature = 0.0
     provider._max_tokens = None
     provider._client = MagicMock()
-    provider._provider_name = "berget"
+    provider._provider_name = ProviderKind.OPENAI_COMPATIBLE
     provider._stream_usage = stream_usage
     return provider
 
@@ -318,7 +319,7 @@ class TestResponseAttribution:
 
         assert result.usage == Usage(input_tokens=10, output_tokens=4, total_tokens=14)
         assert result.model == "test-model-2026-07-01"
-        assert result.provider == "berget"
+        assert result.provider == ProviderKind.OPENAI_COMPATIBLE
 
     @pytest.mark.asyncio
     async def test_model_falls_back_to_the_configured_name(self) -> None:

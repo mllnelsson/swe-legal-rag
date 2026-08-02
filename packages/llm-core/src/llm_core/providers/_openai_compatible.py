@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
-from llm_core._exceptions import ProviderError
+from llm_core._exceptions import MissingCredentialError, ProviderError
 from llm_core._types import (
     LLMResponse,
     Message,
@@ -40,25 +40,29 @@ def _usage_from_openai(usage: Any) -> Usage | None:
 class OpenAiCompatibleProvider:
     """Generic client for any OpenAI-chat-completions-compatible API.
 
-    Berget.ai is the first configured host (see `create_provider`'s "berget"
-    case), but this class takes no Berget-specific behavior — a future second
-    OpenAI-compatible host is a new `LLM_PROVIDER`/`LLM_BASE_URL` value, not a
-    new provider class.
+    Takes no host-specific behavior: a second OpenAI-compatible host is a new
+    `base_url`, not a new provider class. Both credentials are required rather
+    than defaulted — a wrong-but-present default silently sends traffic to the
+    wrong host, which is harder to diagnose than a refusal to start.
     """
 
-    def __init__(self, config: LLMConfig, *, default_base_url: str) -> None:
+    def __init__(self, config: LLMConfig) -> None:
         from openai import AsyncOpenAI
 
-        api_key = config.api_key or config.berget_api_key
-        if not api_key:
-            raise ValueError(
-                "An API key is required for OpenAiCompatibleProvider "
-                "(api_key or berget_api_key)"
+        if not config.api_key:
+            raise MissingCredentialError(
+                "An API key is required for OpenAiCompatibleProvider. Set it via "
+                "the provider's api_key_env in llm_config.yaml, or LLM_API_KEY."
+            )
+        if not config.base_url:
+            raise MissingCredentialError(
+                "A base URL is required for OpenAiCompatibleProvider. Set it via "
+                "the provider's base_url in llm_config.yaml, or LLM_BASE_URL."
             )
 
         self._client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=config.base_url or default_base_url,
+            api_key=config.api_key,
+            base_url=config.base_url,
         )
         self._model = config.model
         self._temperature = config.temperature

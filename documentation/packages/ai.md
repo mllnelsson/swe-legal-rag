@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-02T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -22,9 +22,10 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `services.py` | Five async service functions (below) |
 | `llm_config.py` | Reads `llm_config.yaml` — document models, discovery, and role/embedding resolution |
 | `embedding.py` | `EmbeddingProvider` Protocol, `create_embedding_provider` factory, `verify_embedding_dimension` |
-| `providers/berget_embeddings.py` | `BergetEmbeddingProvider` — Berget's hosted embedding API (default) |
+| `providers/openai_compatible_embeddings.py` | `OpenAiCompatibleEmbeddingProvider` — any OpenAI-compatible embeddings endpoint (Berget hosted, by default) |
 | `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers` (offline dev/test fallback) |
-| `providers/roles.py` | `create_llm_provider(role)` + the three named delegates (per-task model assignment, below) |
+| `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
+| `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step` (see [worker patterns](/pipeline/worker-patterns.md)) |
 | `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |
 | `prompts/_templates.py` | The five template constants |
 | `__init__.py` | Public API — service functions, embedding types, and DTOs |
@@ -114,22 +115,34 @@ and sometimes a different provider — per task, so the assignment lives in
 `llm_config.yaml` under `roles:`. See
 [the decision record](/decisions/llm-model-selection.md) for why.
 
+`LLMRole` (a `StrEnum`: `STRUCTURED`, `SUMMARIZE`, `CHAT`) is the closed set code asks
+for. **The role set has two halves that must agree** — adding a task needs both a new
+`LLMRole` member here and a matching entry under `roles:` in the YAML; the enum is what
+turns a misspelled role into a type error instead of a runtime `UnknownLLMRoleError`.
+
 | Role | Used by | Default (Berget model) |
 |---|---|---|
-| `structured` | `decompose_query`, `extract_metadata`, `extract_entities`, `retriever._rerank` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
-| `summarize` | `summarize_document` | `mistralai/Mistral-Medium-3.5-128B` |
-| `chat` | `synthesize_answer` | `zai-org/GLM-5.2` |
+| `LLMRole.STRUCTURED` | `decompose_query`, `extract_metadata`, `extract_entities`, `retriever._rerank` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
+| `LLMRole.SUMMARIZE` | `summarize_document` | `mistralai/Mistral-Medium-3.5-128B` |
+| `LLMRole.CHAT` | `synthesize_answer` | `zai-org/GLM-5.2` |
 
-`create_llm_provider(role)` builds the provider for any role declared in the file;
-`create_structured_llm_provider()`, `create_summarize_llm_provider()` and
-`create_chat_llm_provider()` are one-line delegates for the three that have call sites.
-**The role set is open** — declaring `rerank:` in the YAML is enough to call
-`create_llm_provider("rerank")`, with no Python change and no new environment variable.
-An undeclared role raises `UnknownLLMRoleError`.
+`create_llm_provider(role: LLMRole, document=None)` is the single function every
+composition root calls — there is no per-role delegate. Requesting a role the YAML does
+not declare raises `UnknownLLMRoleError`; `resolve_role_config`, one layer below, still
+takes a plain `str` because it resolves an arbitrary file key, but `LLMRole` is what call
+sites pass.
 
 Each composition root constructs the role-appropriate provider(s) once at startup and
 threads them into the call sites via the `provider=` keyword — no hidden global default
 in production.
+
+`llm_role_is_disabled(role, document=None)` answers whether the YAML assigns a role
+`kind: none` — no model at all — without building anything. It is for the callers that
+have a genuine no-model path and want to choose it at startup:
+[worker-extract](/pipeline/extract.md) is the only one today. Everything else builds the
+provider and lets it refuse, since constructing a `none` provider always succeeds and
+raises `LLMDisabledError` at the call that wanted a model. See
+[running with no LLM](/reference/llm-config.md).
 
 **Gemini caveat.** The defaults above are Berget model IDs and will not resolve against
 Gemini's API, so pointing a role at `provider: gemini` means changing its `model:` in the
@@ -140,13 +153,23 @@ same edit (e.g. `gemini-2.5-flash-lite`, since `gemini-2.0-flash` was shut down 
 
 `EmbeddingProvider` is a `@runtime_checkable` Protocol with one method:
 `async embed(texts) -> list[list[float]]`. `EmbeddingConfig` is defined in
-`ai/llm_config.py` (and re-exported here) and carries `provider`, `model`, `dimension`,
-`api_key` and `base_url`, resolved from `llm_config.yaml`'s `embedding:` block — the
-base URL and key variable come from the same `providers:` entry the LLM roles use, so
-one Berget account/key covers both. `create_embedding_provider()` dispatches on the
-resolved backend (`local`, or the host's kind) and lazy-imports the concrete class, so
-the heavy ML library loads only for the local provider and `openai` only for the hosted
-one.
+`ai/llm_config.py` (and re-exported here) and carries `provider` (an `EmbeddingBackend`),
+`model`, `dimension`, `api_key` and `base_url`, resolved from `llm_config.yaml`'s
+`embedding:` block — the base URL and key variable come from the same `providers:` entry
+the LLM roles use, so one Berget account/key covers both. `create_embedding_provider()`
+dispatches on the resolved backend (`local`, or `openai_compatible`) and lazy-imports the
+concrete class, so the heavy ML library loads only for the local provider and `openai`
+only for the hosted one; there is no fallback `case`, since a host whose kind has no
+embeddings client is already rejected earlier, by `resolve_embedding_config`.
+
+`EmbeddingBackend` (`local`, `openai_compatible`) is deliberately a subset of
+`llm_core.ProviderKind` plus `LOCAL` — its `OPENAI_COMPATIBLE` member takes its value
+*from* `ProviderKind.OPENAI_COMPATIBLE` so the two vocabularies cannot drift apart. Not
+every `ProviderKind` has an embeddings client wired up here: naming a provider whose
+`kind` is `gemini` under `embedding.provider` raises
+`ai.errors.UnsupportedEmbeddingBackendError` from `resolve_embedding_config`, at
+config-resolution time rather than at the first embed call, naming the offending YAML
+key.
 
 `verify_embedding_dimension(provider, config=None)` is the startup guard. It checks
 **three** declarations of the width against each other — `embedding.dimension` in the
@@ -159,17 +182,19 @@ Both sides come from one place so they cannot drift apart; the query half is use
 [retrieval agent](/retrieval/agent.md) and the passage half by
 [worker-embed](/pipeline/embed.md).
 
-- **`BergetEmbeddingProvider`** (default, `EMBEDDING_PROVIDER=berget`) — calls Berget's
-  hosted `intfloat/multilingual-e5-large` via `openai.AsyncOpenAI.embeddings.create()`.
-  **Traced**: embedding runs once per chunk over the whole corpus, so it is plausibly
-  the largest single line of token spend.
+- **`OpenAiCompatibleEmbeddingProvider`** (default; `embedding.provider: berget` in
+  `llm_config.yaml`) — calls Berget's hosted `intfloat/multilingual-e5-large` via
+  `openai.AsyncOpenAI.embeddings.create()`. Requires both `api_key` and `base_url`;
+  raises `ai.errors.MissingApiKeyError` if the key is missing. **Traced**: embedding runs
+  once per chunk over the whole corpus, so it is plausibly the largest single line of
+  token spend.
 - **`LocalEmbeddingProvider`** (`EMBEDDING_PROVIDER=local`) — `sentence-transformers`
   in-process; the offline dev/test fallback. **Not traced** — no API call, no token
   accounting, and a contribution of exactly zero to what a question cost.
 
-Tracing sits inside `BergetEmbeddingProvider` rather than in a wrapper: a wrapper
-implementing `EmbeddingProvider` could time the call but not see token usage, since
-`embed() -> list[list[float]]` has nowhere to put it. The embedded texts are not
+Tracing sits inside `OpenAiCompatibleEmbeddingProvider` rather than in a wrapper: a
+wrapper implementing `EmbeddingProvider` could time the call but not see token usage,
+since `embed() -> list[list[float]]` has nowhere to put it. The embedded texts are not
 recorded — they are chunk text already durable in Postgres — only their count and
 character total.
 

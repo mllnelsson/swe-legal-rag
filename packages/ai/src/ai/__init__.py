@@ -31,24 +31,19 @@ from ai.errors import (
     LLMConfigError,
     LLMConfigInvalidError,
     LLMConfigNotFoundError,
+    MissingApiKeyError,
     UnknownLLMRoleError,
+    UnsupportedEmbeddingBackendError,
 )
 from ai.llm_config import (
+    EmbeddingBackend,
     LLMConfigDocument,
     get_embedding_prefixes,
     get_llm_config,
     resolve_embedding_config,
     resolve_role_config,
 )
-from ai.providers.roles import (
-    ROLE_CHAT,
-    ROLE_STRUCTURED,
-    ROLE_SUMMARIZE,
-    create_chat_llm_provider,
-    create_llm_provider,
-    create_structured_llm_provider,
-    create_summarize_llm_provider,
-)
+from ai.providers.roles import LLMRole, create_llm_provider, llm_role_is_disabled
 from ai.services import (
     decompose_query,
     extract_entities,
@@ -56,6 +51,7 @@ from ai.services import (
     summarize_document,
     synthesize_answer,
 )
+from ai.worker import worker_trace_scope
 
 __all__ = [
     # Observability. Every process making LLM calls installs tracing once at
@@ -63,24 +59,21 @@ __all__ = [
     "install_file_tracing",
     "LLMTraceConfig",
     "trace_context",
+    "worker_trace_scope",
     # Service functions
     "decompose_query",
     "extract_metadata",
     "extract_entities",
     "summarize_document",
     "synthesize_answer",
-    # Per-task model assignment, resolved from llm_config.yaml. A role is a
-    # name declared in that file; the three constants are the ones with call
-    # sites, not the whole set.
+    # Per-task model assignment. A role is an LLMRole member plus a matching
+    # entry under `roles:` in llm_config.yaml; both halves are required.
     "create_llm_provider",
-    "create_structured_llm_provider",
-    "create_summarize_llm_provider",
-    "create_chat_llm_provider",
-    "ROLE_STRUCTURED",
-    "ROLE_SUMMARIZE",
-    "ROLE_CHAT",
+    "LLMRole",
+    "llm_role_is_disabled",
     # Configuration
     "LLMConfigDocument",
+    "EmbeddingBackend",
     "get_llm_config",
     "resolve_role_config",
     "resolve_embedding_config",
@@ -93,6 +86,8 @@ __all__ = [
     # Errors
     "AiError",
     "EmbeddingDimensionMismatchError",
+    "UnsupportedEmbeddingBackendError",
+    "MissingApiKeyError",
     "LLMConfigError",
     "LLMConfigNotFoundError",
     "LLMConfigInvalidError",

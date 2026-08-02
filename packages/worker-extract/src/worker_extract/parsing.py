@@ -3,14 +3,9 @@ from __future__ import annotations
 import json
 import logging
 
+from ai.dtos import EntityResult, ExtractedEntity, ExtractedReference
+from shared.enums import EntityRelevance, EntityType
 from worker_extract.entities import deduplicate_entities, normalize_entity_name
-from worker_extract.models import (
-    EntityType,
-    ExtractionResult,
-    ExtractedEntity,
-    ExtractedReference,
-    EntityRelevance,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +23,7 @@ def _deduplicate_references(
     return list(seen.values())
 
 
-def parse_llm_response(raw_json: str) -> ExtractionResult:
+def parse_llm_response(raw_json: str) -> EntityResult:
     try:
         data = json.loads(raw_json)
     except json.JSONDecodeError as exc:
@@ -71,7 +66,7 @@ def parse_llm_response(raw_json: str) -> ExtractionResult:
             )
         )
 
-    return ExtractionResult(
+    return EntityResult(
         entities=deduplicate_entities(entities),
         references=_deduplicate_references(references),
     )

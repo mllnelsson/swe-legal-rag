@@ -55,6 +55,18 @@ traffic. Without it a mismatch surfaced only at the embed step as
 `EmbeddingDimensionError` — after crawl, download, parse, metadata, extract and chunk had
 already run.
 
+The width it returns is what the model actually produced, and worker-embed threads that
+into `process_embedding(expected_dimension=...)`. The per-document check is therefore
+against an observed value carried down from the same resolved `EmbeddingConfig` as the
+provider, rather than against `shared.config.EMBEDDING_DIMENSION` — which nothing ties
+to the provider doing the work.
+
+`shared.config.EMBEDDING_DIMENSION` still exists for the two consumers below the
+`shared`/`ai` line: the `chunks.embedding` column width and this guard's own
+configured-vs-configured comparison. That `shared` must restate the value at all is a
+consequence of the dependency direction — `ai` depends on `shared`, so the YAML cannot
+reach a SQLAlchemy column definition — and is the reason this guard has to exist.
+
 The check is written against the `EmbeddingProvider` Protocol, not the local provider, so
 a future HTTP-backed provider (such as the default [Berget-hosted
 one](/decisions/embedding-hosting.md)) is covered unchanged. Because it performs a real
