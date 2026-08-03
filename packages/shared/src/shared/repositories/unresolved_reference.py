@@ -43,6 +43,22 @@ async def get_by_target_case_number(
     return [UnresolvedReferenceRead.model_validate(row) for row in result.scalars()]
 
 
+async def get_by_source_document_id(
+    session: AsyncSession, document_id: uuid.UUID
+) -> list[UnresolvedReferenceRead]:
+    """Citations this document makes that point outside the corpus.
+
+    Shown alongside resolved references so a reader can tell "cites nothing else"
+    apart from "cites decisions we do not hold".
+    """
+    result = await session.execute(
+        select(UnresolvedReference)
+        .where(UnresolvedReference.source_document_id == document_id)
+        .order_by(UnresolvedReference.target_case_number)
+    )
+    return [UnresolvedReferenceRead.model_validate(row) for row in result.scalars()]
+
+
 async def delete(session: AsyncSession, ref_id: uuid.UUID) -> None:
     ref = await session.get(UnresolvedReference, ref_id)
     if ref is not None:

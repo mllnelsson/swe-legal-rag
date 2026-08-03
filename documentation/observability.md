@@ -197,9 +197,15 @@ discarded.
 
 `source` says **what the call is**, not who asked for it — *who* is
 `interaction_id` or `document_id`. Values: `ai.decompose_query`,
-`ai.extract_metadata`, `ai.extract_entities`, `ai.summarize_document`,
-`ai.synthesize_answer`, `ai.embed`, `api.retriever.rerank`. Contexts nest and
-merge; on a key collision the innermost wins.
+`ai.expand_query`, `ai.extract_metadata`, `ai.extract_entities`,
+`ai.summarize_document`, `ai.synthesize_answer`, `ai.embed`,
+`api.retriever.rerank`. Contexts nest and merge; on a key collision the
+innermost wins.
+
+`ai.expand_query` is the only source that appears on the otherwise LLM-free
+[deterministic search](/retrieval/deterministic-search.md) path, and only when a
+caller sets `expand: true`. Its absence from a search's trace is therefore
+meaningful: it says the result was reproducible without a model.
 
 The outer attribution set by a worker or by the manual runner is its own name —
 `worker-chunk`, `worker-embed`, `worker-extract`, `worker-metadata`, or

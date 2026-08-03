@@ -19,6 +19,7 @@ from ai.dtos import (
     DecomposeResult,
     EntityResult,
     MetadataResult,
+    QueryExpansionResult,
     SummarizeResult,
     SynthesizeRequest,
 )
@@ -28,6 +29,7 @@ from ai.prompts import (
     ENTITY_EXTRACTION,
     METADATA_EXTRACTION,
     QUERY_DECOMPOSITION,
+    QUERY_EXPANSION,
     render,
 )
 
@@ -38,6 +40,7 @@ from ai.prompts import (
 # The prompt name would otherwise be lost: `render()` returns a plain message
 # list, so nothing downstream can tell which template produced it.
 _SOURCE_DECOMPOSE = "ai.decompose_query"
+_SOURCE_EXPAND = "ai.expand_query"
 _SOURCE_METADATA = "ai.extract_metadata"
 _SOURCE_ENTITIES = "ai.extract_entities"
 _SOURCE_SUMMARIZE = "ai.summarize_document"
@@ -59,6 +62,26 @@ async def decompose_query(
     messages = render(QUERY_DECOMPOSITION, context)
     with trace_context(source=_SOURCE_DECOMPOSE, prompt=QUERY_DECOMPOSITION.name):
         return await generate_structured(messages, DecomposeResult, provider=provider)
+
+
+async def expand_query(
+    question: str,
+    *,
+    max_variants: int,
+    provider: LLMProvider | None = None,
+) -> QueryExpansionResult:
+    """Alternative phrasings of a search question.
+
+    Stateless by design — no conversation history, no filters, no rewritten
+    "best" query. It answers only "what else could this have been called", which
+    is what keeps it a search-tool concern rather than a planner's.
+    """
+    context = {"question": question, "max_variants": max_variants}
+    messages = render(QUERY_EXPANSION, context)
+    with trace_context(source=_SOURCE_EXPAND, prompt=QUERY_EXPANSION.name):
+        return await generate_structured(
+            messages, QueryExpansionResult, provider=provider
+        )
 
 
 async def extract_metadata(

@@ -1,15 +1,18 @@
 ---
 type: Concept
 title: Query / Retrieval Agent
-description: The five-step query agent — decompose, pre-filter, hybrid retrieve (RRF), optional rerank, synthesize — plus session context.
-tags: [retrieval, agent, rrf, hybrid-search, synthesis]
-timestamp: 2026-08-01T00:00:00Z
+description: The five-step query agent — decompose, pre-filter, hybrid retrieve (RRF), optional rerank, synthesize — plus session context. Documents the deprecated chat path; see deterministic search for the non-agent alternative.
+tags: [retrieval, agent, rrf, hybrid-search, synthesis, deprecated]
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Query / Retrieval Agent
 
 The retrieval pipeline behind the [chat endpoint](/api/chat-endpoint.md), implemented in
-the [api package](/packages/api.md) service layer.
+the [api package](/packages/api.md) service layer. That endpoint is now **deprecated
+but retained** — this concept documents the deprecated chat path. For the LLM-free
+alternative that backs `POST /api/search`, see [deterministic
+search](/retrieval/deterministic-search.md).
 
 ## Step 1 — Query decomposition
 

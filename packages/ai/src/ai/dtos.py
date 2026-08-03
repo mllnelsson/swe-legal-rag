@@ -33,6 +33,22 @@ class DecomposeResult(BaseModel):
     include_appendices: bool = False
 
 
+class QueryExpansionRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    question: str
+    max_variants: int
+
+
+class QueryExpansionResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    # Alternative phrasings only — deliberately no filters and no rewritten
+    # "best" query. Expansion adds rankings to the fusion; it never replaces the
+    # question the caller asked, so it cannot lose a hit the original found.
+    variants: list[str]
+
+
 class ChunkContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 

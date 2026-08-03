@@ -8,7 +8,7 @@ import pytest
 
 from api.config import RetrievalSettings
 from api.services.query_planner import QueryPlan
-from api.services.retriever import RetrievedChunk, _filter_is_empty, retrieve
+from api.services.retriever import RetrievedChunk, retrieve
 from shared.dtos.document import DocumentRead
 from shared.dtos.search import ChunkSearchResult, DocumentFilter
 from shared.enums import ChunkSection
@@ -70,28 +70,6 @@ def _doc(doc_id: uuid.UUID) -> DocumentRead:
         created_at=__import__("datetime").datetime.now(),
         updated_at=__import__("datetime").datetime.now(),
     )
-
-
-class TestFilterIsEmpty:
-    def test_empty_filter_is_empty(self):
-        assert _filter_is_empty(DocumentFilter()) is True
-
-    def test_date_from_makes_non_empty(self):
-        assert _filter_is_empty(DocumentFilter(date_from=date(2023, 1, 1))) is False
-
-    def test_category_makes_non_empty(self):
-        assert _filter_is_empty(DocumentFilter(category="Kyrkogård")) is False
-
-    def test_entity_names_makes_non_empty(self):
-        assert _filter_is_empty(DocumentFilter(entity_names=["kyrkorådet"])) is False
-
-    def test_entity_types_makes_non_empty(self):
-        assert _filter_is_empty(DocumentFilter(entity_types=["PERSON"])) is False
-
-    def test_references_case_number_makes_non_empty(self):
-        assert (
-            _filter_is_empty(DocumentFilter(references_case_number="123/2020")) is False
-        )
 
 
 class TestRetrieve:

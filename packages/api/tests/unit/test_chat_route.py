@@ -20,7 +20,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.main import create_app
-from api.routes.chat import _format_sse, _get_db
+from api.dependencies import get_db
+from api.routes.chat import _format_sse
 from api.services.answerer import DoneEvent, SourcesEvent, TokenEvent
 from shared.dtos.session import SessionRead
 
@@ -53,7 +54,7 @@ def _make_client():
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield mock_db
 
-    app.dependency_overrides[_get_db] = override_get_db
+    app.dependency_overrides[get_db] = override_get_db
     return app, TestClient(app)
 
 

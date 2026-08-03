@@ -5,12 +5,14 @@ from ai.prompts._templates import (
     ENTITY_EXTRACTION,
     METADATA_EXTRACTION,
     QUERY_DECOMPOSITION,
+    QUERY_EXPANSION,
 )
 
 __all__ = [
     "PromptTemplate",
     "render",
     "QUERY_DECOMPOSITION",
+    "QUERY_EXPANSION",
     "ANSWER_SYNTHESIS",
     "METADATA_EXTRACTION",
     "ENTITY_EXTRACTION",

@@ -1,13 +1,31 @@
 ---
 type: API Endpoint
 title: Chat Endpoint (POST /api/chat)
-description: The POST /api/chat Server-Sent Events contract — request shape, streamed token/sources/done events, and mid-stream error semantics.
+description: Deprecated but retained — the POST /api/chat Server-Sent Events contract — request shape, streamed token/sources/done events, and mid-stream error semantics.
 resource: POST /api/chat
-tags: [api, sse, chat, contract]
-timestamp: 2026-07-26T00:00:00Z
+tags: [api, sse, chat, contract, deprecated]
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
+
+## Deprecated — retained, not deleted
+
+`POST /api/chat` renders as `deprecated` in the OpenAPI schema and Swagger UI. The
+`api` package's purpose is a deterministic retrieval tool set — the [search,
+documents and concepts endpoints](/api/index.md) reach the corpus with no LLM in
+the request path except the query embedding and the opt-in [query
+expander](/retrieval/query-expansion.md). This endpoint is the one surface left that
+is LLM-driven, stateful (sessions) and streaming — the agent, not the tool set —
+and is expected to move to a future `agent` package that consumes the retrieval API
+rather than living beside it. See [the api package](/packages/api.md) for the exact
+extraction set.
+
+This is an ownership marker, not a compatibility window: [nothing is
+deployed](/reference/deployment-state.md), so there is no consumer to give migration
+time to. It is deprecated rather than deleted because it is working, tested code the
+future agent will want intact. Nothing below this section has changed — the contract
+still behaves exactly as described.
 
 The single wire contract between the [frontend](/frontend/overview.md) chat UI and the
 backend. All LLM interaction is streamed end-to-end: the API streams from the LLM

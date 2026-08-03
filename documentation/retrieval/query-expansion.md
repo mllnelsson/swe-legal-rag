@@ -1,0 +1,75 @@
+---
+type: Concept
+title: Query Expansion
+description: Opt-in, additive query expansion for the search API — ai.expand_query proposes alternate phrasings that add rankings to the same RRF fusion rather than replacing the original query, keeping search deterministic and replayable.
+tags: [retrieval, search, query-expansion, llm]
+timestamp: 2026-08-03T00:00:00Z
+---
+
+# Query Expansion
+
+An opt-in step in [deterministic search](/retrieval/deterministic-search.md), off by
+default (`SearchQuery.expand: false`). It answers one narrow question — "what else could
+this question have been called" — and nothing more.
+
+`ai.expand_query(question, *, max_variants, provider) -> QueryExpansionResult(variants:
+list[str])` renders the `QUERY_EXPANSION` prompt and is traced as
+`source="ai.expand_query"` (see [LLM Observability](/observability.md)).
+
+## Additive, never a replacement
+
+Variants become extra rankings fused into the same call to `rrf_fuse_scored` alongside
+the ranking for the original `query`. The original query's ranking is never dropped, so
+expansion can only add hits — it cannot cause the original query's own best result to be
+lost. This is what makes `expand: true` safe to turn on by default for a caller with no
+model of its own: the worst case is no improvement, not a regression.
+
+## No filter inference
+
+`QueryExpansionResult` carries only `variants: list[str]` — no dates, categories, or
+entity names. Inferring structured filters from a paraphrase would risk silently
+overriding a caller's explicit `filter`, and there is no good arbitration rule for "the
+model's guessed date range" versus "the filter the client actually sent." Expansion stays
+out of that question entirely; filters are always exactly what the caller passed.
+
+## Text arm only by default
+
+`search_expand_vector_arm` defaults to `false`, so only the lexical (`text_search`) arm
+searches every variant; the vector arm embeds only the original `query`. Reasoning:
+variants change which stems `websearch_to_tsquery('swedish', …)` matches, which is
+exactly what the lexical arm needs help with. The vector arm already matches
+semantically, and a paraphrase tends to blur the embedding rather than sharpen it, so
+expanding it by default would cost more than it gives.
+
+## Determinism and replay
+
+- `queries` lets a caller supply its own phrasings directly — an agent that has already
+  reinterpreted the user's question passes them here, bypassing the model call entirely.
+- `expand: true` is the convenience for a caller with no model of its own: it merely
+  *produces* variants via `ai.expand_query`, then runs the identical deterministic path
+  as if they had been passed as `queries`.
+- `effective_queries` is always echoed on the response — the exact set of phrasings
+  searched, whether they came from `queries`, from expansion, or from `query` alone. A
+  caller can replay an expanded search exactly by resending `effective_queries` as
+  `queries` with `expand: false`.
+
+## Why not `plan_query` / `ai.decompose_query`
+
+The [chat query planner](/retrieval/agent.md) takes conversation history and returns
+filters, categories, and entity references — a chat planner, not an expander. Reusing it
+here was deliberately rejected: it answers a different question (what does this
+conversation imply about the query) and would reintroduce the filter-inference problem
+expansion avoids. Both `plan_query` and `ai.decompose_query` are untouched and remain
+chat-owned; `ai.expand_query` is stateless by design — no conversation history, no
+filters, no rewritten "best" query.
+
+## Failure handling
+
+An `ai.expand_query` failure is logged and swallowed; the search proceeds with the
+original query alone (`diagnostics.expanded: false`). This mirrors the chat retriever's
+`_rerank()` fail-open behavior — losing expansion costs recall, not the request.
+
+Configuration lives on `SearchSettings`: `search_max_query_variants` (default 3) caps
+how many variants are requested or accepted regardless of source. See [deterministic
+search](/retrieval/deterministic-search.md) and the [ai package](/packages/ai.md) for the
+prompt and service function.

@@ -14,6 +14,8 @@ from ai.dtos import (
     ExtractedReference,
     MetadataRequest,
     MetadataResult,
+    QueryExpansionRequest,
+    QueryExpansionResult,
     SourceCitation,
     SummarizeRequest,
     SummarizeResult,
@@ -47,6 +49,7 @@ from ai.llm_config import (
 from ai.providers.roles import LLMRole, create_llm_provider, llm_role_is_disabled
 from ai.services import (
     decompose_query,
+    expand_query,
     extract_entities,
     extract_metadata,
     summarize_document,
@@ -70,6 +73,7 @@ __all__ = [
     "worker_trace_scope",
     # Service functions
     "decompose_query",
+    "expand_query",
     "extract_metadata",
     "extract_entities",
     "summarize_document",
@@ -117,6 +121,8 @@ __all__ = [
     "SourceCitation",
     "MetadataRequest",
     "MetadataResult",
+    "QueryExpansionRequest",
+    "QueryExpansionResult",
     "EntityRequest",
     "EntityResult",
     "ExtractedEntity",

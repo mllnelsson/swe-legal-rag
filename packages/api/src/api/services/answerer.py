@@ -14,9 +14,12 @@ from api.services.retriever import RetrievedChunk, retrieve
 from api.services.session_service import append_turn
 from shared.enums import ChunkSection
 from shared.storage.base import StorageBackend
+from shared.storage.keys import document_pdf_key
+
+# DEPRECATED — chat-surface service, slated to move out of the api package with
+# POST /api/chat. See /api/chat-endpoint.md.
 
 EXCERPT_MAX_LEN = 200
-_PDF_KEY = "documents/{document_id}/original.pdf"
 # Retrieval already ranks chunks; synthesis does not re-score them, so every
 # chunk is passed to the LLM with the same nominal relevance.
 _DEFAULT_CHUNK_SCORE = 1.0
@@ -56,9 +59,8 @@ class SourceReference(BaseModel):
 def _pdf_url(document_id: uuid.UUID, storage: StorageBackend | None) -> str | None:
     if storage is None:
         return None
-    key = _PDF_KEY.format(document_id=document_id)
     try:
-        return storage.get_url(key)
+        return storage.get_url(document_pdf_key(document_id))
     except Exception:
         return None
 

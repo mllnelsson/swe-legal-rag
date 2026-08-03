@@ -4,7 +4,7 @@ title: shared Package
 description: The single source of truth for data and database access — models, DTOs, enums, errors, the task envelope, config, and the storage/queue infrastructure abstractions.
 resource: packages/shared
 tags: [package, shared, models, dtos, infrastructure]
-timestamp: 2026-07-27T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # shared Package (`packages/shared/`)
@@ -46,9 +46,17 @@ Pydantic v2 models per entity: `*Create` (insert input, omits server-generated f
 the progressive-fill pattern). The repo layer enforces the DTO boundary: ORM objects
 never escape past the repository. Finite-set DTO fields carry enum *values* but are typed
 `str` — see the [architectural register](/decisions/architectural-register.md).
-`shared/dtos/search.py` holds `DocumentFilter` (all-optional filter criteria) and
-`ChunkSearchResult`; the `ai`→`DocumentFilter` mapping lives in `api`, since `shared` must
+`shared/dtos/search.py` holds `DocumentFilter` (all-optional filter criteria — including
+exact-match `case_number`/`decision_number`, distinct from the citation-traversal
+`references_case_number`), `ChunkSearchResult`, and the facet types `FacetValue`/
+`DocumentFacets`; the `ai`→`DocumentFilter` mapping lives in `api`, since `shared` must
 not import from `ai`.
+
+Several DTOs exist purely to carry a **joined read** — an edge with the other side
+already resolved to names/case numbers, so a route does not cost a lookup per row:
+`DocumentEntityDetail`/`EntityDocumentRef` (`dtos/document_entity.py`),
+`ReferenceEdge`/`ReferenceEdges` (`dtos/document_reference.py`), and `EntityWithCount`
+(`dtos/entity.py`). The plain `*Read` DTOs they sit alongside carry bare ids only.
 
 ## `enums.py`
 
@@ -87,9 +95,21 @@ seam.
 
 ## `search/`
 
-`shared/search/rrf.py` provides `rrf_fuse(rankings, k=60) -> list[UUID]` — a pure,
-stateless reciprocal rank fusion (`Σ 1/(k + rank_i)`), consumed by the
-[retrieval agent](/retrieval/agent.md).
+`shared/search/rrf.py` provides `rrf_fuse_scored(rankings, k=DEFAULT_RRF_K) ->
+list[tuple[UUID, float]]` — a pure, stateless reciprocal rank fusion (`Σ 1/(k +
+rank_i)`) that keeps the fused score and takes arbitrarily many rankings, and
+`rrf_fuse(rankings, k=DEFAULT_RRF_K) -> list[UUID]`, a thin wrapper dropping the score.
+`DEFAULT_RRF_K = 60` is the named damping constant both use by default. Consumed by the
+[retrieval agent](/retrieval/agent.md) (`rrf_fuse`) and [deterministic
+search](/retrieval/deterministic-search.md) (`rrf_fuse_scored`, which is what lets an
+unbounded number of query-expansion variants fuse through the same call as the two
+search arms).
+
+`shared/search/filters.py` provides `is_empty_filter(document_filter: DocumentFilter) ->
+bool`, derived via `model_dump(exclude_defaults=True)` rather than enumerating fields by
+hand, so a `DocumentFilter` field added later cannot silently go unconsidered. Both the
+chat retriever and the search service call it; it replaced a hand-enumerated
+`retriever._filter_is_empty`.
 
 ## `db.py`
 
@@ -115,6 +135,13 @@ backend from env vars — making local ↔ GCP a config change (see
 `get_url`. `LocalStorageBackend` (under `LOCAL_STORAGE_PATH`) and `GCSStorageBackend`
 (wraps `google-cloud-storage`, needs `GCS_BUCKET`). `create_storage_backend(settings)`
 lazy-imports GCS libs. Optional dep: `uv add 'shared[gcs]'`.
+
+`shared/storage/keys.py` provides `document_pdf_key(document_id) -> str` —
+`documents/{id}/original.pdf`. It replaces the same literal template that used to be
+duplicated in the [download](/pipeline/download.md) and [parse](/pipeline/parse.md)
+workers and in `api/services/answerer.py`; all three, plus the new [PDF
+endpoint](/api/document-pdf.md), now call the one helper, since the layout is a contract
+shared across packages rather than any one caller's detail.
 
 ### Why it is only a blob store
 

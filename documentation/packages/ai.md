@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -19,7 +19,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 |---|---|
 | `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
 | `_observability.py` | `FileTraceRecorder`, `LLMTraceConfig`, `install_file_tracing()` — writes LLM traces to file storage |
-| `services.py` | Five async service functions (below) |
+| `services.py` | Six async service functions (below) |
 | `llm_config.py` | Reads `llm_config.yaml` — document models, discovery, and role/embedding resolution |
 | `embedding.py` | `EmbeddingProvider` Protocol, `create_embedding_provider` factory, `verify_embedding_dimension` |
 | `tokenization.py` | Measures text in the embedding model's own tokens: `EmbeddingRuler`, `create_embedding_ruler()`, `verify_embedding_window()`, `SPECIAL_TOKEN_COUNT`. The only module that imports `transformers`. |
@@ -38,16 +38,22 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 returns a plain message list, so nothing downstream could otherwise tell which template
 produced it. Rendering is a **free function** `render(template, context) ->
 list[Message]` — it substitutes variables via `str.format_map(context)` and returns
-`[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Five template constants
+`[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Six template constants
 cover every use case:
 
 | Constant | Output format | User template variables |
 |---|---|---|
 | `QUERY_DECOMPOSITION` | JSON (`DecomposeResult` schema) | `{question}`, `{conversation_history}` |
+| `QUERY_EXPANSION` | JSON (`QueryExpansionResult` schema) | `{question}`, `{max_variants}` |
 | `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{conversation_history}` |
 | `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
 | `ENTITY_EXTRACTION` | JSON (`EntityResult` schema) | `{raw_text}`, `{case_number}` |
 | `DOCUMENT_SUMMARIZATION` | Plain Swedish text | `{raw_text}` |
+
+`QUERY_EXPANSION`'s cap on variant count lives in the user template, not the system
+prompt: `render()` only formats the user template with `context`, so a `{max_variants}`
+placeholder in the system prompt would reach the model verbatim instead of being
+substituted.
 
 All JSON-outputting templates embed the exact field schema in their system prompt, and
 all prompts instruct the model to work in Swedish.
@@ -57,6 +63,7 @@ all prompts instruct the model to work in Swedish.
 | Function | LLM call |
 |---|---|
 | `decompose_query(question, conversation_history=None, *, provider=None) -> DecomposeResult` | `generate_structured` |
+| `expand_query(question, *, max_variants, provider=None) -> QueryExpansionResult` | `generate_structured` |
 | `extract_metadata(raw_text, *, provider=None) -> MetadataResult` | `generate_structured` |
 | `extract_entities(raw_text, case_number=None, *, provider=None) -> EntityResult` | `generate_structured` |
 | `summarize_document(raw_text, *, provider=None) -> SummarizeResult` | `generate` |
@@ -66,6 +73,13 @@ all prompts instruct the model to work in Swedish.
 `[Mål {case_number}]` prefixes, renders `ANSWER_SYNTHESIS`, and yields tokens without
 buffering.
 
+`expand_query` is stateless by design — no conversation history, no filters, no
+rewritten "best" query, unlike `decompose_query`. It answers only "what else could this
+question have been called," which is what keeps it a search-tool concern rather than a
+chat planner's; see [query expansion](/retrieval/query-expansion.md) for the full
+rationale and how its output is consumed by [deterministic
+search](/retrieval/deterministic-search.md).
+
 ## Domain DTOs (`ai/dtos.py`)
 
 All DTOs are `frozen=True` Pydantic v2 models; consumers depend on them, so fields are not
@@ -74,6 +88,7 @@ removed or renamed.
 | Domain | Request | Result |
 |---|---|---|
 | Query decomposition | `DecomposeRequest` | `DecomposeResult` (with `DateFilter`) |
+| Query expansion | `QueryExpansionRequest` (`question`, `max_variants`) | `QueryExpansionResult` (`variants: list[str]` — alternative phrasings only, deliberately no filters and no rewritten "best" query) |
 | Answer synthesis | `SynthesizeRequest` (with `ChunkContext`) | streaming `str` tokens; `SourceCitation` for UI |
 | Metadata extraction | `MetadataRequest` | `MetadataResult` |
 | Entity & reference extraction | `EntityRequest` | `EntityResult` (with `ExtractedEntity`, `ExtractedReference`) |

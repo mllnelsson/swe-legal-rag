@@ -10,6 +10,7 @@ from shared.pipeline import StepInputError, run_pipeline_step
 from shared.queue.base import QueueMessage, QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
 from shared.storage.base import StorageBackend
+from shared.storage.keys import document_pdf_key
 from worker_download.errors import DownloadError
 
 logger = logging.getLogger(__name__)
@@ -94,8 +95,7 @@ async def process_download(
             return
 
         pdf_bytes = _download_pdf(document.source_url, timeout, max_retries)
-        key = f"documents/{document.id}/original.pdf"
-        uri = storage.store(key, pdf_bytes)
+        uri = storage.store(document_pdf_key(document.id), pdf_bytes)
         await document_repo.update(session, document.id, DocumentUpdate(gcs_uri=uri))
         time.sleep(rate_limit_delay)
 

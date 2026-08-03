@@ -1,3 +1,22 @@
 # API
 
-* [Chat Endpoint (POST /api/chat)](chat-endpoint.md) - The POST /api/chat Server-Sent Events contract — request shape, streamed token/sources/done events, and mid-stream error semantics.
+## Chat (deprecated)
+
+* [Chat Endpoint (POST /api/chat)](chat-endpoint.md) - Deprecated but retained — the POST /api/chat Server-Sent Events contract — request shape, streamed token/sources/done events, and mid-stream error semantics.
+
+## Search
+
+* [Search Endpoint (POST /api/search)](search.md) - The POST /api/search hybrid search contract — free-text query plus explicit filters, document-grouped hits with full chunk text and per-arm ranks, and a diagnostics block that makes ranking auditable.
+* [Filters Endpoint (GET /api/filters)](filters.md) - The GET /api/filters facet-vocabulary contract — the category, decision-outcome and entity-type values a search filter will actually match, plus the corpus's date range and size.
+
+## Documents
+
+* [Documents Endpoint (GET /api/documents)](documents.md) - The GET /api/documents paginated metadata-only browse contract — filters spelled out as query parameters, mirroring DocumentFilter, so a filtered view is a plain shareable link.
+* [Document Detail Endpoint (GET /api/documents/{id})](document-detail.md) - The GET /api/documents/{id} contract — one decision's identity, section counts, legal concepts/regulations/roles/parishes, and both directions of its citation graph, in one call.
+* [Document Chunks Endpoint (GET /api/documents/{id}/chunks)](document-chunks.md) - The GET /api/documents/{id}/chunks contract — a decision's full text in reading order, chunk by chunk, optionally scoped to one section.
+* [Document PDF Endpoint (GET /api/documents/{id}/pdf)](document-pdf.md) - The GET /api/documents/{id}/pdf contract — the original PDF streamed inline as application/pdf, proxied through the API rather than a signed storage URL.
+
+## Concepts (entities)
+
+* [Concepts Endpoint (GET /api/concepts)](concepts.md) - The GET /api/concepts contract — browsing the knowledge graph's nodes (legal concepts, regulations, roles, parishes) with the document count each carries, optionally filtered by type or name.
+* [Concept Documents Endpoint (GET /api/concepts/{id}/documents)](concept-documents.md) - The GET /api/concepts/{id}/documents contract — every decision carrying a given entity, the reverse traversal hop from a concept back to the decisions that name it.

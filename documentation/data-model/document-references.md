@@ -4,7 +4,7 @@ title: document_references
 description: Resolved cross-citations between decisions — one decision citing another as precedent.
 resource: postgres://document_references
 tags: [data-model, table, references, graph]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # `document_references`
@@ -31,3 +31,7 @@ disjoint, so the reference string itself selects the column. Only citations foun
 decision **body** are recorded: the trailer holds the document's own identifiers, and an
 appendix citation belongs to the appealed instance rather than to Överklagandenämnden.
 See [decision document structure](/reference/document-structure.md).
+
+[`/api/documents/{id}`](/api/document-detail.md) resolves both directions of a
+document's edges to the other document's identity — two queries total, not one per edge
+— and renders them as `references_out`/`references_in`.

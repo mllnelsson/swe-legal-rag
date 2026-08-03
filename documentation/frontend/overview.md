@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Frontend
-description: The V1 single-page streaming chat UI (React/Vite/Tailwind/shadcn) and how it consumes the chat endpoint.
+description: The V1 single-page streaming chat UI (React/Vite/Tailwind/shadcn) and how it consumes the now-deprecated chat endpoint.
 tags: [frontend, ui, chat, v1]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Frontend
@@ -18,6 +18,16 @@ timestamp: 2026-07-24T00:00:00Z
 
 Single-page chat interface. User types a question in Swedish, receives a streamed
 synthesized answer with source citations. No manual filters in V1.
+
+V1's scope is a frontend decision, not a backend limitation. The
+[retrieval API](/api/index.md) already serves the filtered, browsable and
+traversable surface the backlog below describes: explicit metadata filters on
+[search](/api/search.md), a filter vocabulary to populate the controls
+([`/api/filters`](/api/filters.md)), metadata-only browse
+([`/api/documents`](/api/documents.md)), and click-through from a decision to its
+legal concepts and cited cases ([document detail](/api/document-detail.md),
+[concept documents](/api/concept-documents.md)). Building the sidebar is a
+frontend task with no backend work in front of it.
 
 ## Core Components
 
@@ -40,6 +50,11 @@ The frontend consumes the [chat endpoint](/api/chat-endpoint.md) — `POST /api/
 over Server-Sent Events. The `token` / `sources` / `done` events drive live rendering;
 an in-band `event: error` is treated as terminal, and pre-stream validation surfaces as
 HTTP 422. See that concept for the full contract.
+
+That endpoint is now **deprecated but retained**: it still behaves exactly as
+described and the V1 UI keeps consuming it unchanged. The forward path for a
+non-chat frontend is the [retrieval API](/api/index.md) paragraph above — a future
+UI would call search/documents/concepts directly rather than through the chat agent.
 
 ## State Management
 

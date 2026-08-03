@@ -1,6 +1,6 @@
 import uuid
 
-from shared.search.rrf import rrf_fuse
+from shared.search.rrf import DEFAULT_RRF_K, rrf_fuse, rrf_fuse_scored
 
 
 def _ids(n: int) -> list[uuid.UUID]:
@@ -69,3 +69,38 @@ class TestRrfFuse:
         # a appears at rank 1 in three lists; b appears at rank 1 in one list
         result = rrf_fuse([[a], [a], [a], [b]])
         assert result[0] == a
+
+
+class TestRrfFuseScored:
+    def test_empty_inputs_return_empty(self):
+        assert rrf_fuse_scored([]) == []
+
+    def test_scores_are_returned_in_descending_order(self):
+        a, b, c = _ids(3)
+        scored = rrf_fuse_scored([[a, b, c]])
+        assert [doc_id for doc_id, _ in scored] == [a, b, c]
+        scores = [score for _, score in scored]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_score_matches_the_reciprocal_rank_formula(self):
+        (a,) = _ids(1)
+        [(_, score)] = rrf_fuse_scored([[a]])
+        assert score == 1.0 / (DEFAULT_RRF_K + 1)
+
+    def test_appearing_in_two_rankings_sums_both_contributions(self):
+        a, b = _ids(2)
+        scored = dict(rrf_fuse_scored([[a, b], [a]]))
+        assert scored[a] == 1.0 / (DEFAULT_RRF_K + 1) * 2
+        assert scored[b] == 1.0 / (DEFAULT_RRF_K + 2)
+
+    def test_arbitrarily_many_rankings_fuse(self):
+        """Query expansion relies on this: each variant is one more ranking."""
+        a, b = _ids(2)
+        scored = dict(rrf_fuse_scored([[a], [a], [a], [a], [b]]))
+        assert scored[a] == 1.0 / (DEFAULT_RRF_K + 1) * 4
+        assert scored[a] > scored[b]
+
+    def test_rrf_fuse_returns_the_same_order_without_scores(self):
+        a, b, c = _ids(3)
+        rankings = [[a, c], [a, b]]
+        assert rrf_fuse(rankings) == [doc_id for doc_id, _ in rrf_fuse_scored(rankings)]
