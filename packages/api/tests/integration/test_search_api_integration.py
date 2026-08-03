@@ -155,7 +155,11 @@ async def seeded(session: AsyncSession, local_storage) -> dict[str, Any]:
     regulation = await entity_repo.upsert(
         session, EntityCreate(name="kyrkoordningen 54 kap", type=EntityType.REGULATION)
     )
-    for entity in (concept, regulation):
+    keyword = await entity_repo.upsert(
+        session,
+        EntityCreate(name="utlämnande av handlingar", type=EntityType.KEYWORD),
+    )
+    for entity in (concept, regulation, keyword):
         await document_entity_repo.upsert(
             session,
             DocumentEntityCreate(
@@ -175,7 +179,12 @@ async def seeded(session: AsyncSession, local_storage) -> dict[str, Any]:
     await session.commit()
 
     local_storage.store(document_pdf_key(main.id), _PDF_BYTES)
-    return {"main": main.id, "cited": cited.id, "concept": concept.id}
+    return {
+        "main": main.id,
+        "cited": cited.id,
+        "concept": concept.id,
+        "keyword": keyword.id,
+    }
 
 
 class TestSearchEndpoint:
@@ -409,3 +418,80 @@ class TestConceptEndpoints:
         async with http_client as client:
             response = await client.get(f"/api/concepts/{uuid.uuid4()}/documents")
         assert response.status_code == 404
+
+
+class TestKeywordEndpoints:
+    async def test_keywords_are_listed_with_document_counts(self, http_client, seeded):
+        async with http_client as client:
+            response = await client.get("/api/keywords")
+
+        body = response.json()
+        assert body["total"] == 1
+        assert body["items"][0]["name"] == "utlämnande av handlingar"
+        assert body["items"][0]["document_count"] == 1
+
+    async def test_listing_excludes_inferred_concepts(self, http_client, seeded):
+        # The seeded corpus also holds a legal concept and a regulation; neither
+        # may leak into a keyword browse.
+        async with http_client as client:
+            response = await client.get("/api/keywords")
+
+        names = [item["name"] for item in response.json()["items"]]
+        assert "offentlighetsprincipen" not in names
+        assert "kyrkoordningen 54 kap" not in names
+
+    async def test_traversal_from_a_keyword_reaches_its_decisions(
+        self, http_client, seeded
+    ):
+        async with http_client as client:
+            response = await client.get(f"/api/keywords/{seeded['keyword']}/documents")
+
+        body = response.json()
+        assert [item["document_id"] for item in body["items"]] == [str(seeded["main"])]
+        assert body["items"][0]["case_number"] == "2024-0142"
+
+    async def test_unknown_keyword_is_404(self, http_client, seeded):
+        async with http_client as client:
+            response = await client.get(f"/api/keywords/{uuid.uuid4()}/documents")
+        assert response.status_code == 404
+
+    async def test_a_concept_id_is_404_on_the_keyword_route(self, http_client, seeded):
+        async with http_client as client:
+            response = await client.get(f"/api/keywords/{seeded['concept']}/documents")
+        assert response.status_code == 404
+
+    async def test_keyword_filter_narrows_the_document_browse(
+        self, http_client, seeded
+    ):
+        async with http_client as client:
+            hit = await client.get(
+                "/api/documents", params={"keyword": "utlämnande av handlingar"}
+            )
+            miss = await client.get("/api/documents", params={"keyword": "jäv"})
+
+        assert [item["document_id"] for item in hit.json()["items"]] == [
+            str(seeded["main"])
+        ]
+        assert miss.json()["items"] == []
+
+    async def test_filters_endpoint_reports_the_keyword_vocabulary(
+        self, http_client, seeded
+    ):
+        async with http_client as client:
+            response = await client.get("/api/filters")
+
+        keywords = response.json()["keywords"]
+        assert [(k["value"], k["count"]) for k in keywords] == [
+            ("utlämnande av handlingar", 1)
+        ]
+
+    async def test_document_detail_separates_keywords_from_concepts(
+        self, http_client, seeded
+    ):
+        async with http_client as client:
+            response = await client.get(f"/api/documents/{seeded['main']}")
+
+        body = response.json()
+        assert [e["name"] for e in body["keywords"]] == ["utlämnande av handlingar"]
+        assert [e["name"] for e in body["concepts"]] == ["offentlighetsprincipen"]
+        assert body["other_entities"] == []

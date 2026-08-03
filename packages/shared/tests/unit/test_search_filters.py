@@ -20,6 +20,9 @@ class TestIsEmptyFilter:
     def test_entity_types_makes_non_empty(self):
         assert is_empty_filter(DocumentFilter(entity_types=["legal_concept"])) is False
 
+    def test_keywords_makes_non_empty(self):
+        assert is_empty_filter(DocumentFilter(keywords=["jäv"])) is False
+
     def test_references_case_number_makes_non_empty(self):
         assert (
             is_empty_filter(DocumentFilter(references_case_number="2020-0123")) is False

@@ -17,15 +17,25 @@ expansion](/retrieval/query-expansion.md) is opt-in and, when used, only adds ra
 to the same fusion. Given the same inputs, this returns the same results, which is what
 lets it double as a tool an agent or MCP adapter calls directly.
 
+Ten deterministic REST endpoints make up this tool set: [search](/api/search.md),
+[filters](/api/filters.md), [documents](/api/documents.md), [document
+detail](/api/document-detail.md), [chunks](/api/document-chunks.md),
+[pdf](/api/document-pdf.md), [concepts](/api/concepts.md), [concept
+documents](/api/concept-documents.md), [keywords](/api/keywords.md) and [keyword
+documents](/api/keyword-documents.md).
+
 **Why REST, not the agent's own transport.** Every operation here is a discrete
 request/response with no server push — a filter facet lookup, a search, a PDF fetch are
 each one round trip, and MCP's own transports are stdio and streamable-HTTP, so REST is
 also the shortest path to exposing this as a tool set later. The portability guarantee is
 architectural rather than a transport detail: every service function in
-`api/services/search_service.py`, `document_service.py` and `concept_service.py` takes
-`(AsyncSession, a typed pydantic model)` and returns typed pydantic models — never a
-FastAPI `Request`/`Response`. Routes in `api/routes/` are thin adapters over them, so the
-same call works from a test, a route, or a future MCP tool wrapper.
+`api/services/search_service.py`, `document_service.py`, `concept_service.py` and
+`keyword_service.py` takes `(AsyncSession, a typed pydantic model)` and returns typed
+pydantic models — never a FastAPI `Request`/`Response`. `keyword_service.py` follows the
+same discipline as the rest, which is what lets a future MCP tool wrapper cover the
+keyword endpoints for free, with no special-casing. Routes in `api/routes/` are thin
+adapters over them, so the same call works from a test, a route, or a future MCP tool
+wrapper.
 
 ## Steps
 

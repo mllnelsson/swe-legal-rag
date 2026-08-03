@@ -57,6 +57,37 @@ async def _seed_document(
     return doc.id
 
 
+async def _link_keyword(
+    entity_repo,
+    doc_entity_repo,
+    document_repo,
+    session: AsyncSession,
+    name: str,
+    *,
+    count: int,
+) -> uuid.UUID:
+    """Seed `count` searchable documents all classified under one keyword."""
+    entity = await entity_repo.upsert(
+        session, EntityCreate(name=name, type=EntityType.KEYWORD)
+    )
+    for index in range(count):
+        document_id = await _seed_document(
+            document_repo,
+            session,
+            source_url=f"https://example.com/{name}-{index}.pdf",
+        )
+        await doc_entity_repo.upsert(
+            session,
+            DocumentEntityCreate(
+                document_id=document_id,
+                entity_id=entity.id,
+                relevance=EntityRelevance.PRIMARY,
+            ),
+        )
+    await session.commit()
+    return entity.id
+
+
 class TestListFilteredDocuments:
     async def test_unparsed_documents_are_excluded(
         self, document_repo, search_repo, session
@@ -256,6 +287,132 @@ class TestFacets:
 
         by_type = {value.value: value.count for value in facets.entity_types}
         assert by_type[EntityType.LEGAL_CONCEPT] == 1
+
+
+class TestKeywordFacetAndFilter:
+    async def test_facet_reports_the_sokord_vocabulary_with_document_counts(
+        self, document_repo, entity_repo, doc_entity_repo, search_repo, session
+    ):
+        shared_keyword = await _link_keyword(
+            entity_repo, doc_entity_repo, document_repo, session, "jäv", count=2
+        )
+        await _link_keyword(
+            entity_repo, doc_entity_repo, document_repo, session, "avvisning", count=1
+        )
+        assert shared_keyword is not None
+
+        facets = await search_repo.get_facets(session)
+
+        assert [(v.value, v.count) for v in facets.keywords] == [
+            ("jäv", 2),
+            ("avvisning", 1),
+        ]
+
+    async def test_facet_excludes_unparsed_documents(
+        self, document_repo, entity_repo, doc_entity_repo, search_repo, session
+    ):
+        # A decision with no raw_text is not searchable, so offering its keyword
+        # would hand back a filter value that then matches nothing.
+        document_id = await _seed_document(
+            document_repo,
+            session,
+            source_url="https://example.com/a.pdf",
+            raw_text=None,
+        )
+        entity = await entity_repo.upsert(
+            session, EntityCreate(name="osynlig", type=EntityType.KEYWORD)
+        )
+        await doc_entity_repo.upsert(
+            session,
+            DocumentEntityCreate(
+                document_id=document_id,
+                entity_id=entity.id,
+                relevance=EntityRelevance.PRIMARY,
+            ),
+        )
+        await session.commit()
+
+        facets = await search_repo.get_facets(session)
+
+        assert [v.value for v in facets.keywords] == []
+
+    async def test_filter_narrows_to_documents_carrying_the_keyword(
+        self, document_repo, entity_repo, doc_entity_repo, search_repo, session
+    ):
+        await _link_keyword(
+            entity_repo, doc_entity_repo, document_repo, session, "jäv", count=2
+        )
+        await _link_keyword(
+            entity_repo, doc_entity_repo, document_repo, session, "avvisning", count=1
+        )
+
+        rows = await search_repo.list_filtered_documents(
+            session, DocumentFilter(keywords=["jäv"]), limit=10
+        )
+
+        assert len(rows) == 2
+
+    async def test_filter_matches_exactly_not_by_substring(
+        self, document_repo, entity_repo, doc_entity_repo, search_repo, session
+    ):
+        # Unlike `entity_names`, which is a free-text ILIKE: the facet publishes
+        # the exact vocabulary, so a partial value is a caller error, not a hint.
+        await _link_keyword(
+            entity_repo, doc_entity_repo, document_repo, session, "avvisning", count=1
+        )
+
+        rows = await search_repo.list_filtered_documents(
+            session, DocumentFilter(keywords=["avvis"]), limit=10
+        )
+
+        assert rows == []
+
+    async def test_filter_is_case_insensitive_on_the_callers_side(
+        self, document_repo, entity_repo, doc_entity_repo, search_repo, session
+    ):
+        await _link_keyword(
+            entity_repo, doc_entity_repo, document_repo, session, "jäv", count=1
+        )
+
+        rows = await search_repo.list_filtered_documents(
+            session, DocumentFilter(keywords=["Jäv"]), limit=10
+        )
+
+        assert len(rows) == 1
+
+    async def test_keyword_and_entity_filters_compose(
+        self, document_repo, entity_repo, doc_entity_repo, search_repo, session
+    ):
+        document_id = await _seed_document(
+            document_repo, session, source_url="https://example.com/both.pdf"
+        )
+        for name, entity_type in (
+            ("jäv", EntityType.KEYWORD),
+            ("kyrkoordningen 32 kap", EntityType.REGULATION),
+        ):
+            entity = await entity_repo.upsert(
+                session, EntityCreate(name=name, type=entity_type)
+            )
+            await doc_entity_repo.upsert(
+                session,
+                DocumentEntityCreate(
+                    document_id=document_id,
+                    entity_id=entity.id,
+                    relevance=EntityRelevance.PRIMARY,
+                ),
+            )
+        await _link_keyword(
+            entity_repo, doc_entity_repo, document_repo, session, "jäv", count=1
+        )
+        await session.commit()
+
+        rows = await search_repo.list_filtered_documents(
+            session,
+            DocumentFilter(keywords=["jäv"], entity_types=[EntityType.REGULATION]),
+            limit=10,
+        )
+
+        assert [row.id for row in rows] == [document_id]
 
 
 class TestEntityBrowse:

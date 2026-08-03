@@ -26,3 +26,9 @@ for entity-based pre-filtering, by [`/api/documents/{id}`](/api/document-detail.
 list a document's concepts, and by
 [`/api/concepts/{id}/documents`](/api/concept-documents.md) — the first caller to filter
 on `relevance` rather than only storing it.
+
+A row linking to a `keyword`-typed [entity](/data-model/entities.md) is always
+`primary`, never `mentioned`: a keyword is the nämnd's own statement of what the case is
+about, not an incidental mention extraction happened to pick up. That is also why
+[`/api/keywords/{id}/documents`](/api/keyword-documents.md), unlike the concept
+traversal, takes no `relevance` parameter — there is nothing to narrow by.

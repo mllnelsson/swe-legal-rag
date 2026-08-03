@@ -107,6 +107,7 @@ class TestGetDocumentDetail:
     async def test_entities_are_bucketed_by_type(self):
         document_id = uuid.uuid4()
         entities = [
+            _entity("utlämnande av handlingar", EntityType.KEYWORD),
             _entity("offentlighetsprincipen", EntityType.LEGAL_CONCEPT),
             _entity("kyrkoordningen 54 kap", EntityType.REGULATION),
             _entity("kyrkoherde", EntityType.ROLE),
@@ -133,6 +134,8 @@ class TestGetDocumentDetail:
             detail = await get_document_detail(MagicMock(), document_id)
 
         assert detail is not None
+        # Declared by the nämnd, so kept out of `concepts`, which is inferred.
+        assert [e.name for e in detail.keywords] == ["utlämnande av handlingar"]
         assert [e.name for e in detail.concepts] == ["offentlighetsprincipen"]
         # Church-law references are regulation entities, not a separate table.
         assert [e.name for e in detail.regulations] == ["kyrkoordningen 54 kap"]

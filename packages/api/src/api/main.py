@@ -13,6 +13,7 @@ from api.config import AppSettings
 from api.routes.chat import router as chat_router
 from api.routes.concepts import router as concepts_router
 from api.routes.documents import router as documents_router
+from api.routes.keywords import router as keywords_router
 from api.routes.search import router as search_router
 from shared.config import StorageSettings
 
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(search_router)
     app.include_router(documents_router)
     app.include_router(concepts_router)
+    app.include_router(keywords_router)
     app.include_router(chat_router)
 
     @app.get("/healthz")

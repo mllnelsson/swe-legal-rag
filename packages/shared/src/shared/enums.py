@@ -41,12 +41,20 @@ class PipelineStep(StrEnum):
 
 
 class EntityType(StrEnum):
-    """Category of a legal entity extracted from a document."""
+    """Category of a legal entity extracted from a document.
+
+    ``KEYWORD`` differs in provenance from the rest: the other members are
+    *inferred* from the decision's prose by regex or LLM, while a keyword is
+    *declared* by Överklagandenämnden itself on the trailer's ``Sökord:`` line.
+    That makes it the one type the corpus vouches for, and the reason extraction
+    reads it deterministically rather than through a strategy.
+    """
 
     LEGAL_CONCEPT = auto()
     ROLE = auto()
     PARISH = auto()
     REGULATION = auto()
+    KEYWORD = auto()
 
 
 class EntityRelevance(StrEnum):

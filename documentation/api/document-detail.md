@@ -1,7 +1,7 @@
 ---
 type: API Endpoint
 title: Document Detail Endpoint (GET /api/documents/{id})
-description: The GET /api/documents/{id} contract — one decision's identity, section counts, legal concepts/regulations/roles/parishes, and both directions of its citation graph, in one call.
+description: The GET /api/documents/{id} contract — one decision's identity, section counts, declared keywords, legal concepts/regulations/roles/parishes, and both directions of its citation graph, in one call.
 resource: GET /api/documents/{document_id}
 tags: [api, documents, rest, entities, references]
 timestamp: 2026-08-03T00:00:00Z
@@ -29,6 +29,7 @@ endpoint — an entity's `entity_id` for
     "appendix_chunk_count": 0,
     "appendix_labels": ["Bilaga A"]
   },
+  "keywords": [{"entity_id": "uuid", "name": "string", "type": "keyword", "relevance": "primary"}],
   "concepts": [{"entity_id": "uuid", "name": "string", "type": "string", "relevance": "primary | mentioned"}],
   "regulations": ["... same shape ..."],
   "roles": ["... same shape ..."],
@@ -40,13 +41,18 @@ endpoint — an entity's `entity_id` for
 }
 ```
 
-`concepts`/`regulations`/`roles`/`parishes` bucket this document's
+`keywords`/`concepts`/`regulations`/`roles`/`parishes` bucket this document's
 [entities](/data-model/entities.md) by `EntityType`; `other_entities` catches any value
 extraction wrote outside the enum — extraction stores `type` as free text, so an
 unexpected value is surfaced here rather than silently dropped. References to church law
 are already modelled as `regulations` — `Entity(type='regulation')` edges through
 [document_entities](/data-model/document-entities.md) — there is no separate regulations
 table.
+
+`keywords` is kept apart from `concepts` rather than folded into it: those entities are
+*inferred* from the decision's prose, while a `keyword` is *declared* by the nämnd on the
+trailer's `Sökord:` line, and every row in it carries `relevance: "primary"` (see
+[document_entities](/data-model/document-entities.md)).
 
 `references_out`/`references_in` are both directions of a document's
 [document_references](/data-model/document-references.md), each resolved to the other

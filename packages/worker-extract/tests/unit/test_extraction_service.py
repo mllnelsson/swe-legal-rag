@@ -1,5 +1,4 @@
 from __future__ import annotations
-from shared.enums import PipelineStep
 
 import uuid
 from datetime import datetime, timezone
@@ -8,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from shared.dtos.document import DocumentRead
 from shared.dtos.task import TaskRead
 from shared.queue.base import QueueMessage
-from ai.dtos import EntityResult
+from ai.dtos import EntityResult, ExtractedEntity
+from shared.enums import EntityRelevance, EntityType, PipelineStep
 from worker_extract.services.extraction_service import process_extraction
 
 
@@ -470,3 +470,93 @@ class TestCheckpointing:
         status_calls = [c[0][2].status for c in task_repo.update_status.call_args_list]
         assert "processing" in status_calls
         assert status_calls[-1] == "completed"
+
+
+_TRAILER_TEXT = (
+    "Kyrkoherden överklagade beslutet.\n"
+    "Sökord: Utlämnande av handlingar, Jäv.\n"
+    "Ärendenummer: ÖN 2023-0042\n"
+    "Beslut: 1/2026\n"
+)
+
+
+async def _persisted_entities(
+    raw_text: str,
+    strategy_result: EntityResult = _EMPTY_RESULT,
+) -> list[ExtractedEntity]:
+    """Run the step and hand back what reached `persist_entities`."""
+    doc = _make_doc(raw_text=raw_text)
+    task = _make_task(doc.id)
+    (
+        session,
+        doc_repo,
+        task_repo,
+        entity_repo,
+        doc_entity_repo,
+        ref_repo,
+        unresolved_repo,
+        publisher,
+    ) = _make_repos(task, doc)
+
+    persist = AsyncMock()
+    with patch("worker_extract.services.extraction_service.persist_entities", persist):
+        await _call(
+            doc.id,
+            task.id,
+            session,
+            doc_repo,
+            task_repo,
+            entity_repo,
+            doc_entity_repo,
+            ref_repo,
+            unresolved_repo,
+            publisher,
+            strategy_result=strategy_result,
+        )
+
+    # persist_entities(session, entity_repo, doc_entity_repo, document_id, entities)
+    return persist.call_args[0][4]
+
+
+class TestKeywordExtraction:
+    async def test_trailer_keywords_are_persisted_as_primary(self) -> None:
+        entities = await _persisted_entities(_TRAILER_TEXT)
+
+        keywords = [e for e in entities if e.type == EntityType.KEYWORD]
+        assert [e.name for e in keywords] == ["Utlämnande av handlingar", "Jäv"]
+        assert all(e.relevance == EntityRelevance.PRIMARY for e in keywords)
+
+    async def test_keywords_are_extracted_alongside_strategy_entities(self) -> None:
+        # Keywords are read off the trailer, not produced by the strategy, so an
+        # LLM run must yield the same ones a rule-based run does.
+        inferred = ExtractedEntity(
+            name="jäv",
+            type=EntityType.LEGAL_CONCEPT,
+            relevance=EntityRelevance.MENTIONED,
+        )
+        entities = await _persisted_entities(
+            _TRAILER_TEXT, EntityResult(entities=[inferred], references=[])
+        )
+
+        assert inferred in entities
+        assert any(e.type == EntityType.KEYWORD for e in entities)
+
+    async def test_a_keyword_the_strategy_invented_is_dropped(self) -> None:
+        # `parsing.py` validates LLM types against EntityType, so `keyword` would
+        # otherwise pass — but only the trailer may declare one.
+        hallucinated = ExtractedEntity(
+            name="påhittat",
+            type=EntityType.KEYWORD,
+            relevance=EntityRelevance.PRIMARY,
+        )
+        entities = await _persisted_entities(
+            _TRAILER_TEXT, EntityResult(entities=[hallucinated], references=[])
+        )
+
+        assert "påhittat" not in [e.name for e in entities]
+
+    async def test_a_decision_without_sokord_yields_no_keywords(self) -> None:
+        entities = await _persisted_entities(
+            "Beslut i ärendet.\nÄrendenummer: ÖN 2023-0042\n"
+        )
+        assert [e for e in entities if e.type == EntityType.KEYWORD] == []

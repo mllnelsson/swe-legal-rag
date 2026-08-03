@@ -1,5 +1,5 @@
 from __future__ import annotations
-from shared.enums import PipelineStep
+from shared.enums import EntityRelevance, EntityType, PipelineStep
 
 import pytest
 from sqlalchemy import func, select
@@ -389,3 +389,88 @@ async def test_extraction_idempotency(
         await session.execute(select(Task).where(Task.id == task.id))
     ).scalar_one()
     assert task_row.status == "completed"
+
+
+# The same decision with the nämnd's trailer attached — kept separate from
+# `_ENTITY_RICH_TEXT` so the idempotency test's entity counts stay stable.
+_TRAILER_TEXT = (
+    _ENTITY_RICH_TEXT + "\n"
+    "Sökord: Tjänstetillsättning, Behörighet.\n"
+    "Ärendenummer: ÖN 2023-0002\n"
+    "Beslut: 4/2026\n"
+)
+
+
+async def test_extraction_stores_trailer_keywords_as_linked_entities(
+    session: AsyncSession,
+    document_repo,
+    task_repo,
+    entity_repo,
+    doc_entity_repo,
+    ref_repo,
+    unresolved_repo,
+    sync_publisher: SyncQueuePublisher,
+    published_messages: list[QueueMessage],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXTRACT_STRATEGY", "rule_based")
+
+    doc, _ = await _run_extraction(
+        session,
+        document_repo,
+        task_repo,
+        entity_repo,
+        doc_entity_repo,
+        ref_repo,
+        unresolved_repo,
+        sync_publisher,
+        raw_text=_TRAILER_TEXT,
+        case_number="2023-0002",
+    )
+
+    keywords = (
+        (
+            await session.execute(
+                select(Entity)
+                .join(DocumentEntity, DocumentEntity.entity_id == Entity.id)
+                .where(
+                    Entity.type == EntityType.KEYWORD,
+                    DocumentEntity.document_id == doc.id,
+                )
+                .order_by(Entity.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # Normalized to lowercase by `persist_entities`, like every other entity.
+    assert [k.name for k in keywords] == ["behörighet", "tjänstetillsättning"]
+
+    edges = (
+        (
+            await session.execute(
+                select(DocumentEntity)
+                .join(Entity, DocumentEntity.entity_id == Entity.id)
+                .where(
+                    Entity.type == EntityType.KEYWORD,
+                    DocumentEntity.document_id == doc.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {edge.relevance for edge in edges} == {EntityRelevance.PRIMARY}
+
+    # "behörighet" is also a known legal concept the rule-based extractor finds in
+    # the body: the two must coexist as separate nodes, not collapse into one.
+    concept = (
+        await session.execute(
+            select(Entity).where(
+                Entity.name == "behörighet",
+                Entity.type == EntityType.LEGAL_CONCEPT,
+            )
+        )
+    ).scalar_one()
+    assert concept.id not in {k.id for k in keywords}

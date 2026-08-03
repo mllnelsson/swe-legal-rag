@@ -5,7 +5,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.enums import PipelineStep
+from ai.dtos import ExtractedEntity
+from shared.enums import EntityRelevance, EntityType, PipelineStep
 from shared.pipeline import StepInputError, run_pipeline_step
 from shared.queue.base import QueuePublisher
 from shared.repositories import (
@@ -16,7 +17,7 @@ from shared.repositories import (
     TaskRepo,
     UnresolvedReferenceRepo,
 )
-from shared.segmentation import split_document
+from shared.segmentation import parse_keywords, split_document
 from worker_extract.extractors.base import ExtractionStrategy
 from worker_extract.services.entity_service import persist_entities
 from worker_extract.services.reference_service import (
@@ -36,6 +37,22 @@ def _own_identifiers(*identifiers: str | None) -> list[str]:
     return [identifier for identifier in identifiers if identifier]
 
 
+def _declared_keywords(trailer: str | None) -> list[ExtractedEntity]:
+    """The trailer's ``Sökord:`` values as entities.
+
+    Always PRIMARY: a keyword is the nämnd's own statement of what the case is
+    about, never an incidental mention.
+    """
+    return [
+        ExtractedEntity(
+            name=keyword,
+            type=EntityType.KEYWORD,
+            relevance=EntityRelevance.PRIMARY,
+        )
+        for keyword in parse_keywords(trailer)
+    ]
+
+
 async def process_extraction(
     document_id: UUID,
     task_id: UUID,
@@ -50,7 +67,11 @@ async def process_extraction(
     strategy: ExtractionStrategy,
     next_topic: PipelineStep = PipelineStep.CHUNK,
 ) -> None:
-    """Extract entities and references from one document.
+    """Extract entities, keywords and references from one document.
+
+    Keywords are read straight off the trailer rather than through `strategy`.
+    They are declared by the nämnd, not inferred, so every strategy mode must
+    yield the same ones.
 
     `strategy` is injected rather than looked up here: two of the three modes
     construct an LLM provider, and building one per document is what a
@@ -68,8 +89,19 @@ async def process_extraction(
         segments = split_document(document.raw_text)
         result = await strategy(segments, document.case_number)
 
+        # The trailer is the only source of a keyword, so a strategy that emits
+        # one has invented a declared field. `parsing.py` builds its valid-type
+        # set from `EntityType`, which would otherwise let such a response
+        # through.
+        inferred = [
+            entity for entity in result.entities if entity.type != EntityType.KEYWORD
+        ]
         await persist_entities(
-            session, entity_repo, doc_entity_repo, document_id, result.entities
+            session,
+            entity_repo,
+            doc_entity_repo,
+            document_id,
+            inferred + _declared_keywords(segments.trailer),
         )
         await process_references(
             session,

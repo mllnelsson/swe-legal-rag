@@ -70,6 +70,9 @@ class UnresolvedCitation(BaseModel):
 class DocumentDetail(BaseModel):
     document: DocumentSummary
     sections: DocumentSections
+    # The nämnd's own `Sökord` classification, kept apart from `concepts`: those
+    # were inferred from the prose, these were declared by the decision.
+    keywords: list[DocumentEntityDetail]
     concepts: list[DocumentEntityDetail]
     regulations: list[DocumentEntityDetail]
     roles: list[DocumentEntityDetail]
@@ -118,6 +121,7 @@ def _bucket_entities(
     entities: list[DocumentEntityDetail],
 ) -> dict[str, list[DocumentEntityDetail]]:
     buckets: dict[str, list[DocumentEntityDetail]] = {
+        EntityType.KEYWORD: [],
         EntityType.LEGAL_CONCEPT: [],
         EntityType.REGULATION: [],
         EntityType.ROLE: [],
@@ -126,6 +130,8 @@ def _bucket_entities(
     }
     for entity in entities:
         match entity.type:
+            case EntityType.KEYWORD:
+                buckets[EntityType.KEYWORD].append(entity)
             case EntityType.LEGAL_CONCEPT:
                 buckets[EntityType.LEGAL_CONCEPT].append(entity)
             case EntityType.REGULATION:
@@ -216,6 +222,7 @@ async def get_document_detail(
     return DocumentDetail(
         document=_to_summary(document),
         sections=_summarise_sections(chunks),
+        keywords=buckets[EntityType.KEYWORD],
         concepts=buckets[EntityType.LEGAL_CONCEPT],
         regulations=buckets[EntityType.REGULATION],
         roles=buckets[EntityType.ROLE],
