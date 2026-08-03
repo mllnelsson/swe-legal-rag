@@ -7,7 +7,7 @@ skills:
 model: sonnet
 effort: high
 memory: project
-maxTurns: 30
+maxTurns: 60
 color: blue
 ---
 
