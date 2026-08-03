@@ -4,7 +4,7 @@ title: Chunk Worker
 description: Subscriber worker that generates a document summary and splits body and appendices separately into overlapping token-bounded, section-labelled chunks with the summary prepended.
 resource: packages/worker-chunk
 tags: [pipeline, worker, chunk, contextual-retrieval]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Chunk Worker (`packages/worker-chunk/`)
@@ -80,9 +80,11 @@ document.
 
 - **No chunk straddles the body/appendix boundary.** A chunk holding both the nämnd's
   reasoning and the decision it was reviewing could not be honestly labelled as either.
-- **The trailer is not chunked at all.** `Sökord` / `Ärendenummer` / `Beslut` are already
-  structured columns on [documents](/data-model/documents.md), and indexing them only
-  adds noise to the Swedish `tsvector`.
+- **The trailer is not chunked at all.** `Ärendenummer` / `Beslut` are already structured
+  columns on [documents](/data-model/documents.md); `Sökord` is structured too, as
+  [entities](/data-model/entities.md) rather than a column (see the [extract
+  worker](/pipeline/extract.md)). Either way, indexing the trailer's raw text would only
+  add noise to the Swedish `tsvector`.
 - **The summary is generated from `segments.body` only.** It is prepended to every
   chunk's `contextual_text` — including appendix chunks — so a summary derived from the
   whole document would leak the appealed decision into every embedding for that document.

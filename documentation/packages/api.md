@@ -98,14 +98,21 @@ search](/retrieval/deterministic-search.md) for why.
 - **`concept_service.py`** — `list_concepts`, `list_documents_for_concept`. Implements
   [`GET /api/concepts`](/api/concepts.md) and
   [`GET /api/concepts/{id}/documents`](/api/concept-documents.md).
+- **`keyword_service.py`** — `list_keywords`, `list_documents_for_keyword`. Reuses the
+  entity repos with `entity_type` pinned to `EntityType.KEYWORD` rather than owning
+  storage of its own; kept as a separate service from `concept_service.py` because the
+  two answer different questions (declared vs. inferred — see
+  [entities](/data-model/entities.md)). Implements
+  [`GET /api/keywords`](/api/keywords.md) and
+  [`GET /api/keywords/{id}/documents`](/api/keyword-documents.md).
 
 ## FastAPI app (`api/main.py`)
 
 `create_app() -> FastAPI`. The lifespan handler sets `app.state.embedding_provider` and
 `app.state.storage` at startup (and runs `ai.verify_embedding_dimension` — see
 [embedding dimension](/decisions/embedding-dimension.md)); CORS is configured from
-`AppSettings.api_cors_origins`. Routes: the search, documents and concepts routers are
-registered ahead of the chat router, plus `GET /healthz`.
+`AppSettings.api_cors_origins`. Routes: the search, documents, concepts and keywords
+routers are registered ahead of the chat router, plus `GET /healthz`.
 
 ## Chat route (`api/routes/chat.py`) — deprecated
 
@@ -125,11 +132,11 @@ Request flow: validate `ChatRequest` (422 on empty/long/bad `session_id`) →
 `session_id`. The DB session comes from `api/dependencies.get_db`, shared with every
 other router.
 
-## Search, document and concept routes (`api/routes/`)
+## Search, document, concept and keyword routes (`api/routes/`)
 
-`search.py`, `documents.py` and `concepts.py` are thin adapters: each route validates
-input, calls one service function, and either returns its pydantic model directly or
-raises `HTTPException`. Full wire contracts are documented per endpoint under
+`search.py`, `documents.py`, `concepts.py` and `keywords.py` are thin adapters: each
+route validates input, calls one service function, and either returns its pydantic model
+directly or raises `HTTPException`. Full wire contracts are documented per endpoint under
 [API](/api/index.md).
 
 ## API server design decisions

@@ -37,6 +37,7 @@ __all__ = [
     "DocumentSegments",
     "normalize_case_number",
     "normalize_decision_number",
+    "parse_keywords",
     "split_document",
 ]
 
@@ -96,6 +97,17 @@ _CASE_NUMBER_RE = re.compile(
 
 _DECISION_NUMBER_RE = re.compile(r"(\d{1,3})\s*/\s*(\d{4})")
 
+# The `Sökord:` value. Deliberately not end-of-line anchored: a long value wraps
+# onto following lines, so it runs until the next trailer label or the end of the
+# trailer. `Ärendenummer` and `Beslut` are the only labels that follow it.
+_KEYWORDS_VALUE_RE = re.compile(
+    r"^[ \t]*Sökord:(.*?)(?=^[ \t]*(?:Ärendenummer|Beslut):|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+# A decision classified under several keywords separates them with either.
+_KEYWORD_SEPARATOR_RE = re.compile(r"[,;]")
+
 
 def split_document(raw_text: str) -> DocumentSegments:
     """Cut ``raw_text`` into body, holding, trailer and appendices.
@@ -150,6 +162,37 @@ def normalize_decision_number(raw: str) -> str | None:
     if match is None:
         return None
     return f"{int(match.group(1))}/{match.group(2)}"
+
+
+def parse_keywords(trailer: str | None) -> list[str]:
+    """Read the subject keywords off the trailer's ``Sökord:`` line.
+
+    These are Överklagandenämnden's own classification of the case — the one piece
+    of subject metadata the corpus vouches for, where every other entity type is
+    inferred from prose. Returned in document order with duplicates collapsed.
+
+    Never raises: a missing trailer, a trailer carrying only ``Ärendenummer:``, and
+    an empty value all come back as an empty list.
+    """
+    if trailer is None:
+        return []
+
+    match = _KEYWORDS_VALUE_RE.search(trailer)
+    if match is None:
+        return []
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for part in _KEYWORD_SEPARATOR_RE.split(match.group(1)):
+        # A wrapped value arrives with newlines inside it, and the corpus ends the
+        # line with a full stop that is sentence punctuation, not part of the
+        # keyword — `_strip_ellipsis_rule` is what lets that stop survive this far.
+        keyword = " ".join(part.split()).rstrip(".").strip()
+        if not keyword or keyword.casefold() in seen:
+            continue
+        seen.add(keyword.casefold())
+        keywords.append(keyword)
+    return keywords
 
 
 def _split_appendices(raw_text: str) -> tuple[int, list[Appendix]]:

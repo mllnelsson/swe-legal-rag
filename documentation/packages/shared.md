@@ -68,7 +68,9 @@ queue topic each stage consumes from.
 ## `segmentation.py`
 
 Pure functions that cut a decision's `raw_text` into `DocumentSegments(body, holding,
-trailer, appendices)`, plus `normalize_case_number()` / `normalize_decision_number()`.
+trailer, appendices)`, plus `normalize_case_number()` / `normalize_decision_number()` and
+`parse_keywords(trailer) -> list[str]`, which reads the nämnd's own subject
+classification off the trailer's `Sökord:` line.
 
 It lives in `shared` because the [metadata](/pipeline/metadata.md),
 [extract](/pipeline/extract.md) and [chunk](/pipeline/chunk.md) workers all need the same

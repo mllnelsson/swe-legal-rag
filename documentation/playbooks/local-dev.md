@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Local Development Environment
@@ -99,6 +99,33 @@ appending `_test`, so creating the database is the whole setup — no env var ne
 
 The database needs no migrating by hand: the test fixtures run `alembic upgrade head`
 against it on first use, which also installs the `vector` extension.
+
+### The coding agent's sandbox (both platforms)
+
+`overklagan` holds locally crawled data that re-running the pipeline does not
+reproduce, so a coding agent never writes to it. It gets a file-level copy instead,
+and two mechanisms keep it there:
+
+| Piece | What it does |
+|---|---|
+| `.claude/hooks/db-sandbox.sh` | `ensure` (SessionStart) copies `overklagan` to `overklagan_coding_agent` with `createdb -T` when it is missing; `refresh` drops and re-copies |
+| `.claude/settings.json` `env` | Points `DATABASE_URL` and `PGDATABASE` at the sandbox and pins `TEST_DATABASE_URL` to `overklagan_test` |
+| `.claude/hooks/db-guard.sh` | A `PreToolUse` hook that refuses any Bash command that would write to a database that is not the sandbox or a `_test` one |
+| `.claude/hooks/db-guard-selftest.sh` | Asserts the guard's verdict on ~37 commands, including every form in which a connection target can be declared |
+
+The guard resolves the target before judging the statement, because `psql` takes its
+database from `-d`, a bare positional, a `postgresql://` URI, a keyword/value
+conninfo, `PGDATABASE`, `PGSERVICE`, or a fallback to `$USER` — most of which never
+name it on the command line. Anything it cannot resolve counts as protected. Reads
+against `overklagan` are allowed; writes are not.
+
+`TEST_DATABASE_URL` has to be pinned rather than derived: the suffix rule above would
+otherwise turn the redirected `DATABASE_URL` into `overklagan_coding_agent_test`,
+which does not exist.
+
+The `env` block wins over `.env` because every entrypoint calls `load_dotenv()`
+without `override=True`, so a variable already in the process environment survives.
+One cluster serves every worktree, so all of them share one sandbox.
 
 ### Migrations (both platforms)
 

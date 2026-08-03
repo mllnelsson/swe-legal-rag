@@ -34,6 +34,7 @@ async def list_documents_endpoint(
     decision_number: str | None = None,
     entity_name: list[str] = Query(default=[]),
     entity_type: list[str] = Query(default=[]),
+    keyword: list[str] = Query(default=[]),
     references_case_number: str | None = None,
     newest_first: bool = True,
     limit: int | None = Query(default=None, ge=1),
@@ -55,6 +56,7 @@ async def list_documents_endpoint(
         decision_number=decision_number,
         entity_names=entity_name,
         entity_types=entity_type,
+        keywords=keyword,
         references_case_number=references_case_number,
     )
     return await list_documents(

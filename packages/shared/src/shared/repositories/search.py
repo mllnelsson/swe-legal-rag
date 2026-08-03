@@ -7,6 +7,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from shared.dtos.document import DocumentRead
 from shared.dtos.search import DocumentFacets, DocumentFilter, FacetValue
+from shared.enums import EntityType
 from shared.models.document import Document
 from shared.models.document_entity import DocumentEntity
 from shared.models.document_reference import DocumentReference
@@ -58,6 +59,22 @@ def _apply_document_filter(stmt: _SelectT, document_filter: DocumentFilter) -> _
         if document_filter.entity_types:
             entity_sub = entity_sub.where(Entity.type.in_(document_filter.entity_types))
         stmt = stmt.where(Document.id.in_(entity_sub))
+
+    if document_filter.keywords:
+        # A separate subquery from the entity block above, so the two compose:
+        # "keyword X *and* some regulation" is a narrowing a caller can express.
+        # Names are stored already normalized to lowercase by the extract worker.
+        keyword_sub = (
+            select(DocumentEntity.document_id)
+            .join(Entity, DocumentEntity.entity_id == Entity.id)
+            .where(
+                Entity.type == EntityType.KEYWORD,
+                Entity.name.in_(
+                    [keyword.lower() for keyword in document_filter.keywords]
+                ),
+            )
+        )
+        stmt = stmt.where(Document.id.in_(keyword_sub))
 
     if document_filter.references_case_number is not None:
         ref_doc_sub = select(Document.id).where(
@@ -151,6 +168,28 @@ async def _entity_type_facet(session: AsyncSession) -> list[FacetValue]:
     return [FacetValue(value=value, count=count) for value, count in result.all()]
 
 
+async def _keyword_facet(session: AsyncSession) -> list[FacetValue]:
+    """The `Sökord` vocabulary, most-used value first.
+
+    Joined to `documents` and gated on `raw_text` so an unparsed decision's
+    keywords are not offered as a filter that would then match nothing — the same
+    population every other facet and `_apply_document_filter` are scoped to.
+    """
+    document_count = func.count(func.distinct(DocumentEntity.document_id))
+    stmt = (
+        select(Entity.name, document_count)
+        .select_from(Entity)
+        .join(DocumentEntity, DocumentEntity.entity_id == Entity.id)
+        .join(Document, Document.id == DocumentEntity.document_id)
+        .where(Entity.type == EntityType.KEYWORD, Document.raw_text.isnot(None))
+        .group_by(Entity.name)
+        .order_by(document_count.desc(), Entity.name)
+        .limit(MAX_FACET_VALUES)
+    )
+    result = await session.execute(stmt)
+    return [FacetValue(value=value, count=count) for value, count in result.all()]
+
+
 async def get_facets(session: AsyncSession) -> DocumentFacets:
     """The values the metadata filters will actually match.
 
@@ -160,6 +199,7 @@ async def get_facets(session: AsyncSession) -> DocumentFacets:
     categories = await _column_facet(session, Document.category)
     outcomes = await _column_facet(session, Document.decision_outcome)
     entity_types = await _entity_type_facet(session)
+    keywords = await _keyword_facet(session)
 
     range_stmt = select(
         func.min(Document.decision_date),
@@ -172,6 +212,7 @@ async def get_facets(session: AsyncSession) -> DocumentFacets:
         categories=categories,
         decision_outcomes=outcomes,
         entity_types=entity_types,
+        keywords=keywords,
         earliest_decision_date=earliest,
         latest_decision_date=latest,
         document_count=document_count,

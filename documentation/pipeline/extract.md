@@ -1,18 +1,18 @@
 ---
 type: Service
 title: Extract Worker
-description: Subscriber worker that extracts entities and cross-references from document text into the graph-in-Postgres tables, then enqueues chunk tasks.
+description: Subscriber worker that extracts entities, declared keywords, and cross-references from document text into the graph-in-Postgres tables, then enqueues chunk tasks.
 resource: packages/worker-extract
-tags: [pipeline, worker, extract, entities, references, graph]
-timestamp: 2026-08-02T00:00:00Z
+tags: [pipeline, worker, extract, entities, keywords, references, graph]
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Extract Worker (`packages/worker-extract/`)
 
 Long-running subscriber. Consumes extract tasks, segments
 [`documents.raw_text`](/data-model/documents.md) via
-[`shared.segmentation`](/reference/document-structure.md), extracts entities and
-cross-references, stores them in
+[`shared.segmentation`](/reference/document-structure.md), extracts entities, declared
+keywords and cross-references, stores them in
 [entities](/data-model/entities.md),
 [document_entities](/data-model/document-entities.md),
 [document_references](/data-model/document-references.md), and
@@ -101,6 +101,22 @@ Pure functions, no I/O:
   The former heuristic promoted anything past 60% of the document. An appendix inverts
   it: the tail of the document *is* the appealed decision. See
   [appendices are labelled, not dropped](/decisions/appendix-segmentation.md).
+
+## Declared keywords (outside the strategy switch)
+
+The trailer's `Sökord:` line is the nämnd's own subject classification, not something
+extraction infers — so it is read deterministically by
+[`shared.segmentation.parse_keywords(segments.trailer)`](/reference/document-structure.md)
+in every `EXTRACT_STRATEGY` mode alike, rather than through `ExtractionStrategy`. Each
+value becomes an `ExtractedEntity(type=EntityType.KEYWORD, relevance=PRIMARY)` — always
+`PRIMARY`, since a declared keyword is never merely mentioned — and is persisted through
+the same `persist_entities()` call as the strategy's own entities.
+
+Any `keyword`-typed entity a strategy itself emits is dropped before persistence. The
+trailer is the only source of truth for a keyword, so a strategy producing one — most
+plausibly the `llm` mode, since `parsing.py` validates against every member of
+`EntityType` and would otherwise let it through — has invented a declared field rather
+than inferred one, and would silently create a second path to the same data if kept.
 
 ## Persistence and reference reconciliation
 

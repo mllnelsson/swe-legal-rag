@@ -3,7 +3,7 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Architectural Decision Register
@@ -43,6 +43,16 @@ window](/decisions/embedding-window.md); the mandatory crawl
   [document_entities](/data-model/document-entities.md),
   [document_references](/data-model/document-references.md)); SQL joins replace graph
   traversal. ~80% of GraphRAG value at zero additional infrastructure cost.
+- **A new node type extends `entities`, not a dedicated table** — declared `Sökord`
+  keywords became `EntityType.KEYWORD` rather than a `keywords` table or a column on
+  [documents](/data-model/documents.md). A column can hold one value where a decision
+  declares several, and can be filtered but not traversed or browsed; going through
+  `entities`/[document_entities](/data-model/document-entities.md) gets browsing,
+  many-to-many linking and the `/api/concepts`-shaped traversal for free, and costs
+  nothing extra since `entities.type` is already a `StrEnum`-backed `VARCHAR` (see below).
+  The general rule this instance follows: a new *kind of thing extraction finds* is a
+  vocabulary member, not a schema change, unless it needs columns the existing shape
+  cannot express. See [entities](/data-model/entities.md).
 
 ## Pipeline and infrastructure
 

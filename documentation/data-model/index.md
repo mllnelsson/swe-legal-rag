@@ -5,7 +5,7 @@
 * [documents](documents.md) - The document registry — one row per PDF, tracking both identity and progressive ingestion state.
 * [tasks](tasks.md) - One row per document per pipeline step — the unit of work that queue messages map to 1:1.
 * [chunks](chunks.md) - The retrieval unit — chunk text, the contextual text that is embedded, the vector, and the Swedish full-text vector.
-* [entities](entities.md) - Extracted legal concepts, roles, parishes, and regulations — the nodes of the in-Postgres knowledge graph.
+* [entities](entities.md) - Extracted legal concepts, roles, parishes, regulations, and declared keywords — the nodes of the in-Postgres knowledge graph.
 * [document_entities](document-entities.md) - Junction table mapping entities to documents with a relevance weight (primary or mentioned).
 * [document_references](document-references.md) - Resolved cross-citations between decisions — one decision citing another as precedent.
 * [unresolved_references](unresolved-references.md) - Lazy-resolution store for citations whose target decision is not yet in the corpus.

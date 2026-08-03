@@ -15,9 +15,11 @@ by date, with no ranking involved.
 
 Filters are individual query parameters (`date_from`, `date_to`, `category`,
 `decision_outcome`, `case_number`, `decision_number`, repeatable `entity_name`, repeatable
-`entity_type`, `references_case_number`) rather than a nested JSON body, so a filtered
-view is a link a user can share or bookmark. See [`/api/filters`](/api/filters.md) for
-the values these accept.
+`entity_type`, repeatable `keyword`, `references_case_number`) rather than a nested JSON
+body, so a filtered view is a link a user can share or bookmark. `keyword` matches
+exactly, unlike `entity_name`'s substring match — see the [`keyword`
+filter](/api/filters.md#keyword-filter). See [`/api/filters`](/api/filters.md) for the
+values these accept.
 
 ## Other query parameters
 

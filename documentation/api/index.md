@@ -20,3 +20,8 @@
 
 * [Concepts Endpoint (GET /api/concepts)](concepts.md) - The GET /api/concepts contract — browsing the knowledge graph's nodes (legal concepts, regulations, roles, parishes) with the document count each carries, optionally filtered by type or name.
 * [Concept Documents Endpoint (GET /api/concepts/{id}/documents)](concept-documents.md) - The GET /api/concepts/{id}/documents contract — every decision carrying a given entity, the reverse traversal hop from a concept back to the decisions that name it.
+
+## Keywords (entities)
+
+* [Keywords Endpoint (GET /api/keywords)](keywords.md) - The GET /api/keywords contract — browsing the nämnd's own Sökord subject classification, most-used first, with the document count each keyword carries.
+* [Keyword Documents Endpoint (GET /api/keywords/{id}/documents)](keyword-documents.md) - The GET /api/keywords/{id}/documents contract — every decision classified under a given Sökord keyword, the reverse traversal hop from a keyword back to the decisions that declare it.

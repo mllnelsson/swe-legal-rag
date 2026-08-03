@@ -3,7 +3,7 @@ type: Decision
 title: Appendices are labelled, not dropped
 description: Why appended lower-instance decisions stay in the index with a section marker rather than being discarded or left undistinguished.
 tags: [segmentation, appendix, bilaga, chunking, extraction]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Appendices are labelled, not dropped
@@ -40,9 +40,11 @@ overturned — was retrievable and citable as the nämnd's own.
   the document is re-chunked. Re-chunking is DELETE+INSERT, so a re-run replaces them.
 * The [chunk worker](/pipeline/chunk.md) chunks body and each appendix **separately**.
   A chunk straddling the boundary could not be honestly labelled as either.
-* The **trailer is not chunked.** Its content (`Sökord`, `Ärendenummer`, `Beslut`) is
-  already structured on [documents](/data-model/documents.md), and indexing it only adds
-  noise to the Swedish `tsvector`.
+* The **trailer is not chunked.** `Ärendenummer`/`Beslut` are already structured columns
+  on [documents](/data-model/documents.md); `Sökord` is structured too, as
+  [entities](/data-model/entities.md) rather than a column (see the [extract
+  worker](/pipeline/extract.md)). Either way, indexing the trailer's raw text would only
+  add noise to the Swedish `tsvector`.
 * The document summary is generated from the **body only**. It is prepended to every
   chunk's `contextual_text`, so an appendix-derived summary would leak the appealed
   decision into every embedding for that document.

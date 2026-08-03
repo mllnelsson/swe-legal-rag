@@ -10,6 +10,7 @@ from __future__ import annotations
 from shared.segmentation import (
     normalize_case_number,
     normalize_decision_number,
+    parse_keywords,
     split_document,
 )
 
@@ -227,3 +228,44 @@ class TestNormalizeDecisionNumber:
         # Resolution relies on the two spaces never colliding.
         assert "/" in "1/2026"
         assert "/" not in "2025-0017"
+
+
+class TestParseKeywords:
+    def test_single_keyword_loses_its_full_stop(self) -> None:
+        assert parse_keywords("Sökord: Avvisning.") == ["Avvisning"]
+
+    def test_stops_at_the_next_trailer_label(self) -> None:
+        trailer = (
+            "Sökord: Utlämnande av handlingar.\n"
+            "Ärendenummer: ÖN 2025-0017\n"
+            "Beslut: 1/2026"
+        )
+        assert parse_keywords(trailer) == ["Utlämnande av handlingar"]
+
+    def test_commas_and_semicolons_both_separate(self) -> None:
+        trailer = "Sökord: Jäv, Tjänstetillsättning; Behörighet.\nBeslut: 1/2026"
+        assert parse_keywords(trailer) == ["Jäv", "Tjänstetillsättning", "Behörighet"]
+
+    def test_a_value_wrapping_onto_the_next_line_stays_one_keyword(self) -> None:
+        # A long Sökord is broken across lines by the PDF's own line breaks, not
+        # by the nämnd — rejoining it is what stops one keyword becoming two.
+        trailer = "Sökord: Utlämnande av allmän\nhandling.\nÄrendenummer: ÖN 2025-0017"
+        assert parse_keywords(trailer) == ["Utlämnande av allmän handling"]
+
+    def test_duplicates_are_collapsed_case_insensitively(self) -> None:
+        assert parse_keywords("Sökord: Jäv, jäv, JÄV.") == ["Jäv"]
+
+    def test_trailer_without_a_sokord_line_yields_nothing(self) -> None:
+        assert parse_keywords("Ärendenummer: ÖN 2025-0017\nBeslut: 1/2026") == []
+
+    def test_empty_value_yields_nothing(self) -> None:
+        assert parse_keywords("Sökord:\nÄrendenummer: ÖN 2025-0017") == []
+
+    def test_missing_trailer_yields_nothing(self) -> None:
+        assert parse_keywords(None) == []
+
+    def test_reads_the_trailer_split_document_produced(self) -> None:
+        # The end-to-end path: the anchor that finds the trailer and the parser
+        # that reads it must agree on what a trailer is.
+        segments = split_document(_UTLAMNANDE)
+        assert parse_keywords(segments.trailer) == ["Utlämnande av handlingar"]

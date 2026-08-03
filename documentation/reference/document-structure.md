@@ -4,7 +4,7 @@ title: Decision Document Structure
 description: The anatomy of an Överklagandenämnden decision PDF — header, holding, trailer and appendices — and the anchors the pipeline segments it with.
 resource: packages/shared/src/shared/segmentation.py
 tags: [segmentation, parsing, appendix, bilaga, corpus]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Decision Document Structure
@@ -47,7 +47,7 @@ the anchors comes back as a single `body`.
 |---|---|---|
 | `body` | Header through the holding, trailer excluded | Överklagandenämnden |
 | `holding` | The slice of `body` after `Överklagandenämndens beslut:` | Överklagandenämnden |
-| `trailer` | `Sökord` / `Ärendenummer` / `Beslut` | Överklagandenämnden (metadata) |
+| `trailer` | `Sökord` / `Ärendenummer` / `Beslut` | Överklagandenämnden (metadata + keywords) |
 | `appendices` | One `Appendix(label, text)` per `Bilaga X` | **The appealed instance** |
 
 ## Anchors
@@ -70,6 +70,17 @@ before the newline defeats every end-of-line assertion above.
 
 The ellipsis rule (`…` repeated, occasionally plain dots) is stripped from the trailer
 as a whole line, so a `Sökord:` value ending in a full stop survives.
+
+`shared.segmentation.parse_keywords(trailer) -> list[str]` reads the `Sökord:` value out
+of the trailer and turns it into the case's declared subject keywords — the [extract
+worker](/pipeline/extract.md) persists them as [entities](/data-model/entities.md) of
+type `keyword`. It is line-initial-anchored the same way the trailer split is, but not
+end-of-line anchored: a long value wraps onto following lines, so it reads until the next
+trailer label (`Ärendenummer:` / `Beslut:`) or the end of the trailer. Values are split on
+`,`/`;`, whitespace-collapsed, stripped of a trailing full stop, de-duplicated
+case-insensitively, and returned in document order. Like the rest of this module it never
+raises — a missing trailer, one with no `Sökord:` line, or an empty value all come back as
+`[]`.
 
 ## Identifier spaces
 
@@ -97,7 +108,8 @@ Everything downstream reads a different slice, and each has a reason:
 * **[metadata](/pipeline/metadata.md)** — trailer then body, never appendices. An
   appended decision has its own date, outcome and diarienummer.
 * **[extract](/pipeline/extract.md)** — references from `body` only; entities from
-  `body` *and* appendices, but appendix entities are always `mentioned`.
+  `body` *and* appendices, but appendix entities are always `mentioned`; keyword entities
+  from `trailer` alone, via `parse_keywords`.
 * **[chunk](/pipeline/chunk.md)** — body and each appendix chunked separately and
   labelled; the trailer is not chunked at all.
 * **[retrieval](/retrieval/agent.md)** — searches `body` chunks by default, per the

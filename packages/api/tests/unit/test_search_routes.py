@@ -148,6 +148,7 @@ class TestFiltersEndpoint:
             categories=[],
             decision_outcomes=[],
             entity_types=[],
+            keywords=[],
             earliest_decision_date=date(2019, 1, 1),
             latest_decision_date=date(2024, 12, 31),
             document_count=42,
@@ -185,6 +186,7 @@ class TestDocumentEndpoints:
             sections=DocumentSections(
                 body_chunk_count=3, appendix_chunk_count=0, appendix_labels=[]
             ),
+            keywords=[],
             concepts=[],
             regulations=[],
             roles=[],
@@ -309,3 +311,48 @@ class TestConceptEndpoints:
             params={"relevance": "very_relevant"},
         )
         assert response.status_code == 422
+
+
+class TestKeywordEndpoints:
+    def setup_method(self):
+        self.app, self.client = _make_client()
+
+    def teardown_method(self):
+        self.app.dependency_overrides.clear()
+
+    def test_unknown_keyword_returns_404(self):
+        with patch(
+            "api.routes.keywords.list_documents_for_keyword",
+            new=AsyncMock(return_value=None),
+        ):
+            response = self.client.get(f"/api/keywords/{uuid.uuid4()}/documents")
+
+        assert response.status_code == 404
+
+    def test_malformed_keyword_id_returns_422(self):
+        response = self.client.get("/api/keywords/not-a-uuid/documents")
+        assert response.status_code == 422
+
+    def test_listing_returns_200(self):
+        async def fake_list(db, **kwargs):
+            return MagicMock(items=[], total=0, limit=10, offset=0)
+
+        with patch("api.routes.keywords.list_keywords", new=fake_list):
+            response = self.client.get("/api/keywords", params={"q": "jäv"})
+
+        assert response.status_code == 200
+
+    def test_keyword_filter_reaches_the_document_filter(self):
+        captured = {}
+
+        async def fake_list(db, document_filter, **kwargs):
+            captured["filter"] = document_filter
+            return MagicMock(items=[], total=0, limit=10, offset=0)
+
+        with patch("api.routes.documents.list_documents", new=fake_list):
+            self.client.get(
+                "/api/documents",
+                params={"keyword": ["jäv", "avvisning"]},
+            )
+
+        assert captured["filter"].keywords == ["jäv", "avvisning"]
