@@ -1,5 +1,37 @@
 {
+  "env": {
+    "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/overklagan_coding_agent",
+    "PGDATABASE": "overklagan_coding_agent",
+    "TEST_DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/overklagan_test"
+  },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/db-sandbox.sh",
+            "args": ["ensure"],
+            "timeout": 120,
+            "statusMessage": "db sandbox"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/db-guard.sh",
+            "args": [],
+            "timeout": 30,
+            "statusMessage": "db guard"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit",

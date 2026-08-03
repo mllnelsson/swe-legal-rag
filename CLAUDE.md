@@ -50,6 +50,14 @@ per-platform differences and the troubleshooting table live in
 [local dev](documentation/playbooks/local-dev.md). Read it before touching local DB
 setup — don't assume one platform's path.
 
+`overklagan` is **read-only to you**. It holds locally crawled data that re-running
+the pipeline does not reproduce. Your writable copy is `overklagan_coding_agent`,
+which `DATABASE_URL` and `PGDATABASE` already point at; `.claude/hooks/db-guard.sh`
+refuses any Bash command that would write elsewhere, and reads against `overklagan`
+are fine. `.claude/hooks/db-sandbox.sh refresh` re-copies the sandbox when it has
+drifted. A change that genuinely has to land in `overklagan` is the user's call, not
+something to work around.
+
 ## Docker
 Always respect the docker image list in `documentation/playbooks/local-dev.md`. Do not add ny new docker images unless explicitly required
 
