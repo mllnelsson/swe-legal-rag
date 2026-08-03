@@ -33,6 +33,9 @@ _CASE_REF_RE = re.compile(r"\bÖN\s+(?:dnr\s+)?\d{4}[-–]\d{3,}\b", re.IGNORECA
 _DECISION_REF_RE = re.compile(
     r"\bbeslut(?:et)?\s+(\d{1,3}\s*/\s*\d{4})\b", re.IGNORECASE
 )
+# TODO:
+# Fails to parse references to kyrokoförorndingen
+# Example of text: "...överklagas enligt 58 kap. 1 § kyrkoordningen endast om det..."
 
 _REGULATION_PATTERNS = [
     re.compile(r"kyrkoordningen\s+\d+\s*kap\.?\s*\d+\s*§(?:\s*\d+)?", re.IGNORECASE),
