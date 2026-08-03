@@ -8,6 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.dtos.session import SessionCreate, SessionRead, SessionUpdate
 from shared.repositories import session as session_repo
 
+# DEPRECATED — chat-surface service, slated to move out of the api package with
+# POST /api/chat. See /api/chat-endpoint.md. Conversation state is the agent's
+# concern; the retrieval endpoints are stateless.
+
 # One conversation turn is a user question plus the assistant answer.
 ENTRIES_PER_TURN = 2
 

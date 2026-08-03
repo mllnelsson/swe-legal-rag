@@ -12,11 +12,13 @@ from ai.dtos import (
     ExtractedEntity,
     ExtractedReference,
     MetadataResult,
+    QueryExpansionResult,
     SummarizeResult,
     SynthesizeRequest,
 )
 from ai.services import (
     decompose_query,
+    expand_query,
     extract_entities,
     extract_metadata,
     summarize_document,
@@ -312,3 +314,37 @@ class TestTraceAttribution:
         (record,) = recorder.records
         assert record.context["interaction_id"] == "abc"
         assert record.context["source"] == "ai.extract_metadata"
+
+
+@pytest.mark.asyncio
+async def test_expand_query_returns_variants() -> None:
+    expected = QueryExpansionResult(
+        variants=["allmänna handlingar", "offentlighetsprincipen"]
+    )
+    with patch("ai.services.generate_structured", new=AsyncMock(return_value=expected)):
+        result = await expand_query("utlämnande av handlingar", max_variants=3)
+    assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_expand_query_passes_the_variant_cap_into_the_prompt() -> None:
+    """The cap belongs in the user template: `render` does not format the system
+    prompt, so a placeholder there would reach the model verbatim."""
+    expected = QueryExpansionResult(variants=[])
+    with patch(
+        "ai.services.generate_structured", new=AsyncMock(return_value=expected)
+    ) as mock:
+        await expand_query("utlämnande", max_variants=2)
+    messages = mock.call_args[0][0]
+    assert "utlämnande" in messages[1].content
+    assert "2" in messages[1].content
+    assert "{max_variants}" not in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_expand_query_takes_no_conversation_history() -> None:
+    """Statelessness is the line that keeps expansion out of planner territory."""
+    import inspect
+
+    assert "conversation_history" not in inspect.signature(expand_query).parameters
+    assert "history" not in inspect.signature(expand_query).parameters

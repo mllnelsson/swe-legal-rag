@@ -20,3 +20,16 @@ class EntityRead(BaseModel):
     name: str
     type: str
     created_at: datetime
+
+
+class EntityWithCount(BaseModel):
+    """An entity plus how many documents carry it.
+
+    Browsing concepts without the count is not navigable — the count is what
+    separates a recurring legal concept from a one-off extraction artefact.
+    """
+
+    id: uuid.UUID
+    name: str
+    type: str
+    document_count: int

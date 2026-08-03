@@ -11,6 +11,10 @@ class DocumentFilter(BaseModel):
     date_to: date | None = None
     category: str | None = None
     decision_outcome: str | None = None
+    # Exact identity match. Distinct from ``references_case_number`` below, which
+    # asks for documents that *cite or are cited by* the given case.
+    case_number: str | None = None
+    decision_number: str | None = None
     entity_names: list[str] = []
     entity_types: list[str] = []
     references_case_number: str | None = None
@@ -24,3 +28,24 @@ class ChunkSearchResult(BaseModel):
     score: float
     section: ChunkSection = ChunkSection.BODY
     appendix_label: str | None = None
+
+
+class FacetValue(BaseModel):
+    value: str
+    count: int
+
+
+class DocumentFacets(BaseModel):
+    """The values the metadata filters will actually match.
+
+    ``category`` and ``decision_outcome`` are free text lifted off the PDFs by
+    regex, not a controlled vocabulary, so a client has no way to guess valid
+    values — it has to be told.
+    """
+
+    categories: list[FacetValue]
+    decision_outcomes: list[FacetValue]
+    entity_types: list[FacetValue]
+    earliest_decision_date: date | None
+    latest_decision_date: date | None
+    document_count: int

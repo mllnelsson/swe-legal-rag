@@ -4,7 +4,7 @@ title: Repository Layer
 description: The function-based data-access layer bridging SQLAlchemy models and Pydantic DTOs, injected into services as Protocol-typed namespaces.
 resource: packages/shared/src/shared/repositories
 tags: [data-model, repositories, data-layer, dto, protocol]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Repository Layer
@@ -50,10 +50,42 @@ the session/dependency flow explicit.
   distance, filtered to candidates, excludes NULL embeddings
 - `chunk.text_search(session, query, document_ids, limit)` —
   `websearch_to_tsquery('swedish', query)` ranked by `ts_rank`
-- `search.find_candidate_documents(session, filter)` — narrows the corpus via metadata
-  WHERE, EXISTS subqueries through `document_entities`→`entities`, and
+- `search.find_candidate_documents(session, filter, limit=None)` — narrows the corpus via
+  metadata WHERE, EXISTS subqueries through `document_entities`→`entities`, and
   `document_references` traversal in both directions; an empty filter returns all
-  document IDs with `raw_text`
+  document IDs with `raw_text`. The optional `limit` bounds how large a candidate set the
+  [search API](/api/search.md) will hand its search arms as an `IN` list
+  (`SearchSettings.search_candidate_limit`).
+- `search._apply_document_filter(stmt, filter)` — the shared WHERE-clause builder behind
+  `find_candidate_documents`, `list_filtered_documents` and `count_filtered_documents`.
+  Also gates `raw_text IS NOT NULL`: a document with no parsed text has no metadata to
+  match and no chunks to retrieve, so every caller wants that gate, and factoring it here
+  is what stops the three callers drifting apart on it.
+- `search.list_filtered_documents(session, filter, *, limit, offset, newest_first)` /
+  `search.count_filtered_documents(session, filter)` — metadata-only browsing behind
+  [`GET /api/documents`](/api/documents.md), with no query text involved.
+- `search.get_facets(session)` — the filter vocabulary behind
+  [`GET /api/filters`](/api/filters.md); each value list is capped at `MAX_FACET_VALUES`
+  (50), most-frequent first.
+- `entity.list_entities(session, *, entity_type, name_query, limit, offset)` /
+  `entity.count_entities(...)` — an **inner** join through `document_entities` drops
+  entities with no documents, since they are dead ends nothing can traverse to. Behind
+  [`GET /api/concepts`](/api/concepts.md).
+- `document_entity.list_entities_for_document(session, document_id)` — this document's
+  entities resolved to name/type, primary relevance sorted first. Behind
+  [`GET /api/documents/{id}`](/api/document-detail.md).
+- `document_entity.list_documents_for_entity(session, entity_id, *, relevance, limit,
+  offset)` / `document_entity.count_documents_for_entity(...)` — the reverse traversal
+  hop, behind [`GET /api/concepts/{id}/documents`](/api/concept-documents.md). The first
+  caller to filter on `document_entities.relevance` rather than merely storing it.
+- `document_reference.list_references_for_document(session, document_id)` — both
+  directions of a document's citation graph, each resolved to the other document's
+  identity in two queries total (not one per edge). Behind
+  [`GET /api/documents/{id}`](/api/document-detail.md).
+- `unresolved_reference.get_by_source_document_id(session, document_id)` — this
+  document's citations to decisions the corpus does not hold, shown alongside resolved
+  references so a reader can tell "cites nothing else" apart from "cites decisions we do
+  not hold."
 
 ## Protocol-injected namespaces (`repositories/_protocols.py`)
 
@@ -69,6 +101,13 @@ and both type checkers used here (pyright and ty) agree only on this form — a 
 member's unbound `self` is not stripped for a module under ty. Only the functions a worker
 actually calls are declared (interface segregation); the fs doubles mirror exactly this
 surface.
+
+**The new search/browse/traversal repository functions were deliberately not added
+here.** `_protocols.py` declares what *workers* call, for the `--store fs` swap and the
+worker unit-test seam described below; the [api package](/packages/api.md)'s
+search/document/concept services import `shared.repositories.*` modules directly, the
+same way every other non-worker call site already does. Extending the Protocols for them
+would widen an interface no worker needs and no fs double has to satisfy.
 
 ## Why services take repos as parameters (do not "clean this up")
 

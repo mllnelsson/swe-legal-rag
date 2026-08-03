@@ -115,6 +115,7 @@ source = { editable = "packages/api" }
 dependencies = [
     { name = "ai" },
     { name = "fastapi" },
+    { name = "llm-core" },
     { name = "shared" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -123,6 +124,7 @@ dependencies = [
 requires-dist = [
     { name = "ai", editable = "packages/ai" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "llm-core", editable = "packages/llm-core" },
     { name = "shared", editable = "packages/shared" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]

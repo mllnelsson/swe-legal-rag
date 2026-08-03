@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 
 from ai import trace_context
 from fastapi import APIRouter, Depends, Request
@@ -17,12 +17,21 @@ from api.config import (
     get_retrieval_settings,
     get_session_settings,
 )
+from api.dependencies import get_db
 from api.services.answerer import DoneEvent, SourcesEvent, TokenEvent, answer_query
 from api.services.session_service import get_or_create_session, history_for_llm
-from shared.db import get_async_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# DEPRECATED — this endpoint and the four services behind it (answerer,
+# query_planner, retriever, session_service) are the agent half of the API and
+# are slated to move out of the api package. See /api/chat-endpoint.md. Nothing
+# consumes it yet, so the marker is about ownership, not a compatibility
+# window: the api package is meant to be a deterministic retrieval tool set,
+# and this is the only LLM-driven, stateful, streaming surface left in it.
+# Deprecated rather than deleted because it is working, tested code that the
+# agent will want intact when it lands.
 
 # Upper bound on a single user message; keeps prompts and payloads bounded.
 MAX_MESSAGE_CHARS = 4000
@@ -41,16 +50,11 @@ def _format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-async def _get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with get_async_session() as session:
-        yield session
-
-
-@router.post("/api/chat")
+@router.post("/api/chat", deprecated=True)
 async def chat_endpoint(
     body: ChatRequest,
     request: Request,
-    db: AsyncSession = Depends(_get_db),
+    db: AsyncSession = Depends(get_db),
     retrieval_settings: RetrievalSettings = Depends(get_retrieval_settings),
     session_settings: SessionSettings = Depends(get_session_settings),
 ) -> StreamingResponse:

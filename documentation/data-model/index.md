@@ -9,7 +9,7 @@
 * [document_entities](document-entities.md) - Junction table mapping entities to documents with a relevance weight (primary or mentioned).
 * [document_references](document-references.md) - Resolved cross-citations between decisions — one decision citing another as precedent.
 * [unresolved_references](unresolved-references.md) - Lazy-resolution store for citations whose target decision is not yet in the corpus.
-* [sessions](sessions.md) - Conversation history for follow-up support; can live in-memory or Redis instead when cross-restart persistence isn't needed.
+* [sessions](sessions.md) - Conversation history for the deprecated chat surface's follow-up support; can live in-memory or Redis instead when cross-restart persistence isn't needed.
 
 ## Cross-cutting
 

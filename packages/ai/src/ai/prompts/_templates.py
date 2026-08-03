@@ -39,6 +39,42 @@ QUERY_DECOMPOSITION = PromptTemplate(
 )
 
 
+_QUERY_EXPANSION_SYSTEM = """\
+Du omformulerar svenska sökfrågor om kyrkorättsliga beslut till alternativa
+sökfrågor. Returnera exakt JSON.
+
+Schema:
+{
+  "variants": ["alternativ sökfråga på svenska"]
+}
+
+Regler:
+- Varje variant ska uttrycka samma informationsbehov som originalfrågan, men med
+  andra ord: juridisk fackterm där frågan använder vardagsspråk, och vardagsspråk
+  där frågan använder fackterm
+- Använd synonymer och besläktade kyrkorättsliga termer (t.ex. "handlingar" ->
+  "allmänna handlingar", "offentlighetsprincipen")
+- Upprepa inte originalfrågan - den används alltid ändå
+- Svara aldrig på frågan och lägg aldrig till nya villkor som datum, kategori
+  eller ärendenummer
+- Hitta aldrig på ärendenummer, beslutsnummer eller församlingsnamn
+- Färre varianter är bättre än långsökta
+- Svara enbart med JSON, inga förklaringar"""
+
+# The cap lives here, not in the system prompt: `render()` formats only the user
+# template, so a placeholder in the system prompt would reach the model verbatim.
+_QUERY_EXPANSION_USER = """\
+Fråga: {question}
+
+Högst {max_variants} varianter."""
+
+QUERY_EXPANSION = PromptTemplate(
+    name="QUERY_EXPANSION",
+    system_prompt=_QUERY_EXPANSION_SYSTEM,
+    user_template=_QUERY_EXPANSION_USER,
+)
+
+
 _ANSWER_SYNTHESIS_SYSTEM = """\
 Du är ett juridiskt sökassistenssystem för svenska kyrkorättsliga beslut.
 Generera ett välformulerat svar på svenska baserat på de medföljande dokumentutdragen.

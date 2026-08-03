@@ -14,15 +14,19 @@ from api.config import RetrievalSettings
 from api.services.query_planner import QueryPlan
 from llm_core import LLMProvider, Message, Role, generate_structured, trace_context
 from shared.dtos.document import DocumentRead
-from shared.dtos.search import ChunkSearchResult, DocumentFilter
+from shared.dtos.search import ChunkSearchResult
 from shared.enums import ChunkSection
 from shared.repositories import chunk as chunk_repo
 from shared.repositories import document as document_repo
 from shared.repositories import search as search_repo
 from shared.repositories.chunk import Sections
-from shared.search.rrf import rrf_fuse
+from shared.search import is_empty_filter, rrf_fuse
 
 logger = logging.getLogger(__name__)
+
+# DEPRECATED — chat-surface service, slated to move out of the api package with
+# POST /api/chat. See /api/chat-endpoint.md. No retrieval endpoint imports it;
+# deterministic search runs its own arms in search_service.
 
 # Per-chunk snippet length shown to the reranker LLM; keeps the prompt bounded.
 SNIPPET_CHARS = 400
@@ -43,18 +47,6 @@ class RetrievedChunk(BaseModel):
     category: str | None = None
     gcs_uri: str | None = None
     source_url: str = ""
-
-
-def _filter_is_empty(f: DocumentFilter) -> bool:
-    return (
-        f.date_from is None
-        and f.date_to is None
-        and f.category is None
-        and f.decision_outcome is None
-        and not f.entity_names
-        and not f.entity_types
-        and f.references_case_number is None
-    )
 
 
 def _make_retrieved_chunk(
@@ -178,10 +170,8 @@ async def retrieve(
     # nothing both land there — the second deliberately, since an answer drawn
     # from a wider net beats no answer at all.
     candidate_ids = None
-    if not _filter_is_empty(plan.filter):
-        candidate_ids = await search_repo.find_candidate_documents(
-            session, plan.filter
-        )
+    if not is_empty_filter(plan.filter):
+        candidate_ids = await search_repo.find_candidate_documents(session, plan.filter)
         if not candidate_ids:
             logger.warning(
                 "Filter yielded no candidates; falling back to unfiltered search"

@@ -9,11 +9,10 @@ from shared.pipeline import StepInputError, run_pipeline_step
 from shared.queue.base import QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
 from shared.storage.base import StorageBackend
+from shared.storage.keys import document_pdf_key
 from worker_parse.parser import Parser
 
 logger = logging.getLogger(__name__)
-
-_STORAGE_KEY_TEMPLATE = "documents/{document_id}/original.pdf"
 
 
 async def process_parse(
@@ -34,8 +33,7 @@ async def process_parse(
         if document.gcs_uri is None:
             raise StepInputError(f"Document {document_id} has no stored PDF")
 
-        key = _STORAGE_KEY_TEMPLATE.format(document_id=document.id)
-        pdf_bytes = storage.retrieve(key)
+        pdf_bytes = storage.retrieve(document_pdf_key(document.id))
         raw_text = parser(pdf_bytes)
         await document_repo.update(
             session, document.id, DocumentUpdate(raw_text=raw_text)

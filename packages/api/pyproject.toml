@@ -5,6 +5,9 @@ requires-python = ">=3.12"
 dependencies = [
     "shared",
     "ai",
+    # Imported directly by services/retriever.py for its rerank call, which
+    # reaches past `ai`. Declared rather than left to resolve through `ai`.
+    "llm-core",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
 ]
@@ -12,6 +15,7 @@ dependencies = [
 [tool.uv.sources]
 shared = { workspace = true }
 ai = { workspace = true }
+llm-core = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]

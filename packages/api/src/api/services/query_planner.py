@@ -5,6 +5,12 @@ from pydantic import BaseModel
 from shared.dtos.search import DocumentFilter
 
 
+# DEPRECATED — chat-surface service, slated to move out of the api package with
+# POST /api/chat. See /api/chat-endpoint.md. Deliberately not reused by
+# deterministic search: it infers filters from conversation history, which would
+# silently override a caller's explicit ones. See /retrieval/query-expansion.md.
+
+
 class QueryPlan(BaseModel):
     semantic_query: str
     filter: DocumentFilter
