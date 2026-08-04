@@ -1,0 +1,29 @@
+:root {
+  --space-0: 0px;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --space-7: 24px;
+  --space-8: 32px;
+  --space-9: 40px;
+  --space-10: 48px;
+  --space-11: 64px;
+  --space-12: 80px;
+  --space-13: 112px;
+
+  --gutter-page: 32px;
+  --gutter-page-wide: 64px;
+  --stack-tight: 8px;
+  --stack-default: 16px;
+  --stack-loose: 32px;
+  --section-gap: 80px;
+
+  --control-h-sm: 30px;
+  --control-h-md: 38px;
+  --control-h-lg: 46px;
+  --sidebar-w: 264px;
+  --content-max: 1180px;
+}

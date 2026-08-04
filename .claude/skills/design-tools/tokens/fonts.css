@@ -1,0 +1,10 @@
+/* Webfonts. NOTE: no font binaries were supplied, so these are Google Fonts
+   substitutions chosen for the brief (editorial-professional, not techy).
+   Swap the src URLs for licensed binaries when available. */
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+:root {
+  --font-display: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --font-sans: "Public Sans", -apple-system, "Segoe UI", Helvetica, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}

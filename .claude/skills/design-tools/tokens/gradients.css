@@ -1,0 +1,12 @@
+:root {
+  /* The apricot wash is the brand's signature background. Always soft,
+     always warm, never more than ~12% away from white at its lightest end. */
+  --gradient-wash: linear-gradient(168deg, #fff8f2 0%, #fdeade 46%, #fad7bd 100%); /* @kind color */
+  --gradient-wash-soft: linear-gradient(180deg, #ffffff 0%, #fff8f2 62%, #fdeade 100%); /* @kind color */
+  --gradient-wash-horizontal: linear-gradient(96deg, #fff8f2 0%, #fad7bd 100%); /* @kind color */
+  --gradient-dawn: linear-gradient(150deg, #fdeade 0%, #f6bd94 55%, #d98b96 100%); /* @kind color */
+  --gradient-authority: linear-gradient(146deg, #71212f 0%, #8f3244 58%, #a1552a 100%); /* @kind color */
+  --gradient-ember: linear-gradient(90deg, var(--burgundy-600), var(--apricot-500)); /* @kind color */
+  --gradient-rule: linear-gradient(90deg, var(--apricot-300), rgba(250, 215, 189, 0)); /* @kind color */
+  --gradient-fade-page: linear-gradient(180deg, rgba(255, 248, 242, 0) 0%, var(--warm-50) 88%); /* @kind color */
+}

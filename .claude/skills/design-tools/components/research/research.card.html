@@ -1,0 +1,21 @@
+<!-- @dsCard group="Components" viewport="700x400" name="Research" subtitle="AnswerPanel and CitationCard" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{background:var(--surface-page);padding:20px 24px;font-family:var(--font-sans)}.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.col{display:flex;flex-direction:column;gap:16px}.lbl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--text-faint);margin-bottom:8px}</style>
+</head><body><div id="root"></div><script type="text/babel">
+const { AnswerPanel, CitationCard } = window.SvkBeslutsokDesignSystem_46c55d;
+
+function Demo(){const [saved,setSaved]=React.useState(false);
+return <div className="col">
+<AnswerPanel question="Does a motor carrier owe a duty of care to a downstream consignee?"
+ answer={<p>Within the Ninth Circuit, a carrier's duty runs to the consignee named on the bill of lading, and courts have extended it to a downstream consignee where delivery was reasonably foreseeable. The Carmack Amendment preempts parallel state-law claims for loss or damage in transit.</p>}
+ sources={["812 F.3d 1044","49 U.S.C. § 14706","Restatement (2d) Torts § 324A"]}/>
+<CitationCard title="Novak v. Harrow Logistics, Inc." citation="812 F.3d 1044" court="9th Cir." year="2016" authority="binding" treatment="Followed"
+ excerpt="A carrier that accepts goods for delivery assumes a duty of reasonable care toward every party it knows will take possession downstream, not merely the consignee named on the bill of lading."
+ matchTerms={["duty of care","consignee"]} saved={saved} onSave={()=>setSaved(!saved)}/>
+</div>}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script></body></html>

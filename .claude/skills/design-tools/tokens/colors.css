@@ -1,0 +1,93 @@
+:root {
+  /* ---- Base palette ------------------------------------------------ */
+  /* Apricot — the warmth of the brand. Used for wash, highlight, accent. */
+  --apricot-50: #fff8f2;
+  --apricot-100: #fdeade;
+  --apricot-200: #fad7bd;
+  --apricot-300: #f6bd94;
+  --apricot-400: #efa26f;
+  --apricot-500: #e2854b;
+  --apricot-600: #c76c36;
+  --apricot-700: #a1552a;
+
+  /* Burgundy — authority. Primary action, headings, marks. */
+  --burgundy-50: #fdf3f4;
+  --burgundy-100: #f8e0e3;
+  --burgundy-200: #eebac1;
+  --burgundy-300: #d98b96;
+  --burgundy-400: #b85d6c;
+  --burgundy-500: #8f3244;
+  --burgundy-600: #71212f;
+  --burgundy-700: #561723;
+  --burgundy-800: #3b0f17;
+
+  /* Warm neutrals — paper, not screen. Every grey carries a little red. */
+  --paper: #ffffff;
+  --warm-25: #fdfbf9;
+  --warm-50: #faf6f2;
+  --warm-100: #f2ece6;
+  --warm-200: #e6ddd5;
+  --warm-300: #d2c6bc;
+  --warm-400: #a89a8f;
+  --warm-500: #7d7169;
+  --warm-600: #5c534d;
+  --warm-700: #423b37;
+  --warm-800: #2a2523;
+  --warm-900: #191614;
+
+  /* Semantic hues */
+  --green-100: #e2efe4;
+  --green-500: #2f6b40;
+  --amber-100: #fbeed2;
+  --amber-500: #9a6a10;
+  --red-100: #f8e0e0;
+  --red-500: #a32020;
+  --blue-100: #e3eaf2;
+  --blue-500: #2f4f78;
+
+  /* ---- Semantic aliases -------------------------------------------- */
+  --text-strong: var(--warm-900);
+  --text-body: var(--warm-700);
+  --text-muted: var(--warm-500);
+  --text-faint: var(--warm-400);
+  --text-inverse: var(--apricot-50);
+  --text-accent: var(--burgundy-600);
+  --text-link: var(--burgundy-600);
+  --text-link-hover: var(--burgundy-500);
+
+  --surface-page: var(--warm-50);
+  --surface-card: var(--paper);
+  --surface-sunken: var(--warm-100);
+  --surface-raised: var(--paper);
+  --surface-accent: var(--apricot-50);
+  --surface-accent-strong: var(--apricot-100);
+  --surface-inverse: var(--burgundy-700);
+  --surface-overlay: rgba(42, 37, 35, 0.42);
+
+  --border-hairline: var(--warm-200);
+  --border-default: var(--warm-300);
+  --border-strong: var(--warm-400);
+  --border-accent: var(--apricot-300);
+
+  --action-primary: var(--burgundy-600);
+  --action-primary-hover: var(--burgundy-500);
+  --action-primary-press: var(--burgundy-700);
+  --action-secondary: var(--apricot-200);
+  --action-secondary-hover: var(--apricot-300);
+
+  --focus-ring: var(--apricot-400);
+
+  --status-ok-bg: var(--green-100);
+  --status-ok-fg: var(--green-500);
+  --status-warn-bg: var(--amber-100);
+  --status-warn-fg: var(--amber-500);
+  --status-error-bg: var(--red-100);
+  --status-error-fg: var(--red-500);
+  --status-info-bg: var(--blue-100);
+  --status-info-fg: var(--blue-500);
+
+  /* Citation authority levels — product-specific semantic colors */
+  --authority-binding: var(--burgundy-600);
+  --authority-persuasive: var(--apricot-600);
+  --authority-secondary: var(--warm-500);
+}
