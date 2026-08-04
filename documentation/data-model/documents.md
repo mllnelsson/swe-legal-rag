@@ -4,7 +4,7 @@ title: documents
 description: The document registry — one row per PDF, tracking both identity and progressive ingestion state.
 resource: postgres://documents
 tags: [data-model, table, documents, registry]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-08-04T00:00:00Z
 ---
 
 # `documents`
@@ -16,12 +16,12 @@ The registry. One row per PDF. Tracks both identity and ingestion progress.
 | id | UUID | PK |
 | source_url | TEXT | Canonical PDF URL, keyed on the CMS document id (`default.aspx?id=...`). Unique constraint — dedup key. |
 | source_document_id | INTEGER | Nullable. CMS `documentId` from the OData listing. Unique constraint — second dedup backstop. Null for rows predating the OData crawler. |
-| source_headline | TEXT | Nullable. Headline from the OData listing, set at crawl time |
+| source_headline | TEXT | Nullable. Headline from the OData listing, set at crawl time. Stored **verbatim** — its contract is "what the listing said," so it is never split into its beslutsnummer/title parts on write. It corroborates `decision_number` (fallback only, trailer wins) and `category` (fallback only, PDF header wins) at metadata-extraction time; see [document structure](/reference/document-structure.md#corroborating-source-the-crawler-headline). Split only at the point a headline is projected to a client, via `shared.source_headline.headline_title` |
 | source_published_at | TIMESTAMPTZ | Nullable. Publish date from the OData listing, set at crawl time |
 | gcs_uri | TEXT | Nullable. Set after download step |
 | raw_text | TEXT | Nullable. Set after parse step |
 | summary | TEXT | Nullable. Set after chunking step (document-level summary) |
-| case_number | VARCHAR | Nullable. Ärendenummer, canonical `YYYY-NNNN`. Set after metadata step |
+| case_number | VARCHAR | Nullable. Ärendenummer, canonical `YYYY-NNNN` — the sequence zero-padded to four digits (`ÖN 2026-04` stores as `2026-0004`). Set after metadata step |
 | decision_number | VARCHAR | Nullable. Beslutsnummer, canonical `N/YYYY` — a separate identifier space from `case_number`. Set after metadata step |
 | decision_date | DATE | Nullable. Set after metadata step |
 | decision_outcome | VARCHAR | Nullable. Set after metadata step |

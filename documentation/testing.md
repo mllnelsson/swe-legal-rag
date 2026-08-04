@@ -3,7 +3,7 @@ type: Concept
 title: Testing Strategy
 description: The two-level (unit + integration) testing approach — what to test, what to mock, how the split is enforced, and the separate database integration tests run against.
 tags: [testing, pytest, strategy]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-04T00:00:00Z
 ---
 
 # Testing Strategy
@@ -75,6 +75,21 @@ integration suites, a word counter) — there is nothing to patch, and `transfor
 in a suite that needs to stay fast and offline. Both new integration tests keep the word
 counter deliberately, so the suite needs no HuggingFace hub access or a warm tokenizer
 cache to run.
+
+**Regex-based parsers must be tested against observed corpus variants, not one idealised
+spelling.** `shared.segmentation` and `worker-extract`'s rule-based extractor both had
+fixtures that used the *minority* spelling for the exact thing that later turned out
+broken: the appendix-label test used `Bilaga A` while 22 of 25 real decisions write
+`BILAGA A`, and the kyrkoordningen fixture used `kyrkoordningen kapitel 32 § 5`, a phrasing
+that occurs **zero** times in the real corpus, while the majority form
+(`58 kap. 1 § kyrkoordningen`, lagrum before the statute's name) occurs 213 times and
+matched nothing. Both defects were invisible to their own test suites for exactly that
+reason — the fixture and the code agreed with each other, just not with the documents. A
+parser test suite for this pipeline should pin every spelling variant known to occur in
+`data/store/documents.json` (or a representative sample of it), not just the one that was
+easiest to write down. See [structural fields are parsed, not
+inferred](/decisions/structural-fields-are-parsed.md) for why these fields are worth
+getting right with rules rather than delegating them to an LLM.
 
 ## Unit Tests
 

@@ -4,7 +4,7 @@ title: Extract Worker
 description: Subscriber worker that extracts entities, declared keywords, and cross-references from document text into the graph-in-Postgres tables, then enqueues chunk tasks.
 resource: packages/worker-extract
 tags: [pipeline, worker, extract, entities, keywords, references, graph]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-04T00:00:00Z
 ---
 
 # Extract Worker (`packages/worker-extract/`)
@@ -52,6 +52,20 @@ value, rather than silently falling back to the default:
 | `llm` | Only LLM extraction via `ai.extract_entities()` |
 | `rule_based_with_llm_fallback` | Rule-based first; LLM runs only when the result is incomplete (zero entities or count below a length threshold); merged with rule-based winning deduplication |
 
+The length threshold (`factory._is_result_complete`) sizes `min_expected` off
+`len(segments.body)` alone, but counts entities found across **body and appendices
+together**. Before the appendix-label fix in [document
+structure](/reference/document-structure.md), `segments.appendices` came back empty for
+22 of 25 corpus documents — not because their appendix text was gone, but because it had
+been swallowed into `trailer`, which this strategy never scans. Entity count dropped
+(appendix-sourced entities were simply never found) while the threshold, sized off `body`
+alone, did not — so the check judged those results incomplete more often than the body-only
+extraction actually warranted, and paid for an LLM call on the strength of a wrong count.
+Post-fix, appendix entities count toward the total again, so the same threshold is met more
+often on its own. See [structural fields are parsed, not
+inferred](/decisions/structural-fields-are-parsed.md) for why structural fields stay
+rule-only regardless, and where LLM fallback is the right call instead.
+
 `create_extraction_strategy()` is called **once per process**, at `subscribe()` time —
 not once per document. The two LLM-backed modes build their `LLMProvider` there and
 close over it with `functools.partial`; `process_extraction()` takes the resulting
@@ -76,7 +90,27 @@ This is what lets the pipeline run crawl through extract with no API key configu
 ### Rule-based extraction
 
 Pure functions, no I/O:
-- **Regulations:** `kyrkoordningen X kap. Y §`, `kyrkoordningen kapitel X`, `KO X:Y`
+- **Regulations:** kyrkoordningen citations, matched over whitespace-collapsed text so a
+  line-wrapped citation still resolves — `X kap. Y §` (before or after the statute's
+  name, both spelled `kyrkoordningen` and abbreviated `KO`), `KO X:Y`, the spelled-out
+  `kyrkoordningen kapitel X § Y`, and a chapter-only citation (`X kap. kyrkoordningen`).
+  Ranges are recognised both ways the corpus writes them (`57 kap. 8-19 §§`, `57 kap. 8
+  och 19 §§`), and an optional sub-clause (`tredje stycket`, `p. 4`) is matched so the
+  citation is not cut short, then dropped from the stored form. `KO` is matched
+  case-sensitively and word-anchored: lower-cased it is an ordinary Swedish noun, and
+  requiring the statute's name at all is what keeps tryckfrihetsförordningen, OSL,
+  rättegångsbalken and kyrkolagen — all cited in the identical `N kap. M §` shape — out of
+  the regulation vocabulary. `_canonical_regulation` normalises every match to one
+  spelling, **`N kap. M § kyrkoordningen`** (`N kap. kyrkoordningen` with no section).
+  Two judgement calls are baked into that canonical form: the sub-clause is dropped, since
+  `58 kap. 18 §` and `58 kap. 18 § tredje stycket` cite the same provision and keeping them
+  apart would fragment the vocabulary the entity graph exists to join on; and a range is
+  normalised but **not expanded** — `57 kap. 8-19 §§` stays one entity, not twelve.
+  Range-expansion is deferred as a separate judgement about entity granularity, not ruled
+  out. Measured over the 25-document corpus: 213 of 215 citations put the lagrum first
+  (`58 kap. 1 § kyrkoordningen`), which the patterns previously did not match at all —
+  `EntityType.REGULATION` went from an empty vocabulary (0 rows, 0 documents) to 104 rows
+  across 59 distinct names in 24 of 25 documents; the 25th genuinely cites no lagrum.
 - **Parishes:** `X församling`, `X stift`, `församlingen i X`
 - **Roles:** exact-word lookup from a known set (`kyrkoherde`, `kyrkoråd`,
   `kyrkofullmäktige`, `biskop`, `domkapitel`, `kontraktsprost`, `domprost`,
@@ -87,7 +121,8 @@ Pure functions, no I/O:
 - **Cross-references:** two identifier spaces, both canonicalised by
   `shared.segmentation`, both scanned in **`segments.body` only**:
   - `_CASE_REF_RE` matches `ÖN YYYY-NNNN` with optional `dnr` prefix → `YYYY-NNNN`
-  - `_DECISION_REF_RE` matches `beslut N/YYYY` → `N/YYYY`
+  - `_DECISION_REF_RE` matches `beslut N/YYYY`, and the hyphen spelling `beslut N-YYYY`
+    one corpus decision uses → `N/YYYY`
 
   The surrounding sentence is kept as `reference_context`. Excluding the trailer is what
   stops a decision citing itself: it holds the document's own `Ärendenummer:` and
