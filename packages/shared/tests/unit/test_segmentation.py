@@ -10,9 +10,11 @@ from __future__ import annotations
 import pytest
 
 from shared.segmentation import (
+    TrailerField,
     normalize_case_number,
     normalize_decision_number,
     parse_keywords,
+    parse_trailer_fields,
     split_document,
 )
 
@@ -288,6 +290,24 @@ class TestNormalizeDecisionNumber:
     def test_no_match_returns_none(self) -> None:
         assert normalize_decision_number("Beslut: ingen") is None
 
+    def test_hyphen_form_is_accepted(self) -> None:
+        # One corpus decision writes its beslutsnummer with a hyphen. Requiring a
+        # slash left that document with no decision number at all.
+        assert normalize_decision_number("Beslut: 23-2026") == "23/2026"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Ärendenummer: ÖN 2026-0014",
+            "Meddelat 2026-01-07",
+            "mandatperioden 2026-2029",
+        ],
+    )
+    def test_the_hyphen_form_does_not_swallow_other_identifiers(
+        self, text: str
+    ) -> None:
+        assert normalize_decision_number(text) is None
+
     def test_disjoint_from_case_numbers(self) -> None:
         # Resolution relies on the two spaces never colliding.
         assert "/" in "1/2026"
@@ -319,6 +339,56 @@ class TestParseKeywords:
     def test_duplicates_are_collapsed_case_insensitively(self) -> None:
         assert parse_keywords("Sökord: Jäv, jäv, JÄV.") == ["Jäv"]
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("Kyrkobyggnad. Kyrkorum.", ["Kyrkobyggnad", "Kyrkorum"]),
+            (
+                "Beslutsprövning. Kyrkofullmäktige. Protokollföring",
+                ["Beslutsprövning", "Kyrkofullmäktige", "Protokollföring"],
+            ),
+            ("Avvisning", ["Avvisning"]),
+        ],
+    )
+    def test_a_full_stop_separates_keywords(
+        self, value: str, expected: list[str]
+    ) -> None:
+        # The separator every Sökord line in the corpus actually uses. Splitting on
+        # commas alone returned "Kyrkobyggnad. Kyrkorum" as a single keyword.
+        assert parse_keywords(f"Sökord: {value}") == expected
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("Omprövning. Utlämnande av handling.", "Utlämnande av handling"),
+            ("Omprövning. Upplåtelse av kyrka.", "Upplåtelse av kyrka"),
+            ("Saklig prövning.", "Saklig prövning"),
+        ],
+    )
+    def test_whitespace_never_separates_keywords(
+        self, value: str, expected: str
+    ) -> None:
+        # Multi-word keywords are common in the corpus; only punctuation splits.
+        assert parse_keywords(f"Sökord: {value}")[-1] == expected
+
+    def test_an_abbreviation_is_neither_split_nor_truncated(self) -> None:
+        # The stop in "m.m." is part of the keyword. The separator lookahead is
+        # what stops it splitting; stripping a single trailing stop rather than a
+        # run of them is what stops it becoming "Avskrivning m.m".
+        assert parse_keywords("Sökord: Avskrivning m.m.") == ["Avskrivning m.m."]
+
+    def test_a_rule_line_is_not_a_keyword(self) -> None:
+        # The corpus draws the rule between trailer and appendix with dashes as
+        # well as ellipses; an unrecognised rule line was folded into the value.
+        trailer = "Sökord: Avskrivning\n--------------------\n"
+        assert parse_keywords(trailer) == ["Avskrivning"]
+
+    def test_a_trailer_listing_sokord_last_still_yields_one_keyword(self) -> None:
+        # The ordering that made the old lookahead run to end-of-document, turning
+        # the whole appended decision into four "keywords".
+        trailer = "Ärendenummer: ÖN 2026-0014\nBeslut: 23-2026\nSökord: Avskrivning\n"
+        assert parse_keywords(trailer) == ["Avskrivning"]
+
     def test_trailer_without_a_sokord_line_yields_nothing(self) -> None:
         assert parse_keywords("Ärendenummer: ÖN 2025-0017\nBeslut: 1/2026") == []
 
@@ -333,3 +403,37 @@ class TestParseKeywords:
         # that reads it must agree on what a trailer is.
         segments = split_document(_UTLAMNANDE)
         assert parse_keywords(segments.trailer) == ["Utlämnande av handlingar"]
+
+
+class TestParseTrailerFields:
+    def test_reads_every_label(self) -> None:
+        segments = split_document(_UTLAMNANDE)
+        assert parse_trailer_fields(segments.trailer) == {
+            TrailerField.KEYWORDS: "Utlämnande av handlingar.",
+            TrailerField.CASE_NUMBER: "ÖN 2025-0017",
+            TrailerField.DECISION_NUMBER: "1/2026",
+        }
+
+    def test_field_order_does_not_matter(self) -> None:
+        reordered = "Ärendenummer: ÖN 2026-0014\nBeslut: 23-2026\nSökord: Avskrivning"
+        assert parse_trailer_fields(reordered) == {
+            TrailerField.CASE_NUMBER: "ÖN 2026-0014",
+            TrailerField.DECISION_NUMBER: "23-2026",
+            TrailerField.KEYWORDS: "Avskrivning",
+        }
+
+    def test_a_wrapped_value_is_folded_back_onto_its_field(self) -> None:
+        trailer = "Sökord: Utlämnande av allmän\nhandling.\nBeslut: 1/2026"
+        fields = parse_trailer_fields(trailer)
+        assert fields[TrailerField.KEYWORDS] == "Utlämnande av allmän handling."
+        assert fields[TrailerField.DECISION_NUMBER] == "1/2026"
+
+    def test_a_rule_line_ends_a_value(self) -> None:
+        trailer = "Sökord: Avskrivning\n--------\nnågot annat"
+        assert parse_trailer_fields(trailer) == {TrailerField.KEYWORDS: "Avskrivning"}
+
+    def test_missing_trailer_is_empty(self) -> None:
+        assert parse_trailer_fields(None) == {}
+
+    def test_trailer_without_labels_is_empty(self) -> None:
+        assert parse_trailer_fields("Beslut i ärendet.") == {}

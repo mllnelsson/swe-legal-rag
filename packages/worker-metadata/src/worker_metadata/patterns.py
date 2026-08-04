@@ -7,13 +7,17 @@ from collections.abc import Callable
 
 from shared.segmentation import (
     DocumentSegments,
+    TrailerField,
     normalize_case_number,
     normalize_decision_number,
+    parse_trailer_fields,
     split_document,
 )
 
-# Both identifiers sit on their own labelled line in the trailer. Match the line,
-# then let shared.segmentation canonicalise whatever spelling it holds.
+# Both identifiers sit on their own labelled line in the trailer, which
+# `parse_trailer_fields` reads directly. These patterns are the body fallback for
+# decisions whose trailer the anchors did not find; match the line, then let
+# shared.segmentation canonicalise whatever spelling it holds.
 _CASE_NUMBER_LINE_RE = re.compile(r"^[ \t]*Ärendenummer:(.*)$", re.MULTILINE)
 _DECISION_NUMBER_LINE_RE = re.compile(r"^[ \t]*Beslut:(.*)$", re.MULTILINE)
 
@@ -45,37 +49,49 @@ class MetadataResult:
 
 def extract_case_number(segments: DocumentSegments) -> str | None:
     """Read the ärendenummer, canonicalised to ``YYYY-NNNN``."""
-    return _from_trailer_or_body(segments, _CASE_NUMBER_LINE_RE, normalize_case_number)
+    return _from_trailer_or_body(
+        segments,
+        TrailerField.CASE_NUMBER,
+        _CASE_NUMBER_LINE_RE,
+        normalize_case_number,
+    )
 
 
 def extract_decision_number(segments: DocumentSegments) -> str | None:
     """Read the beslutsnummer ("1/2026")."""
     return _from_trailer_or_body(
-        segments, _DECISION_NUMBER_LINE_RE, normalize_decision_number
+        segments,
+        TrailerField.DECISION_NUMBER,
+        _DECISION_NUMBER_LINE_RE,
+        normalize_decision_number,
     )
 
 
 def _from_trailer_or_body(
     segments: DocumentSegments,
-    pattern: re.Pattern[str],
+    field: TrailerField,
+    body_pattern: re.Pattern[str],
     normalize: Callable[[str], str | None],
 ) -> str | None:
     """Prefer the trailer, fall back to the body — but never the appendices.
 
     The trailer is where both identifiers belong, and looking there first means a
-    header that happens to repeat one cannot win. The body is a fallback for
-    decisions that lay the header out differently. Appendices are excluded outright:
-    an appended lower-instance decision carries its own diarienummer, and mistaking
-    that for this decision's would misfile the whole document.
+    header that happens to repeat one cannot win. Reading it through
+    `parse_trailer_fields` rather than a second copy of the label regex is what
+    makes this independent of the order the decision lists its trailer fields in.
+
+    The body is a fallback for decisions that lay the header out differently.
+    Appendices are excluded outright: an appended lower-instance decision carries
+    its own diarienummer, and mistaking that for this decision's would misfile the
+    whole document.
     """
-    for text in (segments.trailer, segments.body):
-        if text is None:
-            continue
-        match = pattern.search(text)
-        if match is not None:
-            found = normalize(match.group(1))
-            if found is not None:
-                return found
+    value = parse_trailer_fields(segments.trailer).get(field)
+    if value is not None and (found := normalize(value)) is not None:
+        return found
+
+    match = body_pattern.search(segments.body)
+    if match is not None:
+        return normalize(match.group(1))
     return None
 
 

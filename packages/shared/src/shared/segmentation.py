@@ -29,17 +29,28 @@ to do with the segments — see the extract, metadata and chunk workers.
 from __future__ import annotations
 
 import re
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
 __all__ = [
     "Appendix",
     "DocumentSegments",
+    "TrailerField",
     "normalize_case_number",
     "normalize_decision_number",
     "parse_keywords",
+    "parse_trailer_fields",
     "split_document",
 ]
+
+
+class TrailerField(StrEnum):
+    """The labels the nämnd's trailer uses, spelled as they appear in the PDF."""
+
+    KEYWORDS = "Sökord"
+    CASE_NUMBER = "Ärendenummer"
+    DECISION_NUMBER = "Beslut"
 
 
 class Appendix(BaseModel):
@@ -98,9 +109,10 @@ _TRAILER_START_PATTERNS = (
 _HOLDING_RE = re.compile(r"^[ \t]*Överklagandenämndens beslut:[ \t]*", re.MULTILINE)
 
 # The typographic rule separating the trailer from the first appendix — a run of
-# ellipsis characters, sometimes plain dots. Matched as a whole line so a sentence
-# ending in a full stop survives.
-_RULE_LINE_RE = re.compile(r"^[ \t]*[….]{2,}[ \t]*$")
+# ellipsis characters, dots, or dashes; the corpus draws it every one of those
+# ways. Matched as a whole line so a sentence ending in a full stop survives, and
+# applied to the trailer slice only.
+_RULE_LINE_RE = re.compile(r"^[ \t]*[….\-–—_]{2,}[ \t]*$")
 
 # Ärendenummer: "ÖN 2026-0014", "ÖN 2026-04", "2026-0005" — the ÖN and Dnr markers
 # are both optional because the corpus omits them on some trailer lines.
@@ -118,18 +130,30 @@ _CASE_NUMBER_RE = re.compile(
     re.IGNORECASE,
 )
 
-_DECISION_NUMBER_RE = re.compile(r"(\d{1,3})\s*/\s*(\d{4})")
+# Beslutsnummer: "13/2026", and the one corpus decision that writes "23-2026".
+# Both halves are length-bounded and word-anchored so the hyphen form cannot
+# swallow an ärendenummer ("2026-0014"), a date ("2025-10-07") or a mandate period
+# ("2026-2029").
+_DECISION_NUMBER_RE = re.compile(r"\b(\d{1,3})[ \t]*[/-][ \t]*(\d{4})\b")
 
-# The `Sökord:` value. Deliberately not end-of-line anchored: a long value wraps
-# onto following lines, so it runs until the next trailer label or the end of the
-# trailer. `Ärendenummer` and `Beslut` are the only labels that follow it.
-_KEYWORDS_VALUE_RE = re.compile(
-    r"^[ \t]*Sökord:(.*?)(?=^[ \t]*(?:Ärendenummer|Beslut):|\Z)",
-    re.MULTILINE | re.DOTALL,
+# One labelled trailer line. Built from the enum so a label cannot be added to
+# `TrailerField` without the parser recognising it.
+_TRAILER_FIELD_RE = re.compile(
+    r"^[ \t]*(?P<label>"
+    + "|".join(field.value for field in TrailerField)
+    + r")[ \t]*:(?P<value>.*)$"
 )
 
-# A decision classified under several keywords separates them with either.
-_KEYWORD_SEPARATOR_RE = re.compile(r"[,;]")
+# A decision classified under several keywords separates them with a full stop —
+# every `Sökord:` line in the corpus does, and most end with one. `,` and `;` are
+# kept as the conventional spelling.
+#
+# A stop only separates before whitespace and a capital, or at the end of the
+# value; the end-of-value case is what drops the line's terminating stop, leaving
+# an empty final part the caller discards. The lookbehind spots the
+# letter-after-a-stop that ends a Swedish abbreviation, so "m.m." and "bl.a." are
+# neither split apart nor truncated to "m.m".
+_KEYWORD_SEPARATOR_RE = re.compile(r"[,;]|(?<!\.[A-ZÅÄÖa-zåäö])\.(?=\s+[A-ZÅÄÖ]|\s*$)")
 
 
 def split_document(raw_text: str) -> DocumentSegments:
@@ -151,7 +175,7 @@ def split_document(raw_text: str) -> DocumentSegments:
 
     trailer = None
     if trailer_start is not None:
-        trailer = _strip_ellipsis_rule(text[trailer_start:appendix_start])
+        trailer = _strip_rule_lines(text[trailer_start:appendix_start])
 
     return DocumentSegments(
         body=body,
@@ -187,6 +211,35 @@ def normalize_decision_number(raw: str) -> str | None:
     return f"{int(match.group(1))}/{match.group(2)}"
 
 
+def parse_trailer_fields(trailer: str | None) -> dict[TrailerField, str]:
+    """Read the trailer's labelled lines as label -> value.
+
+    Line-oriented rather than one regex per field. The corpus does not fix the
+    field order, so any pattern that ends a value by naming the labels that may
+    follow it is wrong for some ordering — and when the guess is wrong the value
+    runs to the end of the document and swallows the appendix.
+
+    A value the PDF wrapped onto the following line is folded back into its field;
+    a blank line or a typographic rule ends it. Never raises: a missing or
+    label-less trailer comes back empty.
+    """
+    if trailer is None:
+        return {}
+
+    fields: dict[TrailerField, str] = {}
+    current: TrailerField | None = None
+    for line in trailer.splitlines():
+        match = _TRAILER_FIELD_RE.match(line)
+        if match is not None:
+            current = TrailerField(match.group("label"))
+            fields[current] = match.group("value").strip()
+        elif current is not None and _is_continuation_line(line):
+            fields[current] = f"{fields[current]} {line.strip()}".strip()
+        else:
+            current = None
+    return fields
+
+
 def parse_keywords(trailer: str | None) -> list[str]:
     """Read the subject keywords off the trailer's ``Sökord:`` line.
 
@@ -197,20 +250,16 @@ def parse_keywords(trailer: str | None) -> list[str]:
     Never raises: a missing trailer, a trailer carrying only ``Ärendenummer:``, and
     an empty value all come back as an empty list.
     """
-    if trailer is None:
-        return []
-
-    match = _KEYWORDS_VALUE_RE.search(trailer)
-    if match is None:
+    value = parse_trailer_fields(trailer).get(TrailerField.KEYWORDS)
+    if value is None:
         return []
 
     keywords: list[str] = []
     seen: set[str] = set()
-    for part in _KEYWORD_SEPARATOR_RE.split(match.group(1)):
-        # A wrapped value arrives with newlines inside it, and the corpus ends the
-        # line with a full stop that is sentence punctuation, not part of the
-        # keyword — `_strip_ellipsis_rule` is what lets that stop survive this far.
-        keyword = " ".join(part.split()).rstrip(".").strip()
+    for part in _KEYWORD_SEPARATOR_RE.split(value):
+        # A wrapped value arrives with newlines inside it, and the line's own
+        # terminating stop leaves an empty trailing part.
+        keyword = " ".join(part.split())
         if not keyword or keyword.casefold() in seen:
             continue
         seen.add(keyword.casefold())
@@ -270,6 +319,11 @@ def _find_holding(body: str) -> str | None:
     return body[match.end() :].strip() or None
 
 
-def _strip_ellipsis_rule(trailer: str) -> str:
+def _strip_rule_lines(trailer: str) -> str:
     kept = [line for line in trailer.splitlines() if not _RULE_LINE_RE.match(line)]
     return "\n".join(kept).strip()
+
+
+def _is_continuation_line(line: str) -> bool:
+    """Whether ``line`` continues the trailer field above it."""
+    return bool(line.strip()) and _RULE_LINE_RE.match(line) is None
