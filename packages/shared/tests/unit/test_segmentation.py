@@ -96,6 +96,29 @@ class TestBodyAndAppendix:
         segments = split_document("Beslut.\nSökord: X\nBilaga 1\nInnehåll.\n")
         assert [a.label for a in segments.appendices] == ["Bilaga 1"]
 
+    def test_upper_case_label_splits_the_document(self) -> None:
+        # The spelling 22 of the 25 corpus decisions actually use. Matching only
+        # "Bilaga" left their appendices unsplit, and — with no label to bound it —
+        # the trailer swallowed the appended decision whole, so 43 % of the corpus
+        # was neither chunked nor entity-scanned.
+        segments = split_document(_UTLAMNANDE.replace("Bilaga A", "BILAGA A"))
+        assert [a.label for a in segments.appendices] == ["Bilaga A"]
+        assert "PRÄSTLÖNETILLGÅNGAR" not in segments.body
+        assert "PRÄSTLÖNETILLGÅNGAR" not in (segments.trailer or "")
+
+    def test_both_spellings_yield_the_same_canonical_label(self) -> None:
+        # `chunks.appendix_label` joins on this string, so one spelling has to win
+        # regardless of how the source PDF happened to write it.
+        upper = split_document(_UTLAMNANDE.replace("Bilaga A", "BILAGA A"))
+        title = split_document(_UTLAMNANDE)
+        assert upper.appendices[0].label == title.appendices[0].label == "Bilaga A"
+
+    def test_lower_case_identifier_is_not_a_label(self) -> None:
+        # Only the word is case-insensitive. Widening the identifier too would let
+        # a sentence fragment left alone on a line masquerade as an appendix.
+        segments = split_document("Beslut.\nSökord: X\nbilaga a\nInnehåll.\n")
+        assert segments.appendices == []
+
 
 class TestFallbacks:
     def test_document_without_appendix_is_all_body(self) -> None:
@@ -164,6 +187,23 @@ class TestTrailer:
         segments = split_document(text)
         assert segments.trailer is None
         assert segments.body == "Beslut i ärendet."
+
+    def test_the_earliest_label_opens_the_trailer(self) -> None:
+        # One corpus decision puts Sökord last. Anchoring on the first pattern
+        # tried rather than the earliest match cut the trailer at its final line
+        # and left the document's own identifiers in `body`, where they defeat the
+        # self-citation guard.
+        text = (
+            "Beslut i ärendet.\r\n"
+            "Ärendenummer: ÖN 2026-0014\r\n"
+            "Beslut: 23/2026\r\n"
+            "Sökord: Avskrivning\r\n"
+        )
+        segments = split_document(text)
+        assert segments.body == "Beslut i ärendet."
+        assert segments.trailer is not None
+        assert "Ärendenummer: ÖN 2026-0014" in segments.trailer
+        assert "Beslut: 23/2026" in segments.trailer
 
 
 class TestHolding:

@@ -19,7 +19,7 @@ The layout is regular enough to segment with anchors alone::
     Ärendenummer: ÖN 2025-0017           |- trailer
     Beslut: 1/2026                      -'
     ...............                     <- ellipsis rule
-    Bilaga A
+    BILAGA A                            <- label, usually upper case
     <the prior instance's own document, verbatim>
 
 Everything here is pure: no I/O, no logging, no configuration. Callers decide what
@@ -68,16 +68,28 @@ class DocumentSegments(BaseModel):
     appendices: list[Appendix] = []
 
 
+# The one spelling `Appendix.label` and `chunks.appendix_label` use. The corpus
+# writes the word both ways — "BILAGA A" in 22 of 25 decisions, "Bilaga A" in the
+# rest — so the emitted label is built rather than echoed from the source.
+_APPENDIX_LABEL_PREFIX = "Bilaga"
+
 # A line that is *only* an appendix label. Deliberately end-anchored: prose like
 # "Bilaga 1 innehåller ..." and "markerade med rött i bilagan" must not split the
 # document. Labels seen in the corpus are a single letter or a small number.
+#
+# Case-insensitive on the word alone, not via re.IGNORECASE on the whole pattern,
+# which would widen the identifier to lowercase too — a stray "bilaga a" in prose
+# is not a label.
 _APPENDIX_LABEL_RE = re.compile(
-    r"^[ \t]*(Bilaga[ \t]+(?:\d{1,2}|[A-ZÅÄÖ]))[ \t]*$",
+    r"^[ \t]*(?i:bilaga)[ \t]+(?P<identifier>\d{1,2}|[A-ZÅÄÖ])[ \t]*$",
     re.MULTILINE,
 )
 
 # The trailer opens with "Sökord:"; "Ärendenummer:" is the fallback for decisions
-# that omit it. Both are line-initial, unlike their in-prose mentions.
+# that omit it. Both are line-initial, unlike their in-prose mentions. The corpus
+# does not fix their order, so the *earliest* of them starts the trailer — see
+# `_find_trailer_start`. "Beslut:" is deliberately not an anchor: it is never the
+# first trailer line in the corpus, and an appended protocol uses it as a heading.
 _TRAILER_START_PATTERNS = (
     re.compile(r"^[ \t]*Sökord:", re.MULTILINE),
     re.compile(r"^[ \t]*Ärendenummer:", re.MULTILINE),
@@ -222,7 +234,10 @@ def _split_appendices(raw_text: str) -> tuple[int, list[Appendix]]:
     ends = [match.start() for match in labels[1:]] + [len(raw_text)]
 
     appendices = [
-        Appendix(label=match.group(1).strip(), text=raw_text[start:end].strip())
+        Appendix(
+            label=f"{_APPENDIX_LABEL_PREFIX} {match.group('identifier')}",
+            text=raw_text[start:end].strip(),
+        )
         for match, start, end in zip(labels, starts, ends, strict=True)
     ]
     return labels[0].start(), appendices
@@ -231,14 +246,21 @@ def _split_appendices(raw_text: str) -> tuple[int, list[Appendix]]:
 def _find_trailer_start(raw_text: str, appendix_start: int) -> int | None:
     """Locate the trailer, ignoring any match that sits inside an appendix.
 
+    The *earliest* label wins rather than the first pattern tried. The corpus
+    orders the trailer `Sökord > Ärendenummer > Beslut` in almost every decision
+    but not all, and anchoring on `Sökord:` in a decision that puts it last cut the
+    trailer at its final line — leaving the document's own identifiers in `body`,
+    where they defeat the self-citation guard.
+
     An appended lower-instance decision can carry a trailer of its own; only the
     nämnd's counts.
     """
-    for pattern in _TRAILER_START_PATTERNS:
-        match = pattern.search(raw_text, 0, appendix_start)
-        if match is not None:
-            return match.start()
-    return None
+    starts = [
+        match.start()
+        for pattern in _TRAILER_START_PATTERNS
+        if (match := pattern.search(raw_text, 0, appendix_start)) is not None
+    ]
+    return min(starts, default=None)
 
 
 def _find_holding(body: str) -> str | None:
