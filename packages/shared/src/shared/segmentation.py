@@ -191,11 +191,19 @@ def normalize_case_number(raw: str) -> str | None:
     ``worker-metadata`` stores ``2025-0017`` while the extractor's regex yields
     ``ÖN 2025-0017``; without one canonical form the self-reference guard never
     fires and no cross-reference ever resolves.
+
+    The sequence is zero-padded to four digits for the same reason. The registry
+    writes it both ways — ``ÖN 2026-04`` alongside ``ÖN 2026-0014`` — and stored
+    unpadded, a citation written the long way could never resolve to it and the
+    document could not recognise a self-citation written the long way either.
+    Padding assumes the registrar never issues ``2026-04`` and ``2026-0004`` as
+    *distinct* ärenden in one year, which is the same assumption the unpadded form
+    already made in reverse. A sequence longer than four digits is left alone.
     """
     match = _CASE_NUMBER_RE.search(raw)
     if match is None:
         return None
-    return f"{match.group(1)}-{match.group(2)}"
+    return f"{match.group(1)}-{int(match.group(2)):04d}"
 
 
 def normalize_decision_number(raw: str) -> str | None:

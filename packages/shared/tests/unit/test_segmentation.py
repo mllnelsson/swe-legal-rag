@@ -264,6 +264,17 @@ class TestNormalizeCaseNumber:
     def test_a_mandate_period_is_not_an_arendenummer(self) -> None:
         assert normalize_case_number("mandatperioden 2026-2029") is None
 
+    def test_a_short_sequence_is_zero_padded(self) -> None:
+        # One corpus decision writes "ÖN 2026-04" while its 24 siblings write
+        # "YYYY-NNNN". Stored unpadded, a citation written the long way could
+        # never resolve to it.
+        assert normalize_case_number("Ärendenummer: ÖN 2026-04") == "2026-0004"
+
+    def test_both_spellings_reach_the_same_canonical_form(self) -> None:
+        assert normalize_case_number("ÖN 2026-04") == normalize_case_number(
+            "ÖN 2026-0004"
+        )
+
     def test_a_four_digit_sequence_is_still_an_arendenummer(self) -> None:
         # Only a sequence that is itself a year of this era is rejected; 1234 is a
         # legitimate ärendenummer sequence.
