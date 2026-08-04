@@ -158,9 +158,7 @@ class TestDisabledLLMRole:
         llm.assert_not_called()
         assert isinstance(result, EntityResult)
 
-    def test_llm_mode_refuses_at_startup(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_llm_mode_refuses_at_startup(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Asked for explicitly, so it is not quietly swapped for something
         else — the worker fails to start instead."""
         monkeypatch.setenv("EXTRACT_STRATEGY", ExtractStrategyMode.LLM)
