@@ -7,6 +7,8 @@ whose Bilaga A is a stiftsstyrelse protocol. Both use CRLF, as the parsed PDFs d
 
 from __future__ import annotations
 
+import pytest
+
 from shared.segmentation import (
     normalize_case_number,
     normalize_decision_number,
@@ -202,6 +204,28 @@ class TestNormalizeCaseNumber:
 
     def test_no_match_returns_none(self) -> None:
         assert normalize_case_number("Avvisning.") is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Meddelat 2026-04-08",
+            "beslut den 2026-04-08",
+            "2025-10-07",
+        ],
+    )
+    def test_a_date_is_not_an_arendenummer(self, text: str) -> None:
+        # The body fallback runs this over free prose, where "Meddelat 2026-04-08"
+        # would otherwise read as case 4 of 2026 — and once the sequence is padded
+        # that becomes a plausible-looking "2026-0004" rather than an obvious wrong.
+        assert normalize_case_number(text) is None
+
+    def test_a_mandate_period_is_not_an_arendenummer(self) -> None:
+        assert normalize_case_number("mandatperioden 2026-2029") is None
+
+    def test_a_four_digit_sequence_is_still_an_arendenummer(self) -> None:
+        # Only a sequence that is itself a year of this era is rejected; 1234 is a
+        # legitimate ärendenummer sequence.
+        assert normalize_case_number("ÖN 2020-1234") == "2020-1234"
 
     def test_metadata_and_extract_spellings_agree(self) -> None:
         # The bug this fixes: metadata stored "2025-0017" while extract yielded

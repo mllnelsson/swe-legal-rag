@@ -90,8 +90,19 @@ _HOLDING_RE = re.compile(r"^[ \t]*Överklagandenämndens beslut:[ \t]*", re.MULT
 # ending in a full stop survives.
 _RULE_LINE_RE = re.compile(r"^[ \t]*[….]{2,}[ \t]*$")
 
+# Ärendenummer: "ÖN 2026-0014", "ÖN 2026-04", "2026-0005" — the ÖN and Dnr markers
+# are both optional because the corpus omits them on some trailer lines.
+#
+# Two guards stop a year being read as an ärendenummer, which matters because the
+# body fallback runs this over free prose:
+#
+#   * a sequence that is itself a year of this era is a period, not a sequence, so
+#     the mandate period "2026-2029" is rejected while case 1234 of "2020-1234" is
+#     kept;
+#   * a following date component disqualifies the match, so "Meddelat 2026-04-08"
+#     does not read as case 4 of 2026.
 _CASE_NUMBER_RE = re.compile(
-    r"(?:ÖN\s*)?(?:dnr\s*)?(\d{4})\s*[-–]\s*(\d+)",
+    r"(?:ÖN\s*)?(?:dnr\s*)?(\d{4})\s*[-–]\s*(?!(?:19|20)\d{2}\b)(\d{1,4})\b(?![-–]\s*\d)",
     re.IGNORECASE,
 )
 
