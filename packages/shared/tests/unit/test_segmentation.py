@@ -10,7 +10,9 @@ from __future__ import annotations
 import pytest
 
 from shared.segmentation import (
+    SegmentationGap,
     TrailerField,
+    find_segmentation_gaps,
     normalize_case_number,
     normalize_decision_number,
     parse_keywords,
@@ -414,6 +416,23 @@ class TestParseKeywords:
         # that reads it must agree on what a trailer is.
         segments = split_document(_UTLAMNANDE)
         assert parse_keywords(segments.trailer) == ["Utlämnande av handlingar"]
+
+
+class TestFindSegmentationGaps:
+    def test_a_well_formed_decision_has_no_gaps(self) -> None:
+        assert find_segmentation_gaps(split_document(_UTLAMNANDE)) == []
+
+    def test_a_bare_paragraph_is_missing_everything(self) -> None:
+        gaps = find_segmentation_gaps(split_document("Ett stycke text."))
+        assert set(gaps) == set(SegmentationGap)
+
+    def test_a_missing_appendix_is_reported_on_its_own(self) -> None:
+        # The shape the case-sensitive label bug produced for 22 of 25 documents,
+        # and which nothing anywhere reported at the time.
+        text = _UTLAMNANDE.replace("Bilaga A\r\n", "")
+        assert find_segmentation_gaps(split_document(text)) == [
+            SegmentationGap.NO_APPENDIX
+        ]
 
 
 class TestParseTrailerFields:

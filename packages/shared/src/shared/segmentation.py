@@ -29,20 +29,37 @@ to do with the segments — see the extract, metadata and chunk workers.
 from __future__ import annotations
 
 import re
-from enum import StrEnum
+from enum import StrEnum, auto
 
 from pydantic import BaseModel, ConfigDict
 
 __all__ = [
     "Appendix",
     "DocumentSegments",
+    "SegmentationGap",
     "TrailerField",
+    "find_segmentation_gaps",
     "normalize_case_number",
     "normalize_decision_number",
     "parse_keywords",
     "parse_trailer_fields",
     "split_document",
 ]
+
+
+class SegmentationGap(StrEnum):
+    """Structure every decision in the corpus has, that this one did not.
+
+    Not an error: `split_document` never raises, and a decision genuinely laid
+    out differently is a thing that happens. A gap is a signal to whoever reads
+    the logs that an anchor stopped matching — every defect this module has had
+    produced `None` or a plausible wrong value with no signal at all.
+    """
+
+    NO_TRAILER = auto()
+    NO_HOLDING = auto()
+    NO_APPENDIX = auto()
+    NO_KEYWORDS = auto()
 
 
 class TrailerField(StrEnum):
@@ -217,6 +234,24 @@ def normalize_decision_number(raw: str) -> str | None:
     if match is None:
         return None
     return f"{int(match.group(1))}/{match.group(2)}"
+
+
+def find_segmentation_gaps(segments: DocumentSegments) -> list[SegmentationGap]:
+    """Anchors that did not fire. Empty means the document matched the template.
+
+    Pure, like everything else here — callers at the worker edge decide whether a
+    gap is worth logging.
+    """
+    gaps = []
+    if segments.trailer is None:
+        gaps.append(SegmentationGap.NO_TRAILER)
+    if segments.holding is None:
+        gaps.append(SegmentationGap.NO_HOLDING)
+    if not segments.appendices:
+        gaps.append(SegmentationGap.NO_APPENDIX)
+    if not parse_keywords(segments.trailer):
+        gaps.append(SegmentationGap.NO_KEYWORDS)
+    return gaps
 
 
 def parse_trailer_fields(trailer: str | None) -> dict[TrailerField, str]:
