@@ -53,9 +53,7 @@ def test_subscribe_step_registers_without_starting(no_db: None) -> None:
     async def handle(message: QueueMessage, session: AsyncSession) -> None:
         received.append(message)
 
-    subscribe_step(
-        topic=PipelineStep.DOWNLOAD, queue_settings=_SYNC, handle=handle
-    )
+    subscribe_step(topic=PipelineStep.DOWNLOAD, queue_settings=_SYNC, handle=handle)
 
     # Registered: publishing on the sync backend dispatches straight into it.
     message = _message()

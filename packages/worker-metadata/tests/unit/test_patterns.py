@@ -215,3 +215,51 @@ def test_extract_metadata_rule_based_combines_all() -> None:
     assert result.category == "Kyrkogårdsförvaltning"
     assert result.decision_outcome is not None
     assert "bifaller" in result.decision_outcome
+
+
+_TRAILER_SOKORD_LAST = (
+    "Svenska kyrkans överklagandenämnd\n"
+    "Meddelat 2026-06-09\n"
+    "Avskrivning m.m.\n"
+    "Överklagandenämndens beslut: Nämnden avvisar överklagandet.\n"
+    "Ärendenummer: ÖN 2026-0014\n"
+    "Beslut: 23-2026\n"
+    "Sökord: Avskrivning\n"
+)
+
+
+class TestSourceHeadlineCorroboration:
+    def test_decision_number_resolves_from_a_sokord_last_trailer(self) -> None:
+        result = extract_metadata_rule_based(_TRAILER_SOKORD_LAST)
+        assert result.decision_number == "23/2026"
+
+    def test_decision_number_falls_back_to_the_headline(self) -> None:
+        # A decision whose trailer carries no Beslut: line at all. The crawler's
+        # listing is the only remaining source.
+        text = "Svenska kyrkans överklagandenämnd\nMeddelat 2026-06-09\nAvskrivning\n"
+        result = extract_metadata_rule_based(text, "Beslut 2026-23  Avskrivning")
+        assert result.decision_number == "23/2026"
+
+    def test_the_trailer_wins_over_a_disagreeing_headline(self) -> None:
+        # The PDF is the authoritative artefact; source_headline is a listing
+        # field the crawler copied.
+        result = extract_metadata_rule_based(
+            _TRAILER_SOKORD_LAST, "Beslut 2026-99 Något annat"
+        )
+        assert result.decision_number == "23/2026"
+
+    def test_the_header_category_wins_over_the_headline_title(self) -> None:
+        # Where the two differ the PDF is the richer of the pair.
+        result = extract_metadata_rule_based(
+            _TRAILER_SOKORD_LAST, "Beslut 2026-23  Avskrivning"
+        )
+        assert result.category == "Avskrivning m.m."
+
+    def test_category_falls_back_to_the_headline_title(self) -> None:
+        text = "Ett dokument utan rubrikrad.\nÄrendenummer: ÖN 2026-0014\n"
+        result = extract_metadata_rule_based(text, "Beslut 2026-23  Avskrivning")
+        assert result.category == "Avskrivning"
+
+    def test_no_headline_is_not_an_error(self) -> None:
+        result = extract_metadata_rule_based(_TRAILER_SOKORD_LAST, None)
+        assert result.decision_number == "23/2026"

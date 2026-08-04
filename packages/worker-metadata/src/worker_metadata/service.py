@@ -42,7 +42,7 @@ async def process_metadata(
     document_repo: DocumentRepo,
     task_repo: TaskRepo,
     queue_publisher: QueuePublisher,
-    rule_extractor: Callable[[str], MetadataResult],
+    rule_extractor: Callable[[str, str | None], MetadataResult],
     llm_extractor: LLMMetadataExtractor,
     session: AsyncSession,
     next_topic: PipelineStep = PipelineStep.EXTRACT,
@@ -54,7 +54,7 @@ async def process_metadata(
         if document.raw_text is None:
             raise StepInputError(f"Document {document_id} has no raw text")
 
-        result = rule_extractor(document.raw_text)
+        result = rule_extractor(document.raw_text, document.source_headline)
         if not is_complete(result):
             missing = [f for f in _METADATA_FIELDS if getattr(result, f) is None]
             logger.info(

@@ -14,6 +14,7 @@ from shared.dtos.document_reference import (
 )
 from shared.models.document import Document
 from shared.models.document_reference import DocumentReference
+from shared.source_headline import headline_title
 
 
 async def create(
@@ -81,7 +82,7 @@ def _to_reference_edges(rows: Sequence[Row[Any]]) -> list[ReferenceEdge]:
             case_number=case_number,
             decision_number=decision_number,
             decision_date=decision_date,
-            headline=headline,
+            headline=headline_title(headline),
             reference_context=reference_context,
         )
         for (

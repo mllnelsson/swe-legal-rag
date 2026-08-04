@@ -29,6 +29,7 @@ from shared.repositories import document as document_repo
 from shared.repositories import search as search_repo
 from shared.repositories.chunk import Sections
 from shared.search import is_empty_filter, rrf_fuse_scored
+from shared.source_headline import headline_title
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +297,7 @@ def _make_hit(
         decision_date=document.decision_date,
         category=document.category,
         decision_outcome=document.decision_outcome,
-        headline=document.source_headline,
+        headline=headline_title(document.source_headline),
         summary=document.summary,
         source_url=document.source_url,
         score=chunks[0].score,
