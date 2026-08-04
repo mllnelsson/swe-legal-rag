@@ -4,7 +4,7 @@ title: Chunk Worker
 description: Subscriber worker that generates a document summary and splits body and appendices separately into overlapping token-bounded, section-labelled chunks with the summary prepended.
 resource: packages/worker-chunk
 tags: [pipeline, worker, chunk, contextual-retrieval]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-04T00:00:00Z
 ---
 
 # Chunk Worker (`packages/worker-chunk/`)
@@ -80,6 +80,17 @@ document.
 
 - **No chunk straddles the body/appendix boundary.** A chunk holding both the nämnd's
   reasoning and the decision it was reviewing could not be honestly labelled as either.
+- **Appendix chunking was effectively unreachable for most of the corpus until the label
+  anchor was fixed.** `_APPENDIX_LABEL_RE` matched only `Bilaga`, not the `BILAGA A` 22 of
+  25 corpus decisions actually write, so `split_document` found no appendix for them and
+  the whole trailer-to-end-of-document text — including the appended lower-instance
+  decision — never reached `split_document_into_chunks` as an `appendix` section at all.
+  See [document structure](/reference/document-structure.md) for the fix. Re-chunking the
+  corpus now (chunking is DELETE+INSERT, so a re-run replaces existing chunks; see
+  [appendix segmentation](/decisions/appendix-segmentation.md)) is expected to move
+  `chunks.section = 'appendix'` from a small minority of documents to nearly all of them —
+  measured against `raw_text` alone, appendix characters available to chunk went from
+  9 693 to 106 305 across the 25-document corpus.
 - **The trailer is not chunked at all.** `Ärendenummer` / `Beslut` are already structured
   columns on [documents](/data-model/documents.md); `Sökord` is structured too, as
   [entities](/data-model/entities.md) rather than a column (see the [extract

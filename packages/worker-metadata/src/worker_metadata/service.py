@@ -11,8 +11,13 @@ from shared.enums import PipelineStep
 from shared.pipeline import StepInputError, run_pipeline_step
 from shared.queue.base import QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
-from shared.segmentation import split_document
-from worker_metadata.patterns import MetadataResult, is_complete
+from shared.segmentation import find_segmentation_gaps, split_document
+from shared.source_headline import parse_source_headline
+from worker_metadata.patterns import (
+    MetadataResult,
+    extract_decision_number,
+    is_complete,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +47,7 @@ async def process_metadata(
     document_repo: DocumentRepo,
     task_repo: TaskRepo,
     queue_publisher: QueuePublisher,
-    rule_extractor: Callable[[str], MetadataResult],
+    rule_extractor: Callable[[str, str | None], MetadataResult],
     llm_extractor: LLMMetadataExtractor,
     session: AsyncSession,
     next_topic: PipelineStep = PipelineStep.EXTRACT,
@@ -54,7 +59,9 @@ async def process_metadata(
         if document.raw_text is None:
             raise StepInputError(f"Document {document_id} has no raw text")
 
-        result = rule_extractor(document.raw_text)
+        result = rule_extractor(document.raw_text, document.source_headline)
+        _log_template_drift(document_id, document.raw_text, document.source_headline)
+
         if not is_complete(result):
             missing = [f for f in _METADATA_FIELDS if getattr(result, f) is None]
             logger.info(
@@ -97,3 +104,44 @@ async def process_metadata(
         queue_publisher=queue_publisher,
         body=body,
     )
+
+
+def _log_template_drift(
+    document_id: UUID, raw_text: str, source_headline: str | None
+) -> None:
+    """Warn when a document does not look like the rest of the corpus.
+
+    Logged here and nowhere else: metadata is the first step that segments, and
+    extract and chunk segment the same text — three copies of the same warning is
+    noise. Never raises and never changes the outcome; the steady state across the
+    corpus is silence, which is what makes the signal worth having.
+    """
+    segments = split_document(raw_text)
+
+    gaps = find_segmentation_gaps(segments)
+    if gaps:
+        logger.warning(
+            "Document %s did not match the decision template (%s) — "
+            "check shared.segmentation against the source PDF",
+            document_id,
+            ", ".join(gap.value for gap in gaps),
+        )
+
+    from_document = extract_decision_number(segments)
+    from_headline = parse_source_headline(source_headline)
+    if from_document is None and from_headline is None:
+        logger.warning(
+            "Document %s has no decision number in its trailer, body or headline",
+            document_id,
+        )
+    elif (
+        from_document is not None
+        and from_headline is not None
+        and from_document != from_headline.decision_number
+    ):
+        logger.warning(
+            "Document %s: trailer says decision %s, listing says %s — using the trailer",
+            document_id,
+            from_document,
+            from_headline.decision_number,
+        )

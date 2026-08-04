@@ -9,3 +9,4 @@
 * [The crawl tag filter is mandatory](tag-filter.md) - Why the crawl query must filter on decision tags — without it the API returns every binary file on the web, not the decision corpus.
 * [Appendices are labelled, not dropped](appendix-segmentation.md) - Why appended lower-instance decisions stay in the index with a section marker rather than being discarded or left undistinguished.
 * [Body-first retrieval over one vector index](body-first-retrieval.md) - Why appendix scoping is a WHERE predicate on the existing HNSW index rather than a second index, and why it must be a hard filter rather than a ranking penalty.
+* [Structural fields are parsed, not inferred](structural-fields-are-parsed.md) - Why case number, decision number, decision date, category, and lagrum citations are extracted by rule alone with no LLM fallback, and where LLM fallback is used instead.

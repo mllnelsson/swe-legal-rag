@@ -19,7 +19,7 @@ The layout is regular enough to segment with anchors alone::
     Ärendenummer: ÖN 2025-0017           |- trailer
     Beslut: 1/2026                      -'
     ...............                     <- ellipsis rule
-    Bilaga A
+    BILAGA A                            <- label, usually upper case
     <the prior instance's own document, verbatim>
 
 Everything here is pure: no I/O, no logging, no configuration. Callers decide what
@@ -29,17 +29,45 @@ to do with the segments — see the extract, metadata and chunk workers.
 from __future__ import annotations
 
 import re
+from enum import StrEnum, auto
 
 from pydantic import BaseModel, ConfigDict
 
 __all__ = [
     "Appendix",
     "DocumentSegments",
+    "SegmentationGap",
+    "TrailerField",
+    "find_segmentation_gaps",
     "normalize_case_number",
     "normalize_decision_number",
     "parse_keywords",
+    "parse_trailer_fields",
     "split_document",
 ]
+
+
+class SegmentationGap(StrEnum):
+    """Structure every decision in the corpus has, that this one did not.
+
+    Not an error: `split_document` never raises, and a decision genuinely laid
+    out differently is a thing that happens. A gap is a signal to whoever reads
+    the logs that an anchor stopped matching — every defect this module has had
+    produced `None` or a plausible wrong value with no signal at all.
+    """
+
+    NO_TRAILER = auto()
+    NO_HOLDING = auto()
+    NO_APPENDIX = auto()
+    NO_KEYWORDS = auto()
+
+
+class TrailerField(StrEnum):
+    """The labels the nämnd's trailer uses, spelled as they appear in the PDF."""
+
+    KEYWORDS = "Sökord"
+    CASE_NUMBER = "Ärendenummer"
+    DECISION_NUMBER = "Beslut"
 
 
 class Appendix(BaseModel):
@@ -68,16 +96,28 @@ class DocumentSegments(BaseModel):
     appendices: list[Appendix] = []
 
 
+# The one spelling `Appendix.label` and `chunks.appendix_label` use. The corpus
+# writes the word both ways — "BILAGA A" in 22 of 25 decisions, "Bilaga A" in the
+# rest — so the emitted label is built rather than echoed from the source.
+_APPENDIX_LABEL_PREFIX = "Bilaga"
+
 # A line that is *only* an appendix label. Deliberately end-anchored: prose like
 # "Bilaga 1 innehåller ..." and "markerade med rött i bilagan" must not split the
 # document. Labels seen in the corpus are a single letter or a small number.
+#
+# Case-insensitive on the word alone, not via re.IGNORECASE on the whole pattern,
+# which would widen the identifier to lowercase too — a stray "bilaga a" in prose
+# is not a label.
 _APPENDIX_LABEL_RE = re.compile(
-    r"^[ \t]*(Bilaga[ \t]+(?:\d{1,2}|[A-ZÅÄÖ]))[ \t]*$",
+    r"^[ \t]*(?i:bilaga)[ \t]+(?P<identifier>\d{1,2}|[A-ZÅÄÖ])[ \t]*$",
     re.MULTILINE,
 )
 
 # The trailer opens with "Sökord:"; "Ärendenummer:" is the fallback for decisions
-# that omit it. Both are line-initial, unlike their in-prose mentions.
+# that omit it. Both are line-initial, unlike their in-prose mentions. The corpus
+# does not fix their order, so the *earliest* of them starts the trailer — see
+# `_find_trailer_start`. "Beslut:" is deliberately not an anchor: it is never the
+# first trailer line in the corpus, and an appended protocol uses it as a heading.
 _TRAILER_START_PATTERNS = (
     re.compile(r"^[ \t]*Sökord:", re.MULTILINE),
     re.compile(r"^[ \t]*Ärendenummer:", re.MULTILINE),
@@ -86,27 +126,51 @@ _TRAILER_START_PATTERNS = (
 _HOLDING_RE = re.compile(r"^[ \t]*Överklagandenämndens beslut:[ \t]*", re.MULTILINE)
 
 # The typographic rule separating the trailer from the first appendix — a run of
-# ellipsis characters, sometimes plain dots. Matched as a whole line so a sentence
-# ending in a full stop survives.
-_RULE_LINE_RE = re.compile(r"^[ \t]*[….]{2,}[ \t]*$")
+# ellipsis characters, dots, or dashes; the corpus draws it every one of those
+# ways. Matched as a whole line so a sentence ending in a full stop survives, and
+# applied to the trailer slice only.
+_RULE_LINE_RE = re.compile(r"^[ \t]*[….\-–—_]{2,}[ \t]*$")
 
+# Ärendenummer: "ÖN 2026-0014", "ÖN 2026-04", "2026-0005" — the ÖN and Dnr markers
+# are both optional because the corpus omits them on some trailer lines.
+#
+# Two guards stop a year being read as an ärendenummer, which matters because the
+# body fallback runs this over free prose:
+#
+#   * a sequence that is itself a year of this era is a period, not a sequence, so
+#     the mandate period "2026-2029" is rejected while case 1234 of "2020-1234" is
+#     kept;
+#   * a following date component disqualifies the match, so "Meddelat 2026-04-08"
+#     does not read as case 4 of 2026.
 _CASE_NUMBER_RE = re.compile(
-    r"(?:ÖN\s*)?(?:dnr\s*)?(\d{4})\s*[-–]\s*(\d+)",
+    r"(?:ÖN\s*)?(?:dnr\s*)?(\d{4})\s*[-–]\s*(?!(?:19|20)\d{2}\b)(\d{1,4})\b(?![-–]\s*\d)",
     re.IGNORECASE,
 )
 
-_DECISION_NUMBER_RE = re.compile(r"(\d{1,3})\s*/\s*(\d{4})")
+# Beslutsnummer: "13/2026", and the one corpus decision that writes "23-2026".
+# Both halves are length-bounded and word-anchored so the hyphen form cannot
+# swallow an ärendenummer ("2026-0014"), a date ("2025-10-07") or a mandate period
+# ("2026-2029").
+_DECISION_NUMBER_RE = re.compile(r"\b(\d{1,3})[ \t]*[/-][ \t]*(\d{4})\b")
 
-# The `Sökord:` value. Deliberately not end-of-line anchored: a long value wraps
-# onto following lines, so it runs until the next trailer label or the end of the
-# trailer. `Ärendenummer` and `Beslut` are the only labels that follow it.
-_KEYWORDS_VALUE_RE = re.compile(
-    r"^[ \t]*Sökord:(.*?)(?=^[ \t]*(?:Ärendenummer|Beslut):|\Z)",
-    re.MULTILINE | re.DOTALL,
+# One labelled trailer line. Built from the enum so a label cannot be added to
+# `TrailerField` without the parser recognising it.
+_TRAILER_FIELD_RE = re.compile(
+    r"^[ \t]*(?P<label>"
+    + "|".join(field.value for field in TrailerField)
+    + r")[ \t]*:(?P<value>.*)$"
 )
 
-# A decision classified under several keywords separates them with either.
-_KEYWORD_SEPARATOR_RE = re.compile(r"[,;]")
+# A decision classified under several keywords separates them with a full stop —
+# every `Sökord:` line in the corpus does, and most end with one. `,` and `;` are
+# kept as the conventional spelling.
+#
+# A stop only separates before whitespace and a capital, or at the end of the
+# value; the end-of-value case is what drops the line's terminating stop, leaving
+# an empty final part the caller discards. The lookbehind spots the
+# letter-after-a-stop that ends a Swedish abbreviation, so "m.m." and "bl.a." are
+# neither split apart nor truncated to "m.m".
+_KEYWORD_SEPARATOR_RE = re.compile(r"[,;]|(?<!\.[A-ZÅÄÖa-zåäö])\.(?=\s+[A-ZÅÄÖ]|\s*$)")
 
 
 def split_document(raw_text: str) -> DocumentSegments:
@@ -128,7 +192,7 @@ def split_document(raw_text: str) -> DocumentSegments:
 
     trailer = None
     if trailer_start is not None:
-        trailer = _strip_ellipsis_rule(text[trailer_start:appendix_start])
+        trailer = _strip_rule_lines(text[trailer_start:appendix_start])
 
     return DocumentSegments(
         body=body,
@@ -144,11 +208,19 @@ def normalize_case_number(raw: str) -> str | None:
     ``worker-metadata`` stores ``2025-0017`` while the extractor's regex yields
     ``ÖN 2025-0017``; without one canonical form the self-reference guard never
     fires and no cross-reference ever resolves.
+
+    The sequence is zero-padded to four digits for the same reason. The registry
+    writes it both ways — ``ÖN 2026-04`` alongside ``ÖN 2026-0014`` — and stored
+    unpadded, a citation written the long way could never resolve to it and the
+    document could not recognise a self-citation written the long way either.
+    Padding assumes the registrar never issues ``2026-04`` and ``2026-0004`` as
+    *distinct* ärenden in one year, which is the same assumption the unpadded form
+    already made in reverse. A sequence longer than four digits is left alone.
     """
     match = _CASE_NUMBER_RE.search(raw)
     if match is None:
         return None
-    return f"{match.group(1)}-{match.group(2)}"
+    return f"{match.group(1)}-{int(match.group(2)):04d}"
 
 
 def normalize_decision_number(raw: str) -> str | None:
@@ -164,6 +236,53 @@ def normalize_decision_number(raw: str) -> str | None:
     return f"{int(match.group(1))}/{match.group(2)}"
 
 
+def find_segmentation_gaps(segments: DocumentSegments) -> list[SegmentationGap]:
+    """Anchors that did not fire. Empty means the document matched the template.
+
+    Pure, like everything else here — callers at the worker edge decide whether a
+    gap is worth logging.
+    """
+    gaps = []
+    if segments.trailer is None:
+        gaps.append(SegmentationGap.NO_TRAILER)
+    if segments.holding is None:
+        gaps.append(SegmentationGap.NO_HOLDING)
+    if not segments.appendices:
+        gaps.append(SegmentationGap.NO_APPENDIX)
+    if not parse_keywords(segments.trailer):
+        gaps.append(SegmentationGap.NO_KEYWORDS)
+    return gaps
+
+
+def parse_trailer_fields(trailer: str | None) -> dict[TrailerField, str]:
+    """Read the trailer's labelled lines as label -> value.
+
+    Line-oriented rather than one regex per field. The corpus does not fix the
+    field order, so any pattern that ends a value by naming the labels that may
+    follow it is wrong for some ordering — and when the guess is wrong the value
+    runs to the end of the document and swallows the appendix.
+
+    A value the PDF wrapped onto the following line is folded back into its field;
+    a blank line or a typographic rule ends it. Never raises: a missing or
+    label-less trailer comes back empty.
+    """
+    if trailer is None:
+        return {}
+
+    fields: dict[TrailerField, str] = {}
+    current: TrailerField | None = None
+    for line in trailer.splitlines():
+        match = _TRAILER_FIELD_RE.match(line)
+        if match is not None:
+            current = TrailerField(match.group("label"))
+            fields[current] = match.group("value").strip()
+        elif current is not None and _is_continuation_line(line):
+            fields[current] = f"{fields[current]} {line.strip()}".strip()
+        else:
+            current = None
+    return fields
+
+
 def parse_keywords(trailer: str | None) -> list[str]:
     """Read the subject keywords off the trailer's ``Sökord:`` line.
 
@@ -174,20 +293,16 @@ def parse_keywords(trailer: str | None) -> list[str]:
     Never raises: a missing trailer, a trailer carrying only ``Ärendenummer:``, and
     an empty value all come back as an empty list.
     """
-    if trailer is None:
-        return []
-
-    match = _KEYWORDS_VALUE_RE.search(trailer)
-    if match is None:
+    value = parse_trailer_fields(trailer).get(TrailerField.KEYWORDS)
+    if value is None:
         return []
 
     keywords: list[str] = []
     seen: set[str] = set()
-    for part in _KEYWORD_SEPARATOR_RE.split(match.group(1)):
-        # A wrapped value arrives with newlines inside it, and the corpus ends the
-        # line with a full stop that is sentence punctuation, not part of the
-        # keyword — `_strip_ellipsis_rule` is what lets that stop survive this far.
-        keyword = " ".join(part.split()).rstrip(".").strip()
+    for part in _KEYWORD_SEPARATOR_RE.split(value):
+        # A wrapped value arrives with newlines inside it, and the line's own
+        # terminating stop leaves an empty trailing part.
+        keyword = " ".join(part.split())
         if not keyword or keyword.casefold() in seen:
             continue
         seen.add(keyword.casefold())
@@ -211,7 +326,10 @@ def _split_appendices(raw_text: str) -> tuple[int, list[Appendix]]:
     ends = [match.start() for match in labels[1:]] + [len(raw_text)]
 
     appendices = [
-        Appendix(label=match.group(1).strip(), text=raw_text[start:end].strip())
+        Appendix(
+            label=f"{_APPENDIX_LABEL_PREFIX} {match.group('identifier')}",
+            text=raw_text[start:end].strip(),
+        )
         for match, start, end in zip(labels, starts, ends, strict=True)
     ]
     return labels[0].start(), appendices
@@ -220,14 +338,21 @@ def _split_appendices(raw_text: str) -> tuple[int, list[Appendix]]:
 def _find_trailer_start(raw_text: str, appendix_start: int) -> int | None:
     """Locate the trailer, ignoring any match that sits inside an appendix.
 
+    The *earliest* label wins rather than the first pattern tried. The corpus
+    orders the trailer `Sökord > Ärendenummer > Beslut` in almost every decision
+    but not all, and anchoring on `Sökord:` in a decision that puts it last cut the
+    trailer at its final line — leaving the document's own identifiers in `body`,
+    where they defeat the self-citation guard.
+
     An appended lower-instance decision can carry a trailer of its own; only the
     nämnd's counts.
     """
-    for pattern in _TRAILER_START_PATTERNS:
-        match = pattern.search(raw_text, 0, appendix_start)
-        if match is not None:
-            return match.start()
-    return None
+    starts = [
+        match.start()
+        for pattern in _TRAILER_START_PATTERNS
+        if (match := pattern.search(raw_text, 0, appendix_start)) is not None
+    ]
+    return min(starts, default=None)
 
 
 def _find_holding(body: str) -> str | None:
@@ -237,6 +362,11 @@ def _find_holding(body: str) -> str | None:
     return body[match.end() :].strip() or None
 
 
-def _strip_ellipsis_rule(trailer: str) -> str:
+def _strip_rule_lines(trailer: str) -> str:
     kept = [line for line in trailer.splitlines() if not _RULE_LINE_RE.match(line)]
     return "\n".join(kept).strip()
+
+
+def _is_continuation_line(line: str) -> bool:
+    """Whether ``line`` continues the trailer field above it."""
+    return bool(line.strip()) and _RULE_LINE_RE.match(line) is None

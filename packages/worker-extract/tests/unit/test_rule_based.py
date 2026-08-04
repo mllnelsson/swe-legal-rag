@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from shared.enums import EntityRelevance
 from shared.segmentation import split_document
 from worker_extract.extractors.rule_based import extract_references, extract_rule_based
@@ -108,6 +110,78 @@ class TestRuleBasedEntityExtraction:
         )
         result = extract_rule_based(_segments(text))
         assert [e for e in result.entities if e.type == EntityType.REGULATION]
+
+    def test_regulation_cited_the_way_the_corpus_writes_it(self) -> None:
+        # The order 213 of the corpus's 215 citations use, and the one the patterns
+        # used to require the reverse of — every kyrkoordningen citation in the
+        # whole corpus was missed, leaving EntityType.REGULATION an empty vocabulary.
+        text = "Ett beslut får överklagas enligt 58 kap. 1 § kyrkoordningen endast om."
+        result = extract_rule_based(_segments(text))
+        assert [e.name for e in result.entities if e.type == EntityType.REGULATION] == [
+            "58 kap. 1 § kyrkoordningen"
+        ]
+
+    @pytest.mark.parametrize(
+        "citation",
+        [
+            "58 kap. 1 § kyrkoordningen",
+            "kyrkoordningen 58 kap. 1 §",
+            "58 kap 1 § KO",
+            "KO 58:1",
+            "58 kap. 1 § tredje stycket kyrkoordningen",
+        ],
+    )
+    def test_every_spelling_collapses_to_one_entity(self, citation: str) -> None:
+        # The entity name is a join key: four spellings of one provision would be
+        # four unrelated nodes in the graph. The sub-clause is dropped because
+        # "58 kap. 1 §" and "58 kap. 1 § tredje stycket" cite the same provision.
+        result = extract_rule_based(_segments(f"Enligt {citation} gäller följande."))
+        assert [e.name for e in result.entities if e.type == EntityType.REGULATION] == [
+            "58 kap. 1 § kyrkoordningen"
+        ]
+
+    @pytest.mark.parametrize(
+        "citation",
+        ["40 kap. 7-8 §§ kyrkoordningen", "40 kap. 7 och 8 §§ kyrkoordningen"],
+    )
+    def test_both_range_spellings_yield_one_entity(self, citation: str) -> None:
+        # Ranges are normalised but not expanded: "57 kap. 8-19 §§" stays one
+        # entity rather than twelve.
+        result = extract_rule_based(_segments(f"Enligt {citation} gäller detta."))
+        assert [e.name for e in result.entities if e.type == EntityType.REGULATION] == [
+            "40 kap. 7-8 §§ kyrkoordningen"
+        ]
+
+    @pytest.mark.parametrize(
+        "citation", ["54 kap. kyrkoordningen", "58 kapitlet kyrkoordningen"]
+    )
+    def test_a_whole_chapter_is_captured(self, citation: str) -> None:
+        result = extract_rule_based(_segments(f"Bestämmelserna i {citation} gäller."))
+        assert [e for e in result.entities if e.type == EntityType.REGULATION]
+
+    def test_a_citation_broken_across_a_line_wrap_still_matches(self) -> None:
+        text = "Detta följer av 58 kap.\n1 § kyrkoordningen och gäller alltjämt."
+        result = extract_rule_based(_segments(text))
+        assert [e.name for e in result.entities if e.type == EntityType.REGULATION] == [
+            "58 kap. 1 § kyrkoordningen"
+        ]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Enligt 19 kap. 3 § offentlighets- och sekretesslagen gäller detta.",
+            "Enligt 2 kap. 7 § andra stycket 1 tryckfrihetsförordningen gäller.",
+            "Enligt 30 kap. 5 § rättegångsbalken gäller detta.",
+            "Enligt 11 kap. 2 § kyrkolagen gäller detta.",
+            "En ko betade på ängen utanför kyrkan.",
+        ],
+    )
+    def test_other_statutes_are_not_regulations(self, text: str) -> None:
+        # Every one of these is cited in the identical "N kap. M §" shape.
+        # Requiring the statute's own name is the only thing separating them, and
+        # bare "ko" is a common Swedish noun.
+        result = extract_rule_based(_segments(text))
+        assert [e for e in result.entities if e.type == EntityType.REGULATION] == []
 
     def test_rule_based_extracts_parish(self) -> None:
         text = "Kyrkoherden i Skattkärrens församling överklagade."

@@ -3,7 +3,7 @@ type: Decision
 title: Appendices are labelled, not dropped
 description: Why appended lower-instance decisions stay in the index with a section marker rather than being discarded or left undistinguished.
 tags: [segmentation, appendix, bilaga, chunking, extraction]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-04T00:00:00Z
 ---
 
 # Appendices are labelled, not dropped
@@ -32,6 +32,29 @@ the answer exists only in the appendix.
 **Leave them undistinguished** is what the system did before, and it is the failure this
 work exists to fix: the lower instance's reasoning — often the reasoning the nämnd
 overturned — was retrievable and citable as the nämnd's own.
+
+## What went wrong in practice
+
+The label anchor that makes this decision workable was, until recently, case-sensitive
+and matched only `Bilaga`. 22 of the corpus's 25 decisions write it `BILAGA A` — upper
+case — so the anchor never matched them. With no appendix label found, `_split_appendices`
+fell back to treating the whole remaining text as unappendixed, which pushed the appendix
+start to `len(text)`; the trailer then ran from its own start anchor all the way to the end
+of the document, swallowing the appended lower-instance decision whole. That text was
+never mis-attributed to the nämnd — the trailer is neither chunked nor entity-scanned — it
+was **absent from the index entirely**: 98 983 of 230 550 characters across the corpus,
+43% of it, retrievable by nobody. See [decision document
+structure](/reference/document-structure.md) for the fix (the word is matched
+case-insensitively; the emitted `Appendix.label` is a canonical `Bilaga <id>`, never
+echoed from the source spelling) and [structural fields are parsed, not
+inferred](/decisions/structural-fields-are-parsed.md) for why this stayed a rule rather
+than becoming an LLM fallback.
+
+This is also why the first "revisit when both hold" condition below was being read as
+satisfied when it was not: segmentation had *run* over the corpus, but the `Bilaga` layout
+it was verified against was the minority spelling. "Has run" and "is known to hold" are not
+the same claim, and the gap between them is exactly what let a 43%-of-corpus defect stand
+undetected.
 
 ## Consequences
 

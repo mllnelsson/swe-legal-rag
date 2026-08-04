@@ -22,6 +22,7 @@ from shared.dtos.search import DocumentFilter
 from shared.enums import ChunkSection, EntityType
 from shared.repositories import chunk as chunk_repo
 from shared.repositories import document as document_repo
+from shared.source_headline import headline_title
 from shared.repositories import document_entity as document_entity_repo
 from shared.repositories import document_reference as document_reference_repo
 from shared.repositories import search as search_repo
@@ -107,7 +108,7 @@ def _to_summary(document: DocumentRead) -> DocumentSummary:
         decision_date=document.decision_date,
         category=document.category,
         decision_outcome=document.decision_outcome,
-        headline=document.source_headline,
+        headline=headline_title(document.source_headline),
         summary=document.summary,
         source_url=document.source_url,
         source_published_at=document.source_published_at,

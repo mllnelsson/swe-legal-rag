@@ -28,20 +28,53 @@ from worker_extract.entities import deduplicate_entities
 # "ÖN 2025-0017" / "ÖN dnr 2025-0017" — the ärendenummer space.
 _CASE_REF_RE = re.compile(r"\bÖN\s+(?:dnr\s+)?\d{4}[-–]\d{3,}\b", re.IGNORECASE)
 
-# "beslut 13/2025" — the beslutsnummer space. Requires the leading word so bare
-# fractions and dates in prose are not mistaken for citations.
+# "beslut 13/2025", and the hyphen spelling one decision uses. Requires the
+# leading word so bare fractions and dates in prose are not mistaken for citations.
 _DECISION_REF_RE = re.compile(
-    r"\bbeslut(?:et)?\s+(\d{1,3}\s*/\s*\d{4})\b", re.IGNORECASE
+    r"\bbeslut(?:et)?\s+(\d{1,3}\s*[/-]\s*\d{4})\b", re.IGNORECASE
 )
-# TODO:
-# Fails to parse references to kyrokoförorndingen
-# Example of text: "...överklagas enligt 58 kap. 1 § kyrkoordningen endast om det..."
+
+# Kyrkoordningen is cited by two names and in both orders. Measured over the
+# corpus, 213 citations put the lagrum first ("58 kap. 1 § kyrkoordningen") and 2
+# put the name first — the reverse of what the patterns used to assume, which is
+# why EntityType.REGULATION was an empty vocabulary.
+#
+# `KO` is matched case-sensitively and word-anchored: lowercased it is a common
+# Swedish noun. Requiring the name at all is also what keeps the other statutes
+# cited in the identical "N kap. M §" shape — tryckfrihetsförordningen, OSL,
+# rättegångsbalken — out of the regulation vocabulary.
+_KYRKOORDNINGEN = r"(?:i[ \t]+)?(?:[Kk]yrkoordningen|KO)\b"
+_CHAPTER = r"(?P<chapter>\d{1,3})[ \t]*kap\.?"
+# "1", "1 a", "7-8", "7 och 8" — the corpus writes ranges both ways.
+_SECTIONS = (
+    r"(?P<sections>\d{1,3}(?:[ \t]*[a-z]\b)?"
+    r"(?:[ \t]*(?:[-–]|och)[ \t]*\d{1,3}(?:[ \t]*[a-z]\b)?)*)[ \t]*§{1,2}"
+)
+# "tredje stycket", "första stycket 4", "p. 4". Matched so the citation is not cut
+# short before the statute's name, then dropped from the canonical form below.
+_SUBCLAUSE = (
+    r"(?:[ \t]+(?:första|andra|tredje|fjärde|femte|sjätte|sjunde|sista)"
+    r"[ \t]+stycket)?"
+    r"(?:[ \t]*(?:punkten[ \t]*|p\.[ \t]*)?\d{1,2})?"
+)
 
 _REGULATION_PATTERNS = [
-    re.compile(r"kyrkoordningen\s+\d+\s*kap\.?\s*\d+\s*§(?:\s*\d+)?", re.IGNORECASE),
-    re.compile(r"kyrkoordningen\s+kapitel\s+\d+(?:\s*§\s*\d+)?", re.IGNORECASE),
-    re.compile(r"\bKO\s+\d+:\d+\b", re.IGNORECASE),
+    re.compile(rf"\b{_CHAPTER}[ \t]*{_SECTIONS}{_SUBCLAUSE}[ \t]+{_KYRKOORDNINGEN}"),
+    re.compile(rf"\b(?:[Kk]yrkoordningen|KO)[ \t]+{_CHAPTER}[ \t]*{_SECTIONS}"),
+    re.compile(r"\bKO[ \t]+(?P<chapter>\d{1,3}):(?P<sections>\d{1,3})\b"),
+    # The spelled-out word order: "kyrkoordningen kapitel 32 § 5".
+    re.compile(
+        r"\b[Kk]yrkoordningen[ \t]+kapitel[ \t]+(?P<chapter>\d{1,3})"
+        r"(?:[ \t]*§[ \t]*(?P<sections>\d{1,3}))?"
+    ),
+    # A whole chapter: "54 kap. kyrkoordningen", "58 kapitlet kyrkoordningen".
+    re.compile(
+        rf"\b(?P<chapter>\d{{1,3}})[ \t]*kap(?:\.|itlet)?[ \t]+{_KYRKOORDNINGEN}"
+    ),
 ]
+
+# Both range spellings collapse to a hyphen so one provision has one name.
+_REGULATION_SECTION_SEPARATOR_RE = re.compile(r"[ \t]*(?:[-–]|och)[ \t]*")
 
 _PARISH_PATTERNS = [
     re.compile(r"\b([A-ZÅÄÖ][a-zåäö]+(?:\s+[A-Za-zÅÄÖåäö]+){0,3})\s+församling\b"),
@@ -147,10 +180,7 @@ def _entities_in(text: str, relevance: EntityRelevance) -> list[ExtractedEntity]
     if not text:
         return []
     found = (
-        [
-            (name, EntityType.REGULATION)
-            for name in _match_patterns(text, _REGULATION_PATTERNS)
-        ]
+        [(name, EntityType.REGULATION) for name in _match_regulations(text)]
         + [
             (name, EntityType.PARISH)
             for name in _match_patterns(text, _PARISH_PATTERNS)
@@ -165,6 +195,46 @@ def _entities_in(text: str, relevance: EntityRelevance) -> list[ExtractedEntity]
         ExtractedEntity(name=name, type=entity_type, relevance=relevance)
         for name, entity_type in found
     ]
+
+
+def _match_regulations(text: str) -> list[str]:
+    """Cited kyrkoordningen provisions, one canonical name each.
+
+    Run over whitespace-collapsed text so a citation the PDF broke across a line
+    wrap still matches; entity names carry no offsets, so nothing downstream
+    depends on the original positions.
+    """
+    collapsed = " ".join(text.split())
+    names: list[str] = []
+    seen: set[str] = set()
+    for pattern in _REGULATION_PATTERNS:
+        for match in pattern.finditer(collapsed):
+            name = _canonical_regulation(match)
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
+
+
+def _canonical_regulation(match: re.Match[str]) -> str:
+    """One spelling per cited provision: ``N kap. M § kyrkoordningen``.
+
+    Follows the order the corpus overwhelmingly uses, so both citation orders and
+    both names of the statute collapse to one entity rather than four.
+
+    The sub-clause is deliberately dropped: "58 kap. 18 §" and "58 kap. 18 §
+    tredje stycket" cite the same provision, and keeping them apart fragments the
+    vocabulary the entity graph exists to join on. Ranges are normalised but not
+    expanded — "57 kap. 8-19 §§" stays one entity rather than twelve.
+    """
+    chapter = match.group("chapter")
+    sections = match.groupdict().get("sections")
+    if sections is None:
+        return f"{chapter} kap. kyrkoordningen"
+
+    normalized = _REGULATION_SECTION_SEPARATOR_RE.sub("-", " ".join(sections.split()))
+    marker = "§§" if "-" in normalized else "§"
+    return f"{chapter} kap. {normalized} {marker} kyrkoordningen"
 
 
 def _match_patterns(text: str, patterns: list[re.Pattern[str]]) -> list[str]:

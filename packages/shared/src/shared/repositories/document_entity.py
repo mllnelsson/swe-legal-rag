@@ -13,6 +13,7 @@ from shared.enums import EntityRelevance
 from shared.models.document import Document
 from shared.models.document_entity import DocumentEntity
 from shared.models.entity import Entity
+from shared.source_headline import headline_title
 
 # Primary entities carry the holding, so they lead; alphabetical ordering would
 # put "mentioned" first and bury them.
@@ -137,7 +138,7 @@ async def list_documents_for_entity(
             case_number=case_number,
             decision_number=decision_number,
             decision_date=decision_date,
-            headline=headline,
+            headline=headline_title(headline),
             category=category,
             decision_outcome=decision_outcome,
             relevance=edge_relevance,

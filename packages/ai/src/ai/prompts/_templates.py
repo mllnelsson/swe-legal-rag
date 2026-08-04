@@ -202,6 +202,8 @@ som fångar:
 - Berörda parter (roller, inte nödvändigtvis namn)
 - Beslutets utfall
 
+Ditt resultat kommer användas för att göra dokuemntet sökbart. Det ska därför bvara en saklig och precis sammanfattning.
+
 Returnera enbart löpande text på svenska, inga rubriker eller JSON.
 Överskrid inte 60 ord — sammanfattningen används som inbäddningskontext för varje
 textstycke och kapas annars."""

@@ -3,7 +3,7 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-04T00:00:00Z
 ---
 
 # Architectural Decision Register
@@ -33,6 +33,15 @@ window](/decisions/embedding-window.md); the mandatory crawl
 - **Body-first retrieval over one vector index** — appendix scoping is a `WHERE`
   predicate on the existing HNSW index, applied as a hard filter rather than a ranking
   penalty. See [body-first retrieval](/decisions/body-first-retrieval.md).
+- **Structural fields stay rules-only; LLM fallback is for open-vocabulary and
+  prose-shaped fields.** Case number, decision number, decision date, category and
+  lagrum citations follow a fixed template the nämnd's own documents guarantee, and a
+  regex that is already right across the corpus must not be replaced by a model whose
+  failure mode — a plausible wrong value — is worse than the regex's own failure mode of
+  `None`. LLM fallback stays for `worker-extract`'s open-vocabulary entities (roles, legal
+  concepts — closed sets that will always miss something nobody enumerated),
+  `decision_outcome`/`category`'s prose fallback, and generative summaries. See
+  [structural fields are parsed, not inferred](/decisions/structural-fields-are-parsed.md).
 
 ## Storage and graph
 
