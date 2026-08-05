@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from shared.models import Base  # noqa: F401 — registers all ORM models
 from shared.queue.base import QueueMessage
-from shared.queue.sync import SyncQueueBroker, SyncQueuePublisher
+from shared.queue.base import QueuePublisher
+from shared.queue.sync import SyncQueueBroker
 from shared.repositories import (
     chunk,
     document,
@@ -190,11 +191,28 @@ def next_topic() -> str:
     )
 
 
+class _RecordingPublisher:
+    """Dispatches into `broker` immediately instead of queueing. See below."""
+
+    def __init__(self, broker: SyncQueueBroker) -> None:
+        self._broker = broker
+
+    def publish(self, topic: str, message: QueueMessage) -> None:
+        self._broker.dispatch(topic, message)
+
+
 @pytest.fixture
 def sync_publisher(
     next_topic: str, published_messages: list[QueueMessage]
-) -> SyncQueuePublisher:
-    """A publisher that records the hand-off instead of running the next worker."""
+) -> QueuePublisher:
+    """A publisher that records the hand-off instead of running the next worker.
+
+    Dispatches eagerly, unlike the real `SyncQueuePublisher`, which queues for a
+    later pump: appending to a list needs no event loop, and the test asserts on
+    `published_messages` as soon as the service call returns. Publishing to any
+    topic other than `next_topic` still raises, so a step that hands off to the
+    wrong place fails loudly.
+    """
     broker = SyncQueueBroker()
     broker.register(next_topic, published_messages.append)
-    return SyncQueuePublisher(broker)
+    return _RecordingPublisher(broker)

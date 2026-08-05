@@ -7,7 +7,7 @@ from datetime import date
 from dotenv import load_dotenv
 
 from shared.config import get_settings
-from shared.db import get_async_session
+from shared.db import dispose_async_engine, get_async_session
 from shared.queue import create_queue_publisher
 from shared.repositories import document, task
 from worker_crawl import odata
@@ -55,6 +55,10 @@ async def _run(year_spec: str) -> None:
             selection=selection,
             topic=crawl_settings.crawl_topic,
         )
+
+    # Downstream steps run after this loop closes, each in its own — so this
+    # loop's connections must not be left in a pool for them to pick up.
+    await dispose_async_engine()
 
     logger.info(
         "Crawl complete: years=%s tags=%d found=%d new=%d skipped=%d",

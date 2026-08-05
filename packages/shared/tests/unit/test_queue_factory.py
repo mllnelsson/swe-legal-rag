@@ -37,6 +37,9 @@ def test_factory_shared_broker_allows_pub_sub_communication() -> None:
 
     msg = QueueMessage(task_id=uuid4(), document_id=uuid4())
     pub.publish("pipeline", msg)
+    # The point of the shared broker: a message queued by the publisher is one
+    # the subscriber pumps.
+    sub.start()
 
     assert len(received) == 1
     assert received[0].task_id == msg.task_id

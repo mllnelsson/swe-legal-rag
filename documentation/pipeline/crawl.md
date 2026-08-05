@@ -4,7 +4,7 @@ title: Crawl Worker
 description: One-shot pipeline entry point — queries the Svenska kyrkan OData API for decisions, deduplicates, and enqueues download tasks.
 resource: packages/worker-crawl
 tags: [pipeline, worker, crawl, odata]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-05T00:00:00Z
 ---
 
 # Crawl Worker (`packages/worker-crawl/`)
@@ -54,6 +54,12 @@ document-id-keyed `default.aspx?id=...` URL, which is stable across renames. On 
 conditions, `IntegrityError` is caught per-document — the session is rolled back and the
 document counted as skipped. Since the OData listing supplies a stable `documentId`,
 `documents.source_document_id` carries a second unique constraint as a backstop.
+
+**A skipped document publishes nothing**, which is what strands a document whose earlier
+run died mid-pipeline: it is already in `documents`, so every later crawl skips it, and
+the `pending` task waiting to be re-driven is a message crawl will never send. Re-driving
+those is `scripts/run_pipeline.py --resume`'s job, not crawl's — see
+[live testing](/playbooks/live-testing.md).
 
 ## Transaction ordering and error handling
 

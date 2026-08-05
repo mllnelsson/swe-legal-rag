@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-05T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -70,26 +70,47 @@ The ingestion pipeline flows through workers connected by queue topics:
 crawl → [topic: download] → download → [topic: parse] → parse → [topic: metadata] → metadata → [topic: extract] → extract → chunk → embed
 ```
 
-With `QUEUE_BACKEND=sync`, each worker dispatches to the next inline — you can run the
-full pipeline in sequence. See the [pipeline overview](/pipeline/overview.md) for how
-the topology and task envelope work.
+With `QUEUE_BACKEND=sync` those topics are one in-process queue, so the whole chain runs
+in a single process — see [Option A](#option-a-full-pipeline-sync-queue). See the
+[pipeline overview](/pipeline/overview.md) for how the topology and task envelope work.
 
 ## Running Workers
 
 ### Option A: Full pipeline (sync queue)
 
-With `QUEUE_BACKEND=sync`, the crawl worker triggers download inline, which triggers
-parse, which triggers metadata, and so on through embed. Run from the project root:
+With `QUEUE_BACKEND=sync`, publishing appends to one in-process queue that only handlers
+subscribed **in the same process** can serve — so the full run is
+`scripts/run_pipeline.py`, which subscribes the six downstream workers, runs crawl, and
+then pumps the queue crawl filled. Run from the project root:
 
 ```bash
 # Current year (default)
-uv run --package worker-crawl python -m worker_crawl
+uv run python scripts/run_pipeline.py
 
 # Backfill the full history (~1073 documents across 2000-2026 plus the year-less tag)
-uv run --package worker-crawl python -m worker_crawl --years all
+uv run python scripts/run_pipeline.py --years all
 
 # A specific year or range
-uv run --package worker-crawl python -m worker_crawl --years 2019-2021
+uv run python scripts/run_pipeline.py --years 2019-2021
+```
+
+Running `python -m worker_crawl` on its own does **not** do this. Nothing subscribes in
+that process, so the first publish fails with
+`QueueHandlerError: No handler registered for topic: 'download'`. Bare crawl is Option B
+territory — a single step against a real queue backend.
+
+**A run resumes as well as crawls.** Crawl publishes only for documents it has just
+discovered, so anything a previous run left stranded — a document already in
+`documents` whose `download` task is still `pending` — is invisible to it: the next
+crawl skips the document, and nothing ever sends the message its pending task is waiting
+for. Each run therefore queues every `pending` task before pumping, which is what picks
+those up. `run_pipeline_step` skips tasks that are already `completed`, so re-driving a
+finished document costs one no-op per step. Pass `--no-resume` to crawl only.
+
+To see what is stranded before running:
+
+```sql
+SELECT step, status, count(*) FROM tasks GROUP BY 1, 2 ORDER BY 1, 2;
 ```
 
 This will:

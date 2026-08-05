@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
-from shared.queue.sync import SyncQueuePublisher
+from shared.queue.base import QueuePublisher
 from worker_metadata.patterns import MetadataResult, extract_metadata_rule_based
 from worker_metadata.service import process_metadata
 
@@ -19,7 +19,7 @@ async def test_metadata_flow_populates_fields_and_completes_task(
     session: AsyncSession,
     document_repo,
     task_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list[QueueMessage],
     test_document,
     metadata_task,

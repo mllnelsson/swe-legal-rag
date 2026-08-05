@@ -53,11 +53,15 @@ def test_subscribe_step_registers_without_starting(no_db: None) -> None:
     async def handle(message: QueueMessage, session: AsyncSession) -> None:
         received.append(message)
 
-    subscribe_step(topic=PipelineStep.DOWNLOAD, queue_settings=_SYNC, handle=handle)
+    subscriber = subscribe_step(
+        topic=PipelineStep.DOWNLOAD, queue_settings=_SYNC, handle=handle
+    )
 
-    # Registered: publishing on the sync backend dispatches straight into it.
+    # Registered: publishing on the sync backend queues onto the shared broker,
+    # and pumping it reaches this handler.
     message = _message()
     create_queue_publisher(_SYNC).publish(PipelineStep.DOWNLOAD, message)
+    subscriber.start()
 
     assert received == [message]
 
@@ -91,13 +95,14 @@ def test_scope_wraps_each_message(no_db: None) -> None:
     async def handle(message: QueueMessage, session: AsyncSession) -> None:
         events.append("handle")
 
-    subscribe_step(
+    subscriber = subscribe_step(
         topic=PipelineStep.METADATA,
         queue_settings=_SYNC,
         handle=handle,
         scope=scope,
     )
     create_queue_publisher(_SYNC).publish(PipelineStep.METADATA, _message())
+    subscriber.start()
 
     assert events == ["enter", "handle", "exit"]
 
