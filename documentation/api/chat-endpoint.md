@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: Deprecated but retained — the POST /api/chat Server-Sent Events contract — request shape, streamed token/sources/done events, and mid-stream error semantics.
 resource: POST /api/chat
 tags: [api, sse, chat, contract, deprecated]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-05T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -27,10 +27,10 @@ time to. It is deprecated rather than deleted because it is working, tested code
 future agent will want intact. Nothing below this section has changed — the contract
 still behaves exactly as described.
 
-The single wire contract between the [frontend](/frontend/overview.md) chat UI and the
-backend. All LLM interaction is streamed end-to-end: the API streams from the LLM
-provider and re-streams to the client over SSE. The full response is never buffered
-server-side.
+A wire contract with no client in this repository — the [frontend](/frontend/overview.md)
+calls only the deterministic retrieval API and never opens this stream. All LLM
+interaction here is streamed end-to-end: the API streams from the LLM provider and
+re-streams to the client over SSE. The full response is never buffered server-side.
 
 ## Request
 

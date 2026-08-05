@@ -1,0 +1,1 @@
+- [Repo facts: OKF bundle mapping](repo_facts_okf.md) — worktree/untracked-diff gotcha, frontend/ concept mapping, chat/frontend contradiction pattern, PRD left alone on purpose.

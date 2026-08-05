@@ -1,0 +1,15 @@
+/* App-level rules that sit on top of the design system's token layer.
+ *
+ * Kept out of tokens/ deliberately: those nine files are copied verbatim from the
+ * design skill so they can be re-copied when the system changes. Anything this app
+ * needs in addition belongs here.
+ */
+
+/* The skill's base.css does not reset the box model, so a `max-width` set from a
+   layout token excludes its own padding — `--content-max: 1180px` plus the 32px
+   page gutters resolves to a 1244px column, wider than the system specifies. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}

@@ -3,7 +3,7 @@ type: Concept
 title: Architecture Overview
 description: The three-subsystem system architecture — ingestion pipeline, storage layer, and query/retrieval agent — and pointers to each area.
 tags: [architecture, overview, system]
-timestamp: 2026-07-27T00:00:00Z
+timestamp: 2026-08-05T00:00:00Z
 ---
 
 # Architecture Overview
@@ -19,8 +19,8 @@ Three major subsystems, all running on GCP, scale-to-zero where possible:
    synthesizes a cited answer.
 
 The backend is a uv workspace of [packages](/packages/overview.md); the
-[frontend](/frontend/overview.md) is a streaming chat UI over the
-[chat endpoint](/api/chat-endpoint.md).
+[frontend](/frontend/overview.md) is a search UI over the deterministic
+retrieval API — it does not call the [chat endpoint](/api/chat-endpoint.md).
 
 ## Storage layer
 

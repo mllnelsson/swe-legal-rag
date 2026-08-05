@@ -1,0 +1,8 @@
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body { margin: 0; font-family: var(--font-sans); font-size: var(--text-body-size); line-height: var(--text-body-lh); color: var(--text-body); background: var(--surface-page); }
+h1, h2, h3, h4 { font-family: var(--font-display); font-weight: var(--weight-regular); color: var(--text-strong); margin: 0; }
+p { margin: 0; }
+a { color: var(--text-link); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; text-decoration-color: var(--apricot-300); transition: var(--transition-control); }
+a:hover { color: var(--text-link-hover); text-decoration-color: var(--burgundy-400); }
+*:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+::selection { background: var(--apricot-200); color: var(--warm-900); }
