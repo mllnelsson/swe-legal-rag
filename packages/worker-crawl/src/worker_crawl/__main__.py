@@ -7,7 +7,8 @@ from datetime import date
 from dotenv import load_dotenv
 
 from shared.config import get_settings
-from shared.db import get_async_session
+from shared.db import dispose_async_engine, get_async_session
+from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher
 from shared.repositories import document, task
 from worker_crawl import odata
@@ -16,7 +17,6 @@ from worker_crawl.errors import CrawlError
 from worker_crawl.service import process_crawl
 from worker_crawl.years import resolve_years
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +56,10 @@ async def _run(year_spec: str) -> None:
             topic=crawl_settings.crawl_topic,
         )
 
+    # Downstream steps run after this loop closes, each in its own — so this
+    # loop's connections must not be left in a pool for them to pick up.
+    await dispose_async_engine()
+
     logger.info(
         "Crawl complete: years=%s tags=%d found=%d new=%d skipped=%d",
         ",".join(str(year) for year in result.years_crawled) or "none",
@@ -67,6 +71,7 @@ async def _run(year_spec: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    configure_logging()
     load_dotenv()
     args = _parse_args(argv)
     year_spec = args.years or get_crawl_settings().crawl_years

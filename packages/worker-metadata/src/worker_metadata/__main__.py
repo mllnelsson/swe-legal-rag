@@ -11,6 +11,7 @@ from ai.providers.roles import LLMRole, create_llm_provider
 from ai.services import extract_metadata as _ai_extract_metadata
 from llm_core import LLMProvider
 from shared.config import get_settings
+from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher
 from shared.queue.base import QueueMessage, QueueSubscriber
 from shared.repositories import document, task
@@ -19,7 +20,6 @@ from worker_metadata.config import get_metadata_settings
 from worker_metadata.patterns import MetadataResult, extract_metadata_rule_based
 from worker_metadata.service import LLMMetadataExtractor, process_metadata
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 NAME = "worker-metadata"
@@ -87,6 +87,7 @@ def subscribe() -> QueueSubscriber:
 
 
 def main() -> None:
+    configure_logging()
     serve(subscribe(), name=NAME)
 
 

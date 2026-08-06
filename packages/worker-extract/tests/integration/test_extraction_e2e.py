@@ -14,7 +14,7 @@ from shared.models.entity import Entity
 from shared.models.task import Task
 from shared.models.unresolved_reference import UnresolvedReference
 from shared.queue.base import QueueMessage
-from shared.queue.sync import SyncQueuePublisher
+from shared.queue.base import QueuePublisher
 from worker_extract.extractors.rule_based import extract_rule_based_strategy
 from worker_extract.services.extraction_service import process_extraction
 from worker_extract.services.reference_service import reconcile_references
@@ -37,7 +37,7 @@ async def _run_extraction(
     doc_entity_repo,
     ref_repo,
     unresolved_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     *,
     raw_text: str,
     case_number: str | None = None,
@@ -83,7 +83,7 @@ async def test_extraction_populates_entities_and_completes_task(
     doc_entity_repo,
     ref_repo,
     unresolved_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list[QueueMessage],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -134,7 +134,7 @@ async def test_extraction_cross_reference_resolution(
     doc_entity_repo,
     ref_repo,
     unresolved_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list[QueueMessage],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -190,7 +190,7 @@ async def test_extraction_unresolved_reference(
     doc_entity_repo,
     ref_repo,
     unresolved_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list[QueueMessage],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -233,7 +233,7 @@ async def test_extraction_reconciliation(
     doc_entity_repo,
     ref_repo,
     unresolved_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list[QueueMessage],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -321,7 +321,7 @@ async def test_extraction_idempotency(
     doc_entity_repo,
     ref_repo,
     unresolved_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list[QueueMessage],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -409,7 +409,7 @@ async def test_extraction_stores_trailer_keywords_as_linked_entities(
     doc_entity_repo,
     ref_repo,
     unresolved_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list[QueueMessage],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

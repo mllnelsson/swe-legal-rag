@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.config import get_settings
+from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher
 from shared.queue.base import QueueMessage, QueueSubscriber
 from shared.repositories import document, task
@@ -12,7 +13,6 @@ from shared.worker import serve, subscribe_step
 from worker_download.config import get_download_settings
 from worker_download.service import process_download
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 NAME = "worker-download"
@@ -50,6 +50,7 @@ def subscribe() -> QueueSubscriber:
 
 
 def main() -> None:
+    configure_logging()
     serve(subscribe(), name=NAME)
 
 

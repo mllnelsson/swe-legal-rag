@@ -1,16 +1,28 @@
+import asyncio
 import re
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
 
 from sqlalchemy import Engine, create_engine
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import Session
 
 from shared.config import get_settings
 from shared.models.base import Base
 
-__all__ = ["Base", "get_engine", "get_session", "get_async_session"]
+__all__ = [
+    "Base",
+    "dispose_async_engine",
+    "get_engine",
+    "get_session",
+    "get_async_session",
+]
 
 
 def _sync_url(database_url: str) -> str:
@@ -40,20 +52,44 @@ def get_session() -> Generator[Session, None, None]:
         yield session
 
 
-_async_engine = None
-_async_session_factory = None
+_async_engines: dict[asyncio.AbstractEventLoop, AsyncEngine] = {}
+_async_session_factories: dict[
+    asyncio.AbstractEventLoop, async_sessionmaker[AsyncSession]
+] = {}
 
 
 def _get_async_session_factory() -> async_sessionmaker[AsyncSession]:
-    global _async_engine, _async_session_factory
-    if _async_session_factory is None:
-        _async_engine = create_async_engine(
-            _async_url(get_settings().database.database_url)
-        )
-        _async_session_factory = async_sessionmaker(
-            _async_engine, expire_on_commit=False
-        )
-    return _async_session_factory
+    """The session factory belonging to the running event loop.
+
+    Keyed by loop because an asyncpg connection belongs to the loop that opened
+    it: handing a pooled one to a second `asyncio.run` fails with "got Future
+    attached to a different loop". Workers run one loop per message, so each
+    message gets its own engine and must dispose it — see
+    :func:`dispose_async_engine`. A process with one long-lived loop (the API
+    server) keeps a single engine and its pool, exactly as before.
+    """
+    loop = asyncio.get_running_loop()
+    factory = _async_session_factories.get(loop)
+    if factory is None:
+        engine = create_async_engine(_async_url(get_settings().database.database_url))
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        _async_engines[loop] = engine
+        _async_session_factories[loop] = factory
+    return factory
+
+
+async def dispose_async_engine() -> None:
+    """Close the running loop's engine and the connections it pooled.
+
+    Any caller that owns a loop for one unit of work must call this before the
+    loop closes. Skipping it leaks a connection per message, which over a
+    backfill reaches Postgres' connection limit.
+    """
+    loop = asyncio.get_running_loop()
+    _async_session_factories.pop(loop, None)
+    engine = _async_engines.pop(loop, None)
+    if engine is not None:
+        await engine.dispose()
 
 
 @asynccontextmanager

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.task import TaskCreate, TaskRead, TaskStatusUpdate
@@ -59,3 +59,21 @@ async def list_by_step_and_status(
         select(Task).where(Task.step == step, Task.status == status)
     )
     return [TaskRead.model_validate(row) for row in result.scalars()]
+
+
+async def count_by_step_and_status(
+    session: AsyncSession,
+) -> dict[tuple[PipelineStep, TaskStatus], int]:
+    """How many tasks sit in each (step, status) pair, for run summaries.
+
+    Counted in the database rather than by listing rows: the caller wants the
+    shape of the whole corpus, and after a backfill that is far more tasks than
+    there is reason to load.
+    """
+    result = await session.execute(
+        select(Task.step, Task.status, func.count()).group_by(Task.step, Task.status)
+    )
+    return {
+        (PipelineStep(step), TaskStatus(status)): count
+        for step, status, count in result.all()
+    }

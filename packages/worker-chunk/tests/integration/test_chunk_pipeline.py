@@ -9,7 +9,7 @@ from ai.dtos import SummarizeResult
 from shared.dtos.document import DocumentCreate, DocumentUpdate
 from shared.dtos.task import TaskCreate
 from shared.testing.pipeline import redrive_task
-from shared.queue.sync import SyncQueuePublisher
+from shared.queue.base import QueuePublisher
 from worker_chunk.budget import ChunkBudget
 from worker_chunk.service import process_chunking
 
@@ -117,7 +117,7 @@ async def _run_chunking(
     document_repo,
     chunk_repo,
     task_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     session: AsyncSession,
 ) -> None:
     with patch(
@@ -145,7 +145,7 @@ class TestChunkPipelineEndToEnd:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         session: AsyncSession,
     ) -> None:
         await _run_chunking(
@@ -169,7 +169,7 @@ class TestChunkPipelineEndToEnd:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         session: AsyncSession,
     ) -> None:
         await _run_chunking(
@@ -194,7 +194,7 @@ class TestChunkPipelineEndToEnd:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         session: AsyncSession,
     ) -> None:
         await _run_chunking(
@@ -218,7 +218,7 @@ class TestChunkPipelineEndToEnd:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         session: AsyncSession,
     ) -> None:
         await _run_chunking(
@@ -243,7 +243,7 @@ class TestChunkPipelineEndToEnd:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         session: AsyncSession,
     ) -> None:
         # One summary value survives the round-trip: whatever documents.summary
@@ -274,7 +274,7 @@ class TestChunkPipelineEndToEnd:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         session: AsyncSession,
     ) -> None:
         await _run_chunking(
@@ -298,7 +298,7 @@ class TestChunkPipelineEndToEnd:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         published_messages: list,
         session: AsyncSession,
     ) -> None:
@@ -324,7 +324,7 @@ class TestChunkPipelineIdempotency:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         session: AsyncSession,
     ) -> None:
         await _run_chunking(
@@ -365,7 +365,7 @@ class TestChunkPipelineIdempotency:
         document_repo,
         chunk_repo,
         task_repo,
-        sync_publisher: SyncQueuePublisher,
+        sync_publisher: QueuePublisher,
         session: AsyncSession,
     ) -> None:
         await _run_chunking(

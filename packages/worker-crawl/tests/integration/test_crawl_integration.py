@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.enums import PipelineStep
 from shared.models.document import Document
 from shared.models.task import Task
-from shared.queue.sync import SyncQueuePublisher
+from shared.queue.base import QueuePublisher
 from worker_crawl.odata import DecisionListing, ODataConfig
 from worker_crawl.service import process_crawl
 from worker_crawl.tags import DecisionTag
@@ -47,7 +47,7 @@ def _make_kwargs(
     session: AsyncSession,
     document_repo,
     task_repo,
-    publisher: SyncQueuePublisher,
+    publisher: QueuePublisher,
 ) -> dict:
     source = MagicMock()
     source.fetch_decision_tags.return_value = TAGS
@@ -71,7 +71,7 @@ async def test_full_crawl_creates_documents_and_tasks(
     session: AsyncSession,
     document_repo,
     task_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list,
 ) -> None:
     result = await process_crawl(
@@ -113,7 +113,7 @@ async def test_crawl_persists_listing_metadata(
     session: AsyncSession,
     document_repo,
     task_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
 ) -> None:
     await process_crawl(
         **_make_kwargs(session, document_repo, task_repo, sync_publisher)
@@ -137,7 +137,7 @@ async def test_crawl_idempotent_rerun(
     session: AsyncSession,
     document_repo,
     task_repo,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list,
 ) -> None:
     kwargs = _make_kwargs(session, document_repo, task_repo, sync_publisher)

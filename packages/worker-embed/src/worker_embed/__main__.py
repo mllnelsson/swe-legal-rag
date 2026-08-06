@@ -17,13 +17,13 @@ from ai import (
     worker_trace_scope,
 )
 from shared.config import get_settings
+from shared.logging_config import configure_logging
 from shared.queue.base import QueueMessage, QueueSubscriber
 from shared.repositories import chunk, task
 from shared.worker import serve, subscribe_step
 from worker_embed.config import get_embed_settings
 from worker_embed.service import process_embedding
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 NAME = "worker-embed"
@@ -79,6 +79,7 @@ def subscribe() -> QueueSubscriber:
 
 
 def main() -> None:
+    configure_logging()
     serve(subscribe(), name=NAME)
 
 

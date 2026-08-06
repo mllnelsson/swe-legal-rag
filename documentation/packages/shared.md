@@ -1,10 +1,10 @@
 ---
 type: Package
 title: shared Package
-description: The single source of truth for data and database access — models, DTOs, enums, errors, the task envelope, config, and the storage/queue infrastructure abstractions.
+description: The single source of truth for data and database access — models, DTOs, enums, errors, the task envelope, config, logging setup, and the storage/queue infrastructure abstractions.
 resource: packages/shared
 tags: [package, shared, models, dtos, infrastructure]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-05T12:00:00Z
 ---
 
 # shared Package (`packages/shared/`)
@@ -87,7 +87,17 @@ own domain failures has its own `errors.py`.
 ## `pipeline.py`
 
 Provides `run_pipeline_step(...)`, the task envelope every subscriber worker runs inside —
-see [worker patterns](/pipeline/worker-patterns.md).
+see [worker patterns](/pipeline/worker-patterns.md). It logs each step's start, duration
+and outcome, so a worker that logs nothing of its own is still visible in a run.
+
+## `logging_config.py`
+
+Provides `configure_logging(level=logging.INFO)` — the single root-logger configuration
+(timestamped `HH:MM:SS levelname name: message`) every entry point installs. Called from
+each `main()`, never at import: `scripts/run_pipeline.py` imports six workers before it
+runs a line of its own, and `logging.basicConfig` is a no-op once the root logger has a
+handler, so import-time configuration made the format depend on import order.
+`force=True` therefore lets the entry point that is actually running win.
 
 ## `repositories/`
 
@@ -120,11 +130,22 @@ chat retriever and the search service call it; it replaced a hand-enumerated
 | `get_engine()` | Cached sync `Engine` (`postgresql+psycopg://`), used by Alembic |
 | `get_session()` | Sync context manager, used for Alembic offline mode |
 | `get_async_session()` | Async context manager yielding an `AsyncSession` with auto commit/rollback — used by application code |
+| `dispose_async_engine()` | Closes the running loop's async engine and its pooled connections |
 
 `get_engine()` is `@lru_cache` so the connection pool is shared; `pool_pre_ping=True`
 validates connections. `DATABASE_URL` is read from `get_settings()`, not `os.environ`
 directly; the async engine uses `postgresql+asyncpg://` (scheme normalized regardless of
 input).
+
+**The async engine is per event loop, not per process.** An asyncpg connection belongs to
+the loop that opened it, so a pooled connection handed to a second `asyncio.run()` fails
+with `RuntimeError: ... got Future attached to a different loop`. `get_async_session()`
+therefore keys its engine on `asyncio.get_running_loop()`. A process with one long-lived
+loop (the API server) gets one engine and a normal pool; workers run
+[one loop per message](/pipeline/worker-patterns.md) and so get one engine each, which
+they must dispose before that loop closes — `shared.worker` does this for every message,
+and any other code owning a loop for one unit of work has to do the same or leak a
+connection per loop.
 
 ## Infrastructure abstractions — `storage/` and `queue/`
 
@@ -161,8 +182,11 @@ object. Local and GCS therefore hold byte-identical contents under identical key
 
 **Queue** — `QueueMessage(task_id, document_id, payload)` maps 1:1 to task rows;
 `QueuePublisher.publish(topic, message)` and `QueueSubscriber.subscribe/start/shutdown`
-Protocols. `sync` backend (`SyncQueuePublisher/Subscriber`, in-process — publish directly
-invokes the registered handler; a module-level `SyncQueueBroker` singleton is shared by
-publisher and subscriber) and `pubsub` backend (GCP Pub/Sub via streaming pull,
-JSON-serialized). `create_queue_publisher/subscriber(settings)` select by `QUEUE_BACKEND`.
+Protocols. `sync` backend (`SyncQueuePublisher/Subscriber` over a module-level
+`SyncQueueBroker` singleton shared by publisher and subscriber — `publish` **queues**,
+`start()` pumps until the queue empties) and `pubsub` backend (GCP Pub/Sub via streaming
+pull, JSON-serialized). Queueing rather than calling the handler inline is what lets each
+step own its event loop: every publish happens inside the publishing step's loop, and a
+handler needs a loop of its own. An unsubscribed topic still raises `QueueHandlerError`
+at publish time. `create_queue_publisher/subscriber(settings)` select by `QUEUE_BACKEND`.
 Optional deps: `uv add 'shared[pubsub]'`, or `'shared[gcp]'` for both.

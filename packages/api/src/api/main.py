@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import ai
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,6 +17,8 @@ from api.routes.documents import router as documents_router
 from api.routes.keywords import router as keywords_router
 from api.routes.search import router as search_router
 from shared.config import StorageSettings
+
+load_dotenv()
 
 
 @asynccontextmanager

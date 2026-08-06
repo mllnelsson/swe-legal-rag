@@ -11,8 +11,9 @@ separate callers:
 
 - a worker process does both, in that order;
 - ``scripts/run_pipeline.py`` composes six workers into one process and wants
-  only the first, because on the sync backend a publish is a direct call into
-  whatever handler is registered *in this process*.
+  the registrations up front, because on the sync backend a publish only
+  reaches a handler subscribed *in this process*. It serves one subscriber at
+  the end, which pumps the queue the others filled.
 
 Fusing them — one ``run_worker()`` that registers and then blocks — is what
 forced that script to call each worker's ``main()`` for its side effect and then
@@ -35,7 +36,7 @@ from contextlib import AbstractContextManager, nullcontext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.config import QueueSettings
-from shared.db import get_async_session
+from shared.db import dispose_async_engine, get_async_session
 from shared.enums import PipelineStep
 from shared.queue import create_queue_subscriber
 from shared.queue.base import QueueMessage, QueueSubscriber
@@ -71,8 +72,14 @@ def subscribe_step(
 
     def handle_message(message: QueueMessage) -> None:
         async def run() -> None:
-            async with get_async_session() as session:
-                await handle(message, session)
+            try:
+                async with get_async_session() as session:
+                    await handle(message, session)
+            finally:
+                # This loop closes when `asyncio.run` returns, and an asyncpg
+                # connection cannot outlive the loop that opened it: leaving one
+                # pooled hands the next message a connection whose loop is gone.
+                await dispose_async_engine()
 
         with nullcontext() if scope is None else scope(message):
             asyncio.run(run())

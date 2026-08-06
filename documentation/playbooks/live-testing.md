@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-05T12:00:00Z
 ---
 
 # Live Testing Guide
@@ -70,26 +70,47 @@ The ingestion pipeline flows through workers connected by queue topics:
 crawl → [topic: download] → download → [topic: parse] → parse → [topic: metadata] → metadata → [topic: extract] → extract → chunk → embed
 ```
 
-With `QUEUE_BACKEND=sync`, each worker dispatches to the next inline — you can run the
-full pipeline in sequence. See the [pipeline overview](/pipeline/overview.md) for how
-the topology and task envelope work.
+With `QUEUE_BACKEND=sync` those topics are one in-process queue, so the whole chain runs
+in a single process — see [Option A](#option-a-full-pipeline-sync-queue). See the
+[pipeline overview](/pipeline/overview.md) for how the topology and task envelope work.
 
 ## Running Workers
 
 ### Option A: Full pipeline (sync queue)
 
-With `QUEUE_BACKEND=sync`, the crawl worker triggers download inline, which triggers
-parse, which triggers metadata, and so on through embed. Run from the project root:
+With `QUEUE_BACKEND=sync`, publishing appends to one in-process queue that only handlers
+subscribed **in the same process** can serve — so the full run is
+`scripts/run_pipeline.py`, which subscribes the six downstream workers, runs crawl, and
+then pumps the queue crawl filled. Run from the project root:
 
 ```bash
 # Current year (default)
-uv run --package worker-crawl python -m worker_crawl
+uv run python scripts/run_pipeline.py
 
 # Backfill the full history (~1073 documents across 2000-2026 plus the year-less tag)
-uv run --package worker-crawl python -m worker_crawl --years all
+uv run python scripts/run_pipeline.py --years all
 
 # A specific year or range
-uv run --package worker-crawl python -m worker_crawl --years 2019-2021
+uv run python scripts/run_pipeline.py --years 2019-2021
+```
+
+Running `python -m worker_crawl` on its own does **not** do this. Nothing subscribes in
+that process, so the first publish fails with
+`QueueHandlerError: No handler registered for topic: 'download'`. Bare crawl is Option B
+territory — a single step against a real queue backend.
+
+**A run resumes as well as crawls.** Crawl publishes only for documents it has just
+discovered, so anything a previous run left stranded — a document already in
+`documents` whose `download` task is still `pending` — is invisible to it: the next
+crawl skips the document, and nothing ever sends the message its pending task is waiting
+for. Each run therefore queues every `pending` task before pumping, which is what picks
+those up. `run_pipeline_step` skips tasks that are already `completed`, so re-driving a
+finished document costs one no-op per step. Pass `--no-resume` to crawl only.
+
+To see what is stranded before running:
+
+```sql
+SELECT step, status, count(*) FROM tasks GROUP BY 1, 2 ORDER BY 1, 2;
 ```
 
 This will:
@@ -98,6 +119,34 @@ This will:
 3. Parse each PDF to extract raw text
 4. Extract metadata (rule-based, with LLM fallback)
 5. Extract entities and references, chunk, and embed
+
+#### Reading the output
+
+Every step reports itself, so a stalled or skipped stage is visible without querying the
+database. Each message produces a queue line carrying the remaining depth, the envelope's
+start/finish pair with a duration, and whatever the step itself has to say:
+
+```
+21:39:47 INFO    shared.queue.sync: Queue -> parse for document b3101a3d-… (17 behind it)
+21:39:47 INFO    shared.pipeline: parse: document b3101a3d-… started
+21:39:48 INFO    worker_parse.service: Parsed document b3101a3d-…: 8214 characters from 96431 bytes of PDF
+21:39:48 INFO    shared.pipeline: parse: document b3101a3d-… completed in 0.9s -> queued metadata
+```
+
+A run ends with the queue's own tally and a `tasks` count by step and status — the same
+breakdown as the stranded-work query above, without opening `psql`:
+
+```
+21:52:03 INFO    shared.queue.sync: Queue drained: 618 message(s) dispatched, 2 failed, 0 left
+21:52:03 INFO    run_pipeline: Pipeline run finished in 743.2s
+21:52:03 INFO    run_pipeline: Task status by step:
+21:52:03 INFO    run_pipeline:   download  pending=0  processing=0  completed=103  failed=0
+21:52:03 INFO    run_pipeline:   parse     pending=0  processing=0  completed=102  failed=1
+```
+
+A step whose `completed` count is short of the one above it is where documents were lost;
+`failed` names the step to investigate, and `tasks.error_message` carries the reason. See
+[worker patterns](/pipeline/worker-patterns.md) for the full set of lines.
 
 ### Option B: Individual workers (for debugging)
 

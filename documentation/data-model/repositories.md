@@ -4,7 +4,7 @@ title: Repository Layer
 description: The function-based data-access layer bridging SQLAlchemy models and Pydantic DTOs, injected into services as Protocol-typed namespaces.
 resource: packages/shared/src/shared/repositories
 tags: [data-model, repositories, data-layer, dto, protocol]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-05T12:00:00Z
 ---
 
 # Repository Layer
@@ -38,6 +38,10 @@ the session/dependency flow explicit.
 - `document.get_by_case_number` — lookup by `case_number`
 - `task.update_status` — sets `started_at` on `processing`, `completed_at` on
   `completed`/`failed` (compared against `TaskStatus` members)
+- `task.count_by_step_and_status(session)` — `GROUP BY step, status` counts as a
+  `dict[(PipelineStep, TaskStatus), int]`, for the end-of-run summary
+  `scripts/run_pipeline.py` prints. Counted in the database, not by listing rows: after a
+  backfill that is far more tasks than there is reason to load
 - `entity.upsert` — check-then-insert on the `(name, type)` unique constraint
 - `document_entity.upsert` — check-then-insert; upgrades `mentioned` → `primary`
 - `document_reference.upsert` — idempotent insert on the composite PK

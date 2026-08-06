@@ -12,7 +12,7 @@ from shared.dtos.task import TaskCreate
 from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
-from shared.queue.sync import SyncQueuePublisher
+from shared.queue.base import QueuePublisher
 from shared.storage.local import LocalStorageBackend
 from worker_parse.parser import parse_pdf_with_pypdfium2
 from worker_parse.service import process_parse
@@ -44,7 +44,7 @@ async def test_parse_flow_populates_raw_text_and_completes_task(
     document_repo,
     task_repo,
     local_storage: LocalStorageBackend,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list[QueueMessage],
 ) -> None:
     doc = await document_repo.create(

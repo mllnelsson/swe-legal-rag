@@ -16,11 +16,19 @@ Failure handling distinguishes two kinds of error the body may raise:
 - any other exception — an unexpected failure *during* the work. The session is
   rolled back, the task is marked ``failed``, and the exception is re-raised only
   when ``reraise=True`` (workers whose messages should be redelivered/retried).
+
+Progress logging lives here for the same reason the bookkeeping does: every step
+runs through this envelope, so one started/completed/failed pair here is the one
+place that reports *every* stage at the same level of detail. A worker logs only
+what is specific to its own work (how many chunks, how many characters) — if a
+step is silent in a pipeline run, the envelope still says it ran and how long it
+took.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
@@ -34,6 +42,11 @@ from shared.repositories import TaskRepo
 __all__ = ["StepInputError", "run_pipeline_step"]
 
 logger = logging.getLogger(__name__)
+
+
+def _handoff(next_step: PipelineStep | None) -> str:
+    """How a completed step's log line ends: what it handed the document to."""
+    return f" -> queued {next_step}" if next_step is not None else " (final step)"
 
 
 async def _pending_next_task(
@@ -101,15 +114,22 @@ async def run_pipeline_step(
       when ``reraise`` is true.
     """
     task = await task_repo.get_by_id(session, task_id)
-    if task is None or task.status == TaskStatus.COMPLETED:
-        logger.info("Task %s already completed or not found, skipping", task_id)
+    if task is None:
+        logger.info("Task %s not found, skipping", task_id)
+        return
+    if task.status == TaskStatus.COMPLETED:
+        logger.info(
+            "%s: document %s already completed, skipping", task.step, document_id
+        )
         return
 
+    logger.info("%s: document %s started", task.step, document_id)
     await task_repo.update_status(
         session, task_id, TaskStatusUpdate(status=TaskStatus.PROCESSING)
     )
     await session.commit()
 
+    started_at = time.perf_counter()
     try:
         await body()
 
@@ -130,8 +150,15 @@ async def run_pipeline_step(
             session, task_id, TaskStatusUpdate(status=TaskStatus.COMPLETED)
         )
         await session.commit()
+        logger.info(
+            "%s: document %s completed in %.1fs%s",
+            task.step,
+            document_id,
+            time.perf_counter() - started_at,
+            _handoff(next_step),
+        )
     except StepInputError as exc:
-        logger.info("Task %s failed input validation: %s", task_id, exc)
+        logger.info("%s: document %s rejected — %s", task.step, document_id, exc)
         await task_repo.update_status(
             session,
             task_id,
@@ -141,9 +168,10 @@ async def run_pipeline_step(
     except Exception as exc:
         await session.rollback()
         logger.error(
-            "Pipeline step failed for task %s (document %s): %s",
-            task_id,
+            "%s: document %s failed after %.1fs — %s",
+            task.step,
             document_id,
+            time.perf_counter() - started_at,
             exc,
             exc_info=True,
         )

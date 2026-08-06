@@ -94,6 +94,16 @@ async def process_metadata(
                 category=result.category,
             ),
         )
+        logger.info(
+            "Metadata for document %s: case_number=%s decision_number=%s "
+            "decision_date=%s outcome=%s category=%s",
+            document_id,
+            result.case_number,
+            result.decision_number,
+            result.decision_date,
+            result.decision_outcome,
+            result.category,
+        )
 
     await run_pipeline_step(
         task_repo=task_repo,

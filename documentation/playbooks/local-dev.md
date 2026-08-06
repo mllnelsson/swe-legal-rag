@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-05T00:00:00Z
 ---
 
 # Local Development Environment
@@ -259,12 +259,17 @@ REDIS_URL=redis://localhost:6379
 
 ## Running the Pipeline Locally
 
-With `QUEUE_BACKEND=sync`, publishing a message from the crawl worker dispatches it
-inline to the download worker in the same process:
+With `QUEUE_BACKEND=sync`, publishing appends to a process-wide queue that only
+handlers subscribed in the *same* process can serve, so a full run has to subscribe the
+downstream workers before crawl publishes anything and then pump what crawl queued.
+`scripts/run_pipeline.py` does exactly that; bare `python -m worker_crawl` subscribes
+nothing and fails on its first publish with `QueueHandlerError: No handler registered
+for topic: 'download'`. The runner also re-drives tasks left `pending` by an earlier
+run — see [live testing](/playbooks/live-testing.md).
 
 ```bash
 # Full pipeline in one invocation (sync queue):
-uv run --package worker-crawl python -m worker_crawl
+uv run python scripts/run_pipeline.py
 
 # Or run each worker independently (useful with pubsub or for debugging):
 uv run --package worker-crawl python -m worker_crawl
@@ -328,9 +333,9 @@ profile, so plain `docker compose up -d` starts Postgres only.
 | `api` | `uvicorn api.main:app --host 0.0.0.0 --port 8000` | Long-running, published on host port 8000 |
 
 **One image, two services — and one pipeline container, not seven.** A container per
-worker cannot work while `QUEUE_BACKEND=sync`: the broker is a module-level singleton and
-a publish is a direct call into a handler registered in the *same* process, so each
-worker container would hold an empty broker and fail on its first publish. Seven
+worker cannot work while `QUEUE_BACKEND=sync`: the broker is a module-level singleton
+whose queue only handlers subscribed in the *same* process can serve, so each worker
+container would hold an empty broker and fail on its first publish. Seven
 containers matching the Cloud Run topology need a real queue backend first — that is
 [story 12 / GCP layout](/reference/gcp-layout.md) territory.
 

@@ -12,7 +12,7 @@ from shared.dtos.task import TaskCreate
 from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
-from shared.queue.sync import SyncQueuePublisher
+from shared.queue.base import QueuePublisher
 from shared.storage.local import LocalStorageBackend
 from worker_download.service import process_download
 
@@ -25,7 +25,7 @@ def _make_kwargs(
     document_repo,
     task_repo,
     storage: LocalStorageBackend,
-    publisher: SyncQueuePublisher,
+    publisher: QueuePublisher,
 ) -> dict:
     return dict(
         session=session,
@@ -45,7 +45,7 @@ async def test_full_download_stores_pdf_and_updates_document(
     document_repo,
     task_repo,
     local_storage: LocalStorageBackend,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list,
     tmp_path: Path,
 ) -> None:
@@ -95,7 +95,7 @@ async def test_download_idempotent_rerun(
     document_repo,
     task_repo,
     local_storage: LocalStorageBackend,
-    sync_publisher: SyncQueuePublisher,
+    sync_publisher: QueuePublisher,
     published_messages: list,
 ) -> None:
     doc = await document_repo.create(session, DocumentCreate(source_url=_FAKE_URL))

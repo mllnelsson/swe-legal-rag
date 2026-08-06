@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Worker Architecture Patterns
-description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, the subscribe/serve startup split, injected trace scopes, and the commit-before-publish invariant.
-tags: [pipeline, workers, task-envelope, patterns]
-timestamp: 2026-08-02T00:00:00Z
+description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, its per-step progress logging, the subscribe/serve startup split, injected trace scopes, and the commit-before-publish invariant.
+tags: [pipeline, workers, task-envelope, patterns, logging]
+timestamp: 2026-08-05T12:00:00Z
 ---
 
 # Worker Architecture Patterns
@@ -64,6 +64,35 @@ The runner:
 swallow. **Crawl is not a pipeline step** — it loops over many listings producing many
 documents/tasks, so it keeps its own per-document loop.
 
+## Progress logging
+
+The envelope also owns **per-step progress logging**, for the same reason it owns the
+bookkeeping: every step runs through it, so one place reports every stage at the same
+level of detail. A step that logs nothing of its own is still visible in a run.
+
+| Where | Level | Line |
+|---|---|---|
+| `run_pipeline_step` entry | INFO | `<step>: document <id> started` |
+| success | INFO | `<step>: document <id> completed in <n>s -> queued <next>` (or `(final step)`) |
+| `StepInputError` | INFO | `<step>: document <id> rejected — <reason>` |
+| any other exception | ERROR | `<step>: document <id> failed after <n>s — <error>` (with traceback) |
+| already `completed` | INFO | `<step>: document <id> already completed, skipping` |
+
+A worker logs only what is **specific to its own work** on top of that — bytes downloaded,
+characters parsed, metadata fields resolved, entities and references extracted, chunks
+written, chunks embedded — never a duplicate "starting"/"finished" pair.
+
+Under `QUEUE_BACKEND=sync` the broker adds the one fact the envelope cannot know: queue
+depth. `SyncQueueBroker.drain` logs `Queue -> <topic> for document <id> (<n> behind it)`
+before each dispatch and a `Queue drained: <n> dispatched, <n> failed, <n> left` summary
+at the end, so a long run shows how much is left. `scripts/run_pipeline.py` closes with a
+`tasks` count grouped by step and status — see [live testing](/playbooks/live-testing.md).
+
+Formatting is not each entry point's business: `shared.logging_config.configure_logging()`
+installs one timestamped root handler and every `main()` calls it **at startup rather than
+at import**, so composing workers into one process cannot leave the configuration to
+import order.
+
 ## Startup envelope (`shared.worker.subscribe_step` / `serve`)
 
 Every subscriber worker's `__main__.py` splits into two functions: `subscribe()`
@@ -73,8 +102,10 @@ callable against a topic via `shared.worker.subscribe_step`, returning a
 name=...)`, which installs the `SIGTERM`/`SIGINT` handlers and calls
 `subscriber.start()`. The split exists because the two have different callers: a worker
 process wants both, in that order, but `scripts/run_pipeline.py` composes six workers
-into one process by calling only their `subscribe()`s — it wants the registration, not
-six competing signal handlers and six blocking `start()` calls.
+into one process by calling only their `subscribe()`s — it wants six registrations, not
+six competing sets of signal handlers. It serves exactly one subscriber, at the end,
+after crawl has filled the queue; every subscriber fronts the same broker, so pumping
+one pumps all six.
 
 `subscribe_step(*, topic, queue_settings, handle, scope=None)` owns what
 `__main__.py` used to do by hand: it creates the `QueueSubscriber`, and its inner
@@ -83,6 +114,15 @@ and calls `handle(message, session)` inside `asyncio.run()`. `handle` is a worke
 `StepHandler` — a closure over its already-built dependencies — and is threaded into
 `run_pipeline_step` and every repo call from there, giving explicit commit control. One
 failed message does not roll back others.
+
+**One event loop per message, and it takes the engine with it.** `asyncio.run()` builds a
+loop and closes it, and an asyncpg connection cannot outlive the loop that opened it, so
+`handle_message` calls `shared.db.dispose_async_engine()` in a `finally` before the loop
+goes. Without it the next message inherits a pooled connection whose loop is gone and
+fails with `got Future attached to a different loop` — see
+[shared](/packages/shared.md). The same obligation falls on anything else that owns a
+loop for one unit of work, which is why `worker_crawl.__main__` disposes after its own
+`asyncio.run()` too.
 
 ## Trace scope injection
 
@@ -104,10 +144,10 @@ instances.
 
 ## Commit-before-publish invariant
 
-All workers call `await session.commit()` before `queue_publisher.publish()`. This
-ensures that when `QUEUE_BACKEND=sync` dispatches inline (the subscriber opens a new
-session in-process), the committed rows are visible. The same ordering is correct for
-Pub/Sub — rows are durable before any async consumer acts on a message.
+All workers call `await session.commit()` before `queue_publisher.publish()`. A message
+names rows by id, and the step that consumes it always reads them through a session of
+its own — a new in-process session under `QUEUE_BACKEND=sync`, another process entirely
+under Pub/Sub. Publishing before committing would hand the next step ids it cannot see.
 
 ## Integration test pattern
 
