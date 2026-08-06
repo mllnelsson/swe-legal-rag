@@ -2,6 +2,14 @@
 
 ## 2026-08-06
 
+* **Update**: [local dev](/playbooks/local-dev.md) — `.claude/hooks/db-sandbox.sh
+  refresh` now requires `--yes` and refuses without it (exit 64, nothing touched).
+  One cluster serves every worktree, so the sandbox it drops is shared with every
+  other session and agent on this checkout, and the script cannot tell whose work is
+  in it; the confirmation makes that a deliberate choice rather than a side effect.
+  `ensure` is unchanged and still needs no confirmation, since it only creates a
+  missing sandbox and never drops one — which also means a stale sandbox is the
+  expected state rather than a fault. Recorded in `CLAUDE.md` as well.
 * **Update**: [deterministic search](/retrieval/deterministic-search.md) and
   [`POST /api/search`](/api/search.md) — the vector arm now applies a cosine-similarity
   floor (`search_min_vector_similarity`, default 0.78, calibrated against the ingested

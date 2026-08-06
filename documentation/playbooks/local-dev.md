@@ -108,7 +108,7 @@ and two mechanisms keep it there:
 
 | Piece | What it does |
 |---|---|
-| `.claude/hooks/db-sandbox.sh` | `ensure` (SessionStart) copies `overklagan` to `overklagan_coding_agent` with `createdb -T` when it is missing; `refresh` drops and re-copies |
+| `.claude/hooks/db-sandbox.sh` | `ensure` (SessionStart) copies `overklagan` to `overklagan_coding_agent` with `createdb -T` when it is missing; `refresh --yes` drops and re-copies — see [refreshing the sandbox](#refreshing-the-sandbox) |
 | `.claude/settings.json` `env` | Points `DATABASE_URL` and `PGDATABASE` at the sandbox and pins `TEST_DATABASE_URL` to `overklagan_test` |
 | `.claude/hooks/db-guard.sh` | A `PreToolUse` hook that refuses any Bash command that would write to a database that is not the sandbox or a `_test` one |
 | `.claude/hooks/db-guard-selftest.sh` | Asserts the guard's verdict on ~37 commands, including every form in which a connection target can be declared |
@@ -126,6 +126,40 @@ which does not exist.
 The `env` block wins over `.env` because every entrypoint calls `load_dotenv()`
 without `override=True`, so a variable already in the process environment survives.
 One cluster serves every worktree, so all of them share one sandbox.
+
+#### Refreshing the sandbox
+
+```bash
+.claude/hooks/db-sandbox.sh refresh --yes
+```
+
+**`--yes` is required, and the confirmation is the user's to give — not an agent's.**
+Because one cluster serves every worktree, there is exactly one sandbox, shared by
+every session and every agent running against this checkout. `refresh` drops it, so
+it discards their work along with yours, and nothing in the script can tell whose
+was whose. Without `--yes` it refuses and exits 64, having touched nothing.
+
+`ensure` is the opposite and needs no confirmation: it creates the sandbox only when
+it is **missing** and never drops an existing one, which is why `SessionStart` can
+run it and any number of sessions can start concurrently without fighting over it.
+
+A consequence worth knowing: **a stale sandbox is the normal state**, not a fault.
+`ensure` leaves it alone, so a sandbox created before a schema change or a pipeline
+run keeps the data it had — it can be several migrations and a whole corpus behind
+`overklagan`. Check before trusting it:
+
+```bash
+psql -d overklagan_coding_agent -tAc "select count(*) from chunks"
+psql -d overklagan            -tAc "select count(*) from chunks"
+```
+
+If the two disagree and you only need to *read* real data, read `overklagan`
+directly — the guard permits it, and it costs nobody their sandbox. Refresh only
+when you actually need to write against current data.
+
+`refresh` fails safely when another session is connected to the sandbox or to
+`overklagan`: `dropdb` and `createdb -T` both refuse, and the script reports it and
+exits 0 rather than half-copying. Close the other session and run it again.
 
 ### Migrations (both platforms)
 

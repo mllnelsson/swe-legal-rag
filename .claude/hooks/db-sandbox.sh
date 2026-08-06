@@ -11,24 +11,35 @@
 #   ensure  (default) create the snapshot only if it is missing — the
 #           SessionStart path, so an existing sandbox and whatever has been done
 #           to it survive a restart
-#   refresh drop and re-copy, for when the sandbox has drifted from the
-#           development data
+#   refresh --yes
+#           drop and re-copy, for when the sandbox has drifted from the
+#           development data. Destructive, so it requires --yes: one cluster
+#           serves every worktree, which means one sandbox shared by every
+#           session and every agent running against this checkout. Dropping it
+#           discards their work as well as yours, and nothing here can tell
+#           whose it was. The confirmation is the user's call to make, not an
+#           agent's — see /playbooks/local-dev.md.
 #
-# One cluster serves every worktree, so there is one sandbox shared between
-# them: `ensure` is idempotent, and `refresh` re-copies for all of them.
+# `ensure` is idempotent and never drops anything, so any number of concurrent
+# sessions can start up safely; `refresh` re-copies for all of them at once.
 #
-# Never fails a session: every problem here is reported and exits 0.
+# Never fails a session: every problem here is reported and exits 0. Refusing an
+# unconfirmed refresh is the exception — that is a caller error, not a session
+# problem, so it exits non-zero where it will be noticed.
 
 set -uo pipefail
 
 readonly SANDBOX_SUFFIX="_coding_agent"
 readonly FALLBACK_SOURCE_DB="overklagan"
 readonly MAINTENANCE_DB="postgres"
+readonly EX_USAGE=64
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 readonly PROJECT_DIR
 ACTION="${1:-ensure}"
 readonly ACTION
+CONFIRMATION="${2:-}"
+readonly CONFIRMATION
 
 # The source database, in the order the answer is most likely to be right:
 # whatever this checkout's .env actually connects to, then an explicit override,
@@ -64,11 +75,20 @@ case "$ACTION" in
   ensure)
     if db_exists "$SANDBOX_DB"; then
       echo "Database sandbox ${SANDBOX_DB} is in place."
-      echo "Writes to ${SOURCE_DB} are refused; .claude/hooks/db-sandbox.sh refresh re-copies the sandbox."
+      echo "Writes to ${SOURCE_DB} are refused; .claude/hooks/db-sandbox.sh refresh --yes re-copies the sandbox."
       exit 0
     fi
     ;;
   refresh)
+    if [[ "$CONFIRMATION" != "--yes" ]]; then
+      echo "Refusing to refresh without confirmation." >&2
+      echo "This drops ${SANDBOX_DB} and re-copies it from ${SOURCE_DB}. One cluster" >&2
+      echo "serves every worktree, so that sandbox is shared with any other session" >&2
+      echo "running against this checkout and their work goes with it." >&2
+      echo >&2
+      echo "  .claude/hooks/db-sandbox.sh refresh --yes" >&2
+      exit "$EX_USAGE"
+    fi
     if db_exists "$SANDBOX_DB"; then
       if ! dropdb "$SANDBOX_DB" 2>/dev/null; then
         echo "Could not drop ${SANDBOX_DB} — something is still connected to it." >&2
@@ -77,14 +97,14 @@ case "$ACTION" in
     fi
     ;;
   *)
-    echo "usage: db-sandbox.sh [ensure|refresh]" >&2
-    exit 64
+    echo "usage: db-sandbox.sh [ensure|refresh --yes]" >&2
+    exit "$EX_USAGE"
     ;;
 esac
 
 if error=$(createdb -T "$SOURCE_DB" "$SANDBOX_DB" 2>&1); then
   echo "Copied ${SOURCE_DB} into ${SANDBOX_DB}."
-  echo "Writes to ${SOURCE_DB} are refused; .claude/hooks/db-sandbox.sh refresh re-copies the sandbox."
+  echo "Writes to ${SOURCE_DB} are refused; .claude/hooks/db-sandbox.sh refresh --yes re-copies the sandbox."
 else
   echo "Could not copy ${SOURCE_DB} into ${SANDBOX_DB}: ${error}" >&2
   echo "A template copy needs no other session connected to ${SOURCE_DB}." >&2

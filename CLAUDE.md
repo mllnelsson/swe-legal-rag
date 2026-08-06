@@ -54,9 +54,19 @@ setup — don't assume one platform's path.
 the pipeline does not reproduce. Your writable copy is `overklagan_coding_agent`,
 which `DATABASE_URL` and `PGDATABASE` already point at; `.claude/hooks/db-guard.sh`
 refuses any Bash command that would write elsewhere, and reads against `overklagan`
-are fine. `.claude/hooks/db-sandbox.sh refresh` re-copies the sandbox when it has
-drifted. A change that genuinely has to land in `overklagan` is the user's call, not
+are fine. A change that genuinely has to land in `overklagan` is the user's call, not
 something to work around.
+
+**Never run `.claude/hooks/db-sandbox.sh refresh --yes` on your own initiative — ask
+first.** One Postgres cluster serves every worktree, so there is exactly one sandbox,
+shared with every other session and agent working on this checkout; refreshing drops
+it and takes their work with it. The `--yes` is what makes that a deliberate choice,
+and the choice is the user's. Session start runs `ensure`, which only creates the
+sandbox when it is *missing* and never drops one — so **a stale sandbox is normal**,
+not a bug: it can be a schema change and a whole corpus behind `overklagan`. Check
+`select count(*) from chunks` in both before trusting it, and if you only need to
+*read* real data, read `overklagan` — that costs nobody their sandbox. See
+[refreshing the sandbox](documentation/playbooks/local-dev.md).
 
 ## Docker
 Always respect the docker image list in `documentation/playbooks/local-dev.md`. Do not add ny new docker images unless explicitly required
