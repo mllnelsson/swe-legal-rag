@@ -14,6 +14,7 @@ from ai import (
 )
 from ai.providers.roles import LLMRole, create_llm_provider
 from shared.config import get_settings
+from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher
 from shared.queue.base import QueueMessage, QueueSubscriber
 from shared.repositories import chunk, document, task
@@ -23,7 +24,6 @@ from worker_chunk.chunker import CONTEXTUAL_SEPARATOR
 from worker_chunk.config import get_chunk_settings
 from worker_chunk.service import process_chunking
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 NAME = "worker-chunk"
@@ -90,6 +90,7 @@ def subscribe() -> QueueSubscriber:
 
 
 def main() -> None:
+    configure_logging()
     serve(subscribe(), name=NAME)
 
 

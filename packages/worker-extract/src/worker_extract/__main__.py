@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import install_file_tracing, worker_trace_scope
 from shared.config import get_settings
+from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher
 from shared.queue.base import QueueMessage, QueueSubscriber
 from shared.repositories import (
@@ -22,7 +23,6 @@ from worker_extract.config import get_extract_settings
 from worker_extract.extractors.factory import create_extraction_strategy
 from worker_extract.services.extraction_service import process_extraction
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 NAME = "worker-extract"
@@ -63,6 +63,7 @@ def subscribe() -> QueueSubscriber:
 
 
 def main() -> None:
+    configure_logging()
     serve(subscribe(), name=NAME)
 
 

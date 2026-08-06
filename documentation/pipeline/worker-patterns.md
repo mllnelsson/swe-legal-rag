@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Worker Architecture Patterns
-description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, the subscribe/serve startup split, injected trace scopes, and the commit-before-publish invariant.
-tags: [pipeline, workers, task-envelope, patterns]
-timestamp: 2026-08-05T00:00:00Z
+description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, its per-step progress logging, the subscribe/serve startup split, injected trace scopes, and the commit-before-publish invariant.
+tags: [pipeline, workers, task-envelope, patterns, logging]
+timestamp: 2026-08-05T12:00:00Z
 ---
 
 # Worker Architecture Patterns
@@ -63,6 +63,35 @@ The runner:
 [embed](/pipeline/embed.md) re-raise (so the message can be redelivered), the others
 swallow. **Crawl is not a pipeline step** — it loops over many listings producing many
 documents/tasks, so it keeps its own per-document loop.
+
+## Progress logging
+
+The envelope also owns **per-step progress logging**, for the same reason it owns the
+bookkeeping: every step runs through it, so one place reports every stage at the same
+level of detail. A step that logs nothing of its own is still visible in a run.
+
+| Where | Level | Line |
+|---|---|---|
+| `run_pipeline_step` entry | INFO | `<step>: document <id> started` |
+| success | INFO | `<step>: document <id> completed in <n>s -> queued <next>` (or `(final step)`) |
+| `StepInputError` | INFO | `<step>: document <id> rejected — <reason>` |
+| any other exception | ERROR | `<step>: document <id> failed after <n>s — <error>` (with traceback) |
+| already `completed` | INFO | `<step>: document <id> already completed, skipping` |
+
+A worker logs only what is **specific to its own work** on top of that — bytes downloaded,
+characters parsed, metadata fields resolved, entities and references extracted, chunks
+written, chunks embedded — never a duplicate "starting"/"finished" pair.
+
+Under `QUEUE_BACKEND=sync` the broker adds the one fact the envelope cannot know: queue
+depth. `SyncQueueBroker.drain` logs `Queue -> <topic> for document <id> (<n> behind it)`
+before each dispatch and a `Queue drained: <n> dispatched, <n> failed, <n> left` summary
+at the end, so a long run shows how much is left. `scripts/run_pipeline.py` closes with a
+`tasks` count grouped by step and status — see [live testing](/playbooks/live-testing.md).
+
+Formatting is not each entry point's business: `shared.logging_config.configure_logging()`
+installs one timestamped root handler and every `main()` calls it **at startup rather than
+at import**, so composing workers into one process cannot leave the configuration to
+import order.
 
 ## Startup envelope (`shared.worker.subscribe_step` / `serve`)
 

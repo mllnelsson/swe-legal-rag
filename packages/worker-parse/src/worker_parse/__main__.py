@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.config import get_settings
+from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher
 from shared.queue.base import QueueMessage, QueueSubscriber
 from shared.repositories import document, task
@@ -13,7 +14,6 @@ from worker_parse.config import get_parse_settings
 from worker_parse.parser import parse_pdf_with_pypdfium2
 from worker_parse.service import process_parse
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 NAME = "worker-parse"
@@ -50,6 +50,7 @@ def subscribe() -> QueueSubscriber:
 
 
 def main() -> None:
+    configure_logging()
     serve(subscribe(), name=NAME)
 
 

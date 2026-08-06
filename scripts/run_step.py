@@ -62,6 +62,7 @@ from shared.config import Settings, get_settings
 from shared.db import get_async_session
 from shared.dtos.document import DocumentCreate, DocumentUpdate
 from shared.enums import PipelineStep, TaskStatus
+from shared.logging_config import configure_logging
 from shared.models.document import Document
 from shared.models.task import Task
 from shared.queue.base import QueueMessage
@@ -83,7 +84,6 @@ from shared.repositories import (
 )
 from shared.storage import create_storage_backend
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("run_step")
 
 # Attribution for traces from this script; inner calls name themselves.
@@ -568,6 +568,7 @@ async def _dispatch(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    configure_logging()
     parser = argparse.ArgumentParser(description="Run one ingestion step in isolation.")
     parser.add_argument(
         "--store",

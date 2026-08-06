@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-05T00:00:00Z
+timestamp: 2026-08-05T12:00:00Z
 ---
 
 # Live Testing Guide
@@ -119,6 +119,34 @@ This will:
 3. Parse each PDF to extract raw text
 4. Extract metadata (rule-based, with LLM fallback)
 5. Extract entities and references, chunk, and embed
+
+#### Reading the output
+
+Every step reports itself, so a stalled or skipped stage is visible without querying the
+database. Each message produces a queue line carrying the remaining depth, the envelope's
+start/finish pair with a duration, and whatever the step itself has to say:
+
+```
+21:39:47 INFO    shared.queue.sync: Queue -> parse for document b3101a3d-… (17 behind it)
+21:39:47 INFO    shared.pipeline: parse: document b3101a3d-… started
+21:39:48 INFO    worker_parse.service: Parsed document b3101a3d-…: 8214 characters from 96431 bytes of PDF
+21:39:48 INFO    shared.pipeline: parse: document b3101a3d-… completed in 0.9s -> queued metadata
+```
+
+A run ends with the queue's own tally and a `tasks` count by step and status — the same
+breakdown as the stranded-work query above, without opening `psql`:
+
+```
+21:52:03 INFO    shared.queue.sync: Queue drained: 618 message(s) dispatched, 2 failed, 0 left
+21:52:03 INFO    run_pipeline: Pipeline run finished in 743.2s
+21:52:03 INFO    run_pipeline: Task status by step:
+21:52:03 INFO    run_pipeline:   download  pending=0  processing=0  completed=103  failed=0
+21:52:03 INFO    run_pipeline:   parse     pending=0  processing=0  completed=102  failed=1
+```
+
+A step whose `completed` count is short of the one above it is where documents were lost;
+`failed` names the step to investigate, and `tasks.error_message` carries the reason. See
+[worker patterns](/pipeline/worker-patterns.md) for the full set of lines.
 
 ### Option B: Individual workers (for debugging)
 

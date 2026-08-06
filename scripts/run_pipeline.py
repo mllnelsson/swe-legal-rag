@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 
 from dotenv import load_dotenv
@@ -44,6 +45,7 @@ from dotenv import load_dotenv
 from shared.config import QueueBackendType, get_settings
 from shared.db import dispose_async_engine, get_async_session
 from shared.enums import PipelineStep, TaskStatus
+from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher
 from shared.queue.base import QueueMessage, QueuePublisher, QueueSubscriber
 from shared.repositories import task
@@ -56,7 +58,6 @@ from worker_extract.__main__ import subscribe as subscribe_extract
 from worker_metadata.__main__ import subscribe as subscribe_metadata
 from worker_parse.__main__ import subscribe as subscribe_parse
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("run_pipeline")
 
 # Every step downstream of crawl, in pipeline order. Each registers its handler
@@ -113,6 +114,30 @@ async def _queue_pending_tasks(publisher: QueuePublisher) -> int:
     return queued
 
 
+async def _log_task_summary() -> None:
+    """Report where every task in the corpus ended up, step by step.
+
+    The per-document lines scroll past; this is the part worth reading after a
+    long run. A step whose `completed` count is short of the one above it is
+    where documents were lost, and a non-zero `failed` names the step to go
+    looking at — the task rows carry the error messages.
+    """
+    async with get_async_session() as session:
+        counts = await task.count_by_step_and_status(session)
+    await dispose_async_engine()
+
+    logger.info("Task status by step:")
+    for step in PipelineStep:
+        per_status = {status: counts.get((step, status), 0) for status in TaskStatus}
+        if not any(per_status.values()):
+            continue
+        logger.info(
+            "  %-9s %s",
+            step,
+            "  ".join(f"{status}={count}" for status, count in per_status.items()),
+        )
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="run_pipeline",
@@ -154,6 +179,9 @@ def _require_sync_queue() -> None:
 
 
 def main() -> None:
+    # Before anything logs: each worker's `main()` configures logging, but this
+    # script calls their `subscribe()` instead, so nothing else would.
+    configure_logging()
     load_dotenv()
     args = _parse_args()
 
@@ -177,7 +205,11 @@ def main() -> None:
     # Draining is the pipeline: download publishes parse, parse publishes
     # metadata, and so on until the queue empties and `serve` returns.
     logger.info("Crawl finished; draining the queue through embed")
+    started_at = time.perf_counter()
     serve(pump, name="run_pipeline")
+
+    logger.info("Pipeline run finished in %.1fs", time.perf_counter() - started_at)
+    asyncio.run(_log_task_summary())
 
 
 if __name__ == "__main__":

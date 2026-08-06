@@ -38,6 +38,22 @@ async def process_parse(
         await document_repo.update(
             session, document.id, DocumentUpdate(raw_text=raw_text)
         )
+        # A scanned PDF parses to nothing without failing, and every downstream
+        # step then rejects the document one at a time. Say it once, here.
+        if not raw_text.strip():
+            logger.warning(
+                "Document %s parsed to empty text from %d bytes of PDF — "
+                "likely a scan with no text layer",
+                document.id,
+                len(pdf_bytes),
+            )
+        else:
+            logger.info(
+                "Parsed document %s: %d characters from %d bytes of PDF",
+                document.id,
+                len(raw_text),
+                len(pdf_bytes),
+            )
 
     await run_pipeline_step(
         task_repo=task_repo,

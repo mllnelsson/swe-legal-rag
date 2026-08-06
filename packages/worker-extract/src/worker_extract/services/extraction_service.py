@@ -96,12 +96,13 @@ async def process_extraction(
         inferred = [
             entity for entity in result.entities if entity.type != EntityType.KEYWORD
         ]
+        declared = _declared_keywords(segments.trailer)
         await persist_entities(
             session,
             entity_repo,
             doc_entity_repo,
             document_id,
-            inferred + _declared_keywords(segments.trailer),
+            inferred + declared,
         )
         await process_references(
             session,
@@ -112,12 +113,21 @@ async def process_extraction(
             _own_identifiers(document.case_number, document.decision_number),
             result.references,
         )
-        await reconcile_references(
+        reconciled = await reconcile_references(
             session,
             unresolved_repo,
             ref_repo,
             document_id,
             _own_identifiers(document.case_number, document.decision_number),
+        )
+        logger.info(
+            "Extracted for document %s: %d inferred entities, %d declared keywords, "
+            "%d references cited, %d earlier reference(s) resolved to it",
+            document_id,
+            len(inferred),
+            len(declared),
+            len(result.references),
+            reconciled,
         )
 
     await run_pipeline_step(

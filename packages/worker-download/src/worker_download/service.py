@@ -92,11 +92,22 @@ async def process_download(
         # Already downloaded (idempotent re-run): skip the fetch and let the
         # envelope publish the parse task + mark this one completed.
         if document.gcs_uri is not None:
+            logger.info(
+                "Document %s already stored at %s; skipping fetch",
+                document.id,
+                document.gcs_uri,
+            )
             return
 
         pdf_bytes = _download_pdf(document.source_url, timeout, max_retries)
         uri = storage.store(document_pdf_key(document.id), pdf_bytes)
         await document_repo.update(session, document.id, DocumentUpdate(gcs_uri=uri))
+        logger.info(
+            "Downloaded %d bytes for document %s -> %s",
+            len(pdf_bytes),
+            document.id,
+            uri,
+        )
         time.sleep(rate_limit_delay)
 
     await run_pipeline_step(

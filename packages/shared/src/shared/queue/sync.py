@@ -79,12 +79,25 @@ class SyncQueueBroker:
             return
 
         self._draining = True
+        dispatched = 0
+        failed = 0
+        logger.info("Draining queue: %d message(s) waiting", len(self._pending))
         try:
             while self._pending and not self._stopped:
                 topic, message = self._pending.popleft()
+                dispatched += 1
+                # The depth is the progress bar: the queue grows as it is
+                # consumed, so "how much is left" is only knowable here.
+                logger.info(
+                    "Queue -> %s for document %s (%d behind it)",
+                    topic,
+                    message.document_id,
+                    len(self._pending),
+                )
                 try:
                     self.dispatch(topic, message)
                 except Exception:
+                    failed += 1
                     # One document must not end the run. Its task row already
                     # carries the failure — `shared.pipeline.run_pipeline_step`
                     # records it before re-raising — and redelivery is a real
@@ -96,6 +109,12 @@ class SyncQueueBroker:
                     )
         finally:
             self._draining = False
+            logger.info(
+                "Queue drained: %d message(s) dispatched, %d failed, %d left",
+                dispatched,
+                failed,
+                len(self._pending),
+            )
 
     def request_stop(self) -> None:
         """Stop the drain once the message in flight finishes.
