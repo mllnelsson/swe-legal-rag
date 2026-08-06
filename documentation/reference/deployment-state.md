@@ -3,7 +3,7 @@ type: Reference
 title: Deployment and Data State
 description: What is actually deployed and ingested right now — nothing — and which classes of change are therefore free rather than breaking.
 tags: [state, deployment, data, migrations, scope]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-05T00:00:00Z
 ---
 
 # Deployment and Data State
@@ -42,8 +42,9 @@ changes into imagined migrations.
   back-compat shim. Removing `LLM_PROVIDER=berget` as an accepted value was such a
   change and was correct to make outright.
 - **The API and SSE contracts need no versioning.** See the
-  [chat endpoint](/api/chat-endpoint.md); the only client is the
-  [frontend](/frontend/overview.md) in this repository.
+  [chat endpoint](/api/chat-endpoint.md); nothing outside this repository calls it,
+  and the [frontend](/frontend/overview.md) in this repository does not call it either
+  — it consumes only the deterministic retrieval API.
 
 ## What does not follow
 

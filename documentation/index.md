@@ -21,7 +21,7 @@ An OKF knowledge bundle for a Swedish-language semantic search and chat tool ove
 * [Data Model](data-model/) - Tables, indexes, the repository layer, and schema design notes.
 * [Backend Packages](packages/) - The uv workspace packages: shared, llm-core, ai, api.
 * [API](api/) - The chat endpoint, and the deterministic search/browse/traversal REST API — search, filters, documents, and concepts.
-* [Frontend](frontend/) - The V1 streaming chat UI.
+* [Frontend](frontend/) - The React SPA over the deterministic retrieval API — no chat, no SSE — plus the honesty rules it enforces and the generated-types workflow it builds on.
 * [Decisions](decisions/) - Architecture decision records.
 * [Playbooks](playbooks/) - Operational procedures for local dev and live testing.
 * [Reference](reference/) - Crawl source, GCP layout, LLM/embedding configuration, cost, and LLM pricing reference material.
