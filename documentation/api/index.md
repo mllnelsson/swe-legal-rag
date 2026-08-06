@@ -6,7 +6,7 @@
 
 ## Search
 
-* [Search Endpoint (POST /api/search)](search.md) - The POST /api/search hybrid search contract — free-text query plus explicit filters, document-grouped hits with full chunk text and per-arm ranks, and a diagnostics block that makes ranking auditable.
+* [Search Endpoint (POST /api/search)](search.md) - The POST /api/search hybrid search contract — free-text query plus explicit filters, document-grouped hits with full chunk text, per-arm ranks and similarity scores, and a diagnostics block that makes ranking auditable.
 * [Filters Endpoint (GET /api/filters)](filters.md) - The GET /api/filters facet-vocabulary contract — the category, decision-outcome and entity-type values a search filter will actually match, plus the corpus's date range and size.
 
 ## Documents

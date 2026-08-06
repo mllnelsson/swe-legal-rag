@@ -82,20 +82,27 @@ data does and does not support — described in full at [search result honesty
 rules](/frontend/honesty-rules.md). They are the domain-specific part of this
 app; everything else is fairly generic search UI.
 
-## A known retrieval limitation
+## Where relevance comes from
 
-Retrieval exposes no relevance signal to the client: the vector arm returns
-its 50 nearest neighbours with no similarity floor, and RRF score is
-rank-derived, so a nonsense query and a good one both produce a confident-
-looking top hit (verified against the live API: a nonsense query still scores
-its top hit around 0.01639, the same range as a real one). The practical
-consequence is that the "no matches" empty state — [honesty rule
-3](/frontend/honesty-rules.md) — is unreachable through a bad query alone;
-only filters can empty a result set. The frontend mitigates this by noting
-when no word in the query occurs anywhere in the corpus (via
-`diagnostics.text_hit_counts`), but the actual fix is a backend change —
-exposing per-chunk cosine distance, or flooring the vector arm — and is not
-implemented here.
+`score` is not it. It is the RRF fusion value, and RRF works on rank, so the top
+hit of every search scores 0.01639 no matter what was asked — see [honesty rule
+4](/frontend/honesty-rules.md). The client reads relevance from three places
+instead, all described in [`POST /api/search`](/api/search.md):
+
+* `chunks[].vector_similarity` — cosine similarity, comparable across queries.
+  `null` means that chunk matched on words alone.
+* `diagnostics.top_vector_similarity` and `diagnostics.vector_similarity_floor` —
+  the best similarity the search reached, and the bar it had to clear.
+* `diagnostics.text_hit_counts` — all zero means no word of the query occurs
+  anywhere in the corpus, so the hits are matches of meaning only. The results
+  page says so, and only when there are results to say it about ([honesty rule
+  11](/frontend/honesty-rules.md)).
+
+Because the vector arm applies the [similarity
+floor](/retrieval/deterministic-search.md#the-similarity-floor), a query the
+corpus has nothing close to now returns nothing rather than its nearest
+neighbours — which is what makes the "no matches" empty state reachable without
+a filter ([honesty rule 3](/frontend/honesty-rules.md)).
 
 ## Running it
 

@@ -1,10 +1,10 @@
 ---
 type: API Endpoint
 title: Search Endpoint (POST /api/search)
-description: The POST /api/search hybrid search contract — free-text query plus explicit filters, document-grouped hits with full chunk text and per-arm ranks, and a diagnostics block that makes ranking auditable.
+description: The POST /api/search hybrid search contract — free-text query plus explicit filters, document-grouped hits with full chunk text, per-arm ranks and similarity scores, and a diagnostics block that makes ranking auditable.
 resource: POST /api/search
-tags: [api, search, rest, hybrid-search]
-timestamp: 2026-08-03T00:00:00Z
+tags: [api, search, rest, hybrid-search, relevance]
+timestamp: 2026-08-06T00:00:00Z
 ---
 
 # Search Endpoint (`POST /api/search`)
@@ -78,7 +78,9 @@ true` asks the server to produce them instead.
           "appendix_label": "string | null",
           "score": 0.0,
           "vector_rank": "int | null",
-          "text_rank": "int | null"
+          "text_rank": "int | null",
+          "vector_similarity": "float | null",
+          "text_score": "float | null"
         }
       ]
     }
@@ -94,7 +96,9 @@ true` asks the server to produce them instead.
     "text_hit_counts": {"query text": 0},
     "fused_chunk_count": 0,
     "expanded": false,
-    "widened_to_appendices": false
+    "widened_to_appendices": false,
+    "vector_similarity_floor": 0.78,
+    "top_vector_similarity": null
   }
 }
 ```
@@ -107,6 +111,40 @@ at all, so ranking quality can be checked by eye rather than trusted blindly.
 `total` is the size of the fused candidate pool (bounded by `search_arm_limit`, default
 50 per arm), **not a corpus-wide count.** Paging is shallow by design — see
 [deterministic search](/retrieval/deterministic-search.md).
+
+## Reading relevance: `score` is not a rating
+
+`score`, on both `SearchHit` and `SearchChunk`, is the Reciprocal Rank Fusion value. It
+orders the result; it does not grade it. RRF derives it from rank alone, so **the top hit
+of any search scores `1/(60+1)` = 0.01639** — a decision that answers the question and
+the nearest paragraph to a question the corpus never addresses are indistinguishable by
+this number. Do not render it as a percentage, a rating, or a confidence.
+
+Relevance lives in two other fields:
+
+| Field | What it is | Comparable across queries? |
+|---|---|---|
+| `vector_similarity` | Cosine similarity to the query embedding, always at or above `diagnostics.vector_similarity_floor` | **Yes.** This is the field to threshold on or display |
+| `text_score` | Postgres `ts_rank` over the Swedish tsvector | No — `ts_rank` has no absolute scale |
+
+Both are `null` when that arm did not return the chunk, exactly like
+`vector_rank`/`text_rank`. A hit whose `vector_similarity` is `null` matched on words
+alone; a hit whose `text_score` is `null` matched on meaning alone.
+
+## Empty results: three distinct nothings
+
+The vector arm applies a similarity floor, so a query the corpus has nothing close to
+returns **no results** rather than its nearest neighbours. `diagnostics` tells the three
+cases apart:
+
+| Case | Signature |
+|---|---|
+| The filter excluded every decision | `candidate_document_count: 0` |
+| Nothing was close enough to the query | `filter_applied: false`, `vector_hit_count: 0`, `top_vector_similarity: null` |
+| Results, but matched by meaning only | `items` non-empty, every `text_hit_counts` value `0` |
+
+See [the similarity floor](/retrieval/deterministic-search.md#the-similarity-floor) for
+how the default was calibrated and why it is model-specific.
 
 ## Filter semantics: no fallback
 
@@ -122,7 +160,9 @@ answered with 2019 decisions would be lying to its caller.
 Body-only by default (`include_appendices: false`); every chunk's `section` and
 `appendix_label` say which text it is regardless of scope. If a body-only search finds
 nothing, it widens once to the whole document and sets
-`diagnostics.widened_to_appendices: true`. See [body-first
+`diagnostics.widened_to_appendices: true`. The widened pass applies the same similarity
+floor, so it can also return nothing — `widened_to_appendices: true` means the retry
+happened, not that it produced results. See [body-first
 retrieval](/decisions/body-first-retrieval.md).
 
 ## Query expansion
@@ -138,7 +178,7 @@ See [query expansion](/retrieval/query-expansion.md).
 `SearchSettings` (`api/config.py`): `search_default_limit` (10), `search_max_limit`
 (50), `search_arm_limit` (50, per arm per query), `search_chunks_per_document` (3),
 `search_candidate_limit` (500), `search_max_query_variants` (3),
-`search_expand_vector_arm` (`false`).
+`search_expand_vector_arm` (`false`), `search_min_vector_similarity` (0.78).
 
 Implemented by `api/services/search_service.py`, served through the [api
 package](/packages/api.md).

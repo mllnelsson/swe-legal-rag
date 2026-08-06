@@ -2,6 +2,14 @@
 
 ## 2026-08-06
 
+* **Update**: [deterministic search](/retrieval/deterministic-search.md) and
+  [`POST /api/search`](/api/search.md) — the vector arm now applies a cosine-similarity
+  floor (`search_min_vector_similarity`, default 0.78, calibrated against the ingested
+  corpus), and every chunk carries `vector_similarity`/`text_score` alongside its ranks.
+  Without the floor a nearest-neighbour scan answered every query, so an empty result was
+  unreachable except through an excluding filter, and the fused RRF `score` — 0.01639 at
+  rank 1 for any query whatsoever — could not tell a caller otherwise. Rules 3, 4 and 11
+  of the [honesty rules](/frontend/honesty-rules.md) follow from the new response shape.
 * **Update**: [frontend](/frontend/overview.md) — clarified that chat is a deferred
   phase rather than a rejected one. The [PRD](/prd.md) still specifies a chat
   interface (S3), a synthesized answer citing case numbers (S6) and conversational

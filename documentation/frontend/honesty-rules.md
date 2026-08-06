@@ -3,12 +3,12 @@ type: Concept
 title: Search result honesty rules
 description: The frontend's tested constraints on what it claims about a search result — each one exists because the data does not support the more convenient alternative.
 tags: [frontend, ui, honesty, search, appendix, rrf]
-timestamp: 2026-08-05T00:00:00Z
+timestamp: 2026-08-06T00:00:00Z
 ---
 
 # Search result honesty rules
 
-Ten constraints the frontend enforces on how it presents search results and
+Eleven constraints the frontend enforces on how it presents search results and
 decisions, each backed by a test in
 `src/components/research/honesty-rules.test.tsx`. They are not generic UI
 polish — each exists because the corpus or the [search
@@ -34,12 +34,18 @@ cannot back up.
    that matched nothing (`candidate_document_count: null`, no filter
    applied). The API distinguishes these deliberately in
    `diagnostics`, and collapsing them into one "no results" message would
-   throw that distinction away.
+   throw that distinction away. Both are reachable: the [similarity
+   floor](/retrieval/deterministic-search.md#the-similarity-floor) means a
+   query the corpus has nothing close to returns nothing, rather than its
+   nearest neighbours.
 4. **`score` is never rendered.** It is a rank-derived Reciprocal Rank Fusion
    value, observed in the range 0.016–0.033 on the live corpus — not a
-   confidence percentage a reader could sensibly interpret. `vector_rank` and
-   `text_rank` badges are shown instead, and an arm that did not return a
-   chunk (`null`) is simply omitted rather than shown as a zero.
+   confidence percentage a reader could sensibly interpret. Because RRF works
+   on rank, the top hit of *any* search scores 0.01639 regardless of how good
+   the match was. `vector_rank` and `text_rank` badges are shown instead, and
+   an arm that did not return a chunk (`null`) is simply omitted rather than
+   shown as a zero. The field that does carry relevance is
+   `vector_similarity` — see [`/api/search`](/api/search.md).
 5. **`total` reads as a bare count, never a fraction of a corpus.** It is the
    size of the fused candidate pool (bounded by the search arm limit), not a
    corpus-wide match count — see [`/api/search`](/api/search.md) — so the
@@ -68,6 +74,13 @@ cannot back up.
     corpus contains near-duplicate values (e.g. "Utlämnande av handling" and
     "Utlämnande av handlingar") that the frontend does not merge or
     normalize.
+11. **A note about "träffarna nedan" is not shown when there are none.** Both
+    summary notes — the appendix-widening banner and the matched-by-meaning
+    note — make a claim about the result list, so each is gated on `total > 0`.
+    Since the [similarity
+    floor](/retrieval/deterministic-search.md#the-similarity-floor) landed, a
+    widened search can come back empty too, which is what makes the gate
+    necessary rather than theoretical.
 
 `decision_outcome` facet values are also worth recording here: they are
 verbatim holdings running 41–378 characters long, so the filter control

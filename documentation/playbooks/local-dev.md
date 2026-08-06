@@ -247,6 +247,7 @@ REDIS_URL=redis://localhost:6379
 | `RETRIEVAL_SEARCH_LIMIT` | `20` | Results per arm (vector + text) before fusion (`api`) |
 | `RETRIEVAL_RERANK_ENABLED` | `false` | Enable optional LLM rerank step — default OFF for NFR1 <5s (`api`) |
 | `RETRIEVAL_INCLUDE_APPENDICES` | `false` | Search appended lower-instance decisions too. Default OFF — see [body-first retrieval](/decisions/body-first-retrieval.md) (`api`) |
+| `SEARCH_MIN_VECTOR_SIMILARITY` | `0.78` | Cosine similarity a chunk must reach before `/api/search`'s vector arm returns it — what decides "no match". Model- and corpus-specific; re-measure when the [embedding model](/decisions/embedding-model.md) changes. `0` disables the floor. See [the similarity floor](/retrieval/deterministic-search.md#the-similarity-floor) (`api`) |
 | `API_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins for the API server; Vite dev server default |
 | `SESSION_MAX_HISTORY_TURNS` | `10` | Max conversation turns passed to LLM; full history stays in DB |
 | `LLM_TRACE_ENABLED` | `true` | Capture every LLM/embedding call to storage — see [observability](/observability.md). Off means no recorder, no thread, no files |
