@@ -21,6 +21,8 @@ export function makeChunk(overrides: Partial<SearchChunk> = {}): SearchChunk {
     score: 0.01639,
     vector_rank: 1,
     text_rank: null,
+    vector_similarity: 0.8584,
+    text_score: null,
     ...overrides,
   };
 }
@@ -52,6 +54,8 @@ export function makeDiagnostics(overrides: Partial<SearchDiagnostics> = {}): Sea
     fused_chunk_count: 50,
     expanded: false,
     widened_to_appendices: false,
+    vector_similarity_floor: 0.78,
+    top_vector_similarity: 0.8584,
     ...overrides,
   };
 }

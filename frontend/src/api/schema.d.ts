@@ -575,7 +575,7 @@ export interface components {
         };
         /**
          * SearchChunk
-         * @description A matched passage, verbatim, with how each arm ranked it.
+         * @description A matched passage, verbatim, with how each arm scored and ranked it.
          */
         SearchChunk: {
             /**
@@ -596,6 +596,10 @@ export interface components {
             vector_rank: number | null;
             /** Text Rank */
             text_rank: number | null;
+            /** Vector Similarity */
+            vector_similarity: number | null;
+            /** Text Score */
+            text_score: number | null;
         };
         /**
          * SearchDiagnostics
@@ -618,10 +622,17 @@ export interface components {
             expanded: boolean;
             /** Widened To Appendices */
             widened_to_appendices: boolean;
+            /** Vector Similarity Floor */
+            vector_similarity_floor: number;
+            /** Top Vector Similarity */
+            top_vector_similarity: number | null;
         };
         /**
          * SearchHit
          * @description One decision, with the passages that matched it.
+         *
+         *     ``score`` is the best chunk's fused rank score and carries the same caveat:
+         *     it orders decisions, it does not grade them. Read ``chunks[0]`` for relevance.
          */
         SearchHit: {
             /**

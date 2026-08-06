@@ -67,13 +67,16 @@ export function SearchSummary({ effectiveQueries, total, diagnostics }: SearchSu
         {total === 1 ? "1 träff" : `${formatCount(total)} träffar`}
       </p>
 
-      {/* The vector arm returns its nearest neighbours with no similarity floor, and
-          the fused score is derived from rank rather than distance — a perfect match
-          and an unrelated one both score ~0.0164 at rank 1. So when no word from the
-          query appears anywhere in the corpus, the list is ordered by semantic
-          proximity to text that may have nothing to do with the question. Saying so
-          is the only honest signal available; the API exposes no distance to show. */}
-      {wordMatches === 0 && (
+      {/* Not a warning that the hits are bad — the vector arm applies
+          `diagnostics.vector_similarity_floor`, so anything that reached this list
+          cleared it. It is a warning about what kind of hit these are: matched by
+          meaning alone, with not one word of the query occurring in the text. The
+          fused `score` cannot express that distinction (RRF derives it from rank,
+          so rank 1 is ~0.0164 either way) — `text_hit_counts` is what does.
+
+          Gated on having results: "träffarna nedan" is a claim about a list, and
+          below an empty state there is no list to make it about. */}
+      {wordMatches === 0 && total > 0 && (
         <p
           style={{
             display: "flex",
@@ -92,7 +95,10 @@ export function SearchSummary({ effectiveQueries, total, diagnostics }: SearchSu
         </p>
       )}
 
-      {diagnostics.widened_to_appendices && (
+      {/* Same gate, same reason: since the similarity floor landed, a widened
+          search can also come back with nothing, and this banner speaks about
+          results that would not be there. */}
+      {diagnostics.widened_to_appendices && total > 0 && (
         <p
           style={{
             display: "flex",

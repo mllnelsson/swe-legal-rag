@@ -188,7 +188,7 @@ describe("summary is optional, and its absence is not a hole", () => {
   });
 });
 
-describe("a query whose words appear nowhere is flagged as weak", () => {
+describe("a query whose words appear nowhere is flagged as matched by meaning", () => {
   test("no note when the text arm found the words", () => {
     render(
       <SearchSummary effectiveQueries={["jäv"]} total={3} diagnostics={makeDiagnostics()} />,
@@ -197,15 +197,37 @@ describe("a query whose words appear nowhere is flagged as weak", () => {
   });
 
   test("note appears when no query word occurs in the corpus", () => {
-    // The vector arm has no similarity floor and the fused score is rank-derived,
-    // so nonsense still returns a full page of confident-looking hits.
     render(
       <SearchSummary
-        effectiveQueries={["zzzqqq xylofon"]}
+        effectiveQueries={["ledamot som är släkt med sökanden"]}
         total={15}
-        diagnostics={makeDiagnostics({ text_hit_counts: { "zzzqqq xylofon": 0 } })}
+        diagnostics={makeDiagnostics({
+          text_hit_counts: { "ledamot som är släkt med sökanden": 0 },
+          top_vector_similarity: 0.8068,
+        })}
       />,
     );
     expect(screen.getByText(/närmast i betydelse/)).toBeInTheDocument();
+  });
+
+  test("neither note claims anything about a list that is empty", () => {
+    // `zzzqqq xylofon` used to return a full page: the vector arm had no
+    // similarity floor, so a nearest-neighbour scan always had a nearest
+    // neighbour. It now returns nothing, which makes `total: 0` with no filter
+    // reachable — and both notes speak about "träffarna nedan".
+    render(
+      <SearchSummary
+        effectiveQueries={["zzzqqq xylofon"]}
+        total={0}
+        diagnostics={makeDiagnostics({
+          text_hit_counts: { "zzzqqq xylofon": 0 },
+          vector_hit_count: 0,
+          top_vector_similarity: null,
+          widened_to_appendices: true,
+        })}
+      />,
+    );
+    expect(screen.queryByText(/närmast i betydelse/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Inget matchade i besluten själva/)).not.toBeInTheDocument();
   });
 });
