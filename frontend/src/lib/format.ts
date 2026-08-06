@@ -1,72 +1,64 @@
-/* Swedish display formatting, shared by every surface that names a decision.
+/* Presentation helpers. Pure: they take API values and return strings.
  *
- * Lives here rather than in a component because the same decision appears as a
- * search hit, a citation edge and a page heading, and the three must not drift
- * into naming it three different ways.
+ * The corpus carries two identifier spaces that look alike and are not:
  *
- * Nothing here invents text. Each function picks between values the API already
- * returned, or formats a number for a Swedish reader; where the API returned
- * nothing, these produce nothing rather than a placeholder.
+ *   case_number     "2025-0035"  ärendenummer — identifies the *case*
+ *   decision_number "14/2026"    beslutsnummer — identifies the *decision*
+ *
+ * They genuinely disagree: a case opened in 2025 can be decided in 2026, and the
+ * live corpus contains exactly that. Neither is a formatting of the other, so
+ * every rendering labels which one it is showing.
  */
 
-/** Grouped with the Swedish thousands separator (a non-breaking space). */
-export function formatCount(count: number): string {
-  return new Intl.NumberFormat("sv-SE").format(count);
+const SWEDISH_DATE = new Intl.DateTimeFormat("sv-SE", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+
+const SWEDISH_NUMBER = new Intl.NumberFormat("sv-SE");
+
+/** ISO date from the API to a readable Swedish one. */
+export function formatDecisionDate(isoDate: string | null): string | null {
+  if (isoDate === null) return null;
+  const parsed = new Date(isoDate);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return SWEDISH_DATE.format(parsed);
 }
 
-/** What to call a decision in a heading.
- *
- *  `headline` is the nämnd's own published title and is preferred whenever it
- *  exists. `category` is a regex-lifted field — opaque free text, per honesty
- *  rule 10 — so it is a fallback, not an equal. When neither exists the caller
- *  still needs something clickable, and "Beslut" is the one word that is true of
- *  every document in the corpus.
- */
-export function decisionTitle(
-  headline: string | null,
-  category: string | null,
-): string {
-  return headline ?? category ?? "Beslut";
+/** Digits with Swedish grouping, per the design system's "counts are digits". */
+export function formatCount(value: number): string {
+  return SWEDISH_NUMBER.format(value);
 }
 
-export type DecisionIdentityInput = {
+export type DecisionIdentity = {
   caseNumber: string | null;
   decisionNumber: string | null;
   decisionDate: string | null;
 };
 
-export type DecisionIdentityPart = {
-  label: string;
-  value: string;
-};
+export type IdentityPart = { label: string; value: string };
 
-/** The labelled identifiers of a decision, in reading order.
+/** The labelled parts of a decision's identity line, in reading order.
  *
- *  Always labelled and never concatenated: `case_number` and `decision_number`
- *  are two different identifier spaces, and the corpus contains cases opened in
- *  one year and decided in another (2025-0035 decided as 14/2026), so an
- *  unlabelled "2025-0035 · 14/2026" would read as one number twice. See honesty
- *  rule 8.
- *
- *  A missing identifier is dropped rather than rendered as a dash — the parts
- *  are keyed by `label` at every call site, so each label appears at most once.
- */
-export function decisionIdentityParts(
-  input: DecisionIdentityInput,
-): DecisionIdentityPart[] {
-  const parts: DecisionIdentityPart[] = [];
-
-  if (input.caseNumber !== null) {
-    parts.push({ label: "Ärendenummer", value: input.caseNumber });
+ * Returns parts rather than a joined string so the caller can set the two
+ * identifiers in the mono citation face and keep the labels in the UI face. */
+export function decisionIdentityParts(identity: DecisionIdentity): IdentityPart[] {
+  const parts: IdentityPart[] = [];
+  if (identity.caseNumber !== null) {
+    parts.push({ label: "Ärendenummer", value: identity.caseNumber });
   }
-  if (input.decisionNumber !== null) {
-    parts.push({ label: "Beslut", value: input.decisionNumber });
+  if (identity.decisionNumber !== null) {
+    parts.push({ label: "Beslut", value: identity.decisionNumber });
   }
-  if (input.decisionDate !== null) {
-    // Already ISO from the API, which is also how Swedish writes a date, so
-    // there is nothing to convert — only to label.
-    parts.push({ label: "Beslutsdatum", value: input.decisionDate });
+  const date = formatDecisionDate(identity.decisionDate);
+  if (date !== null) {
+    parts.push({ label: "Meddelat", value: date });
   }
-
   return parts;
+}
+
+/** A decision with no case number and no decision number still needs a name. */
+export function decisionTitle(headline: string | null, category: string | null): string {
+  return headline ?? category ?? "Beslut utan rubrik";
 }
