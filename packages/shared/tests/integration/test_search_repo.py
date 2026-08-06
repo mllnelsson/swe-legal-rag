@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.config import EMBEDDING_DIMENSION
@@ -420,6 +421,83 @@ class TestChunkRepositoryVectorSearch:
         result_ids = [r.id for r in results]
         assert chunk2_id in result_ids
         assert all(r.document_id == doc2_id for r in results)
+
+    async def test_vector_search_reports_similarity_not_distance(
+        self,
+        document_repo,
+        chunk_repo,
+        session: AsyncSession,
+    ) -> None:
+        """`score` runs the same direction on both arms: higher is a better match."""
+        doc_id = await _seed_document(
+            document_repo, session, source_url="https://a.com/vs4.pdf"
+        )
+        await _seed_chunk(
+            chunk_repo, session, doc_id, embedding=_unit_vector(0), chunk_index=0
+        )
+        await _seed_chunk(
+            chunk_repo, session, doc_id, embedding=_unit_vector(1), chunk_index=1
+        )
+
+        results = await chunk_repo.vector_search(
+            session, embedding=_unit_vector(0), document_ids=None, limit=10
+        )
+
+        # Identical vector: similarity 1.0, not distance 0.0. Orthogonal: 0.0.
+        assert results[0].score == pytest.approx(1.0)
+        assert results[1].score == pytest.approx(0.0)
+
+    async def test_min_similarity_drops_neighbours_below_the_floor(
+        self,
+        document_repo,
+        chunk_repo,
+        session: AsyncSession,
+    ) -> None:
+        """Nearest is not the same as near.
+
+        Without the floor this scan returns both chunks for any query at all,
+        which is what made an empty search result unreachable.
+        """
+        doc_id = await _seed_document(
+            document_repo, session, source_url="https://a.com/vs5.pdf"
+        )
+        close_id = await _seed_chunk(
+            chunk_repo, session, doc_id, embedding=_unit_vector(0), chunk_index=0
+        )
+        await _seed_chunk(
+            chunk_repo, session, doc_id, embedding=_unit_vector(1), chunk_index=1
+        )
+
+        floored = await chunk_repo.vector_search(
+            session,
+            embedding=_unit_vector(0),
+            document_ids=None,
+            limit=10,
+            min_similarity=0.5,
+        )
+
+        assert [r.id for r in floored] == [close_id]
+
+    async def test_a_floor_nothing_reaches_returns_nothing(
+        self,
+        document_repo,
+        chunk_repo,
+        session: AsyncSession,
+    ) -> None:
+        doc_id = await _seed_document(
+            document_repo, session, source_url="https://a.com/vs6.pdf"
+        )
+        await _seed_chunk(chunk_repo, session, doc_id, embedding=_unit_vector(1))
+
+        results = await chunk_repo.vector_search(
+            session,
+            embedding=_unit_vector(0),
+            document_ids=None,
+            limit=10,
+            min_similarity=0.5,
+        )
+
+        assert results == []
 
 
 class TestChunkRepositoryTextSearch:

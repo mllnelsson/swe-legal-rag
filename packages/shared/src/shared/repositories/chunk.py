@@ -101,14 +101,25 @@ async def vector_search(
     document_ids: list[uuid.UUID] | None,
     limit: int = DEFAULT_SEARCH_LIMIT,
     sections: Sections = None,
+    min_similarity: float | None = None,
 ) -> list[ChunkSearchResult]:
-    distance = Chunk.embedding.cosine_distance(embedding).label("score")
-    stmt = (
-        select(Chunk, distance)
-        .where(Chunk.embedding.isnot(None))
-        .order_by(distance)
-        .limit(limit)
+    """Nearest neighbours by cosine similarity, optionally floored.
+
+    Without ``min_similarity`` this returns ``limit`` rows for *any* query, because
+    a nearest-neighbour scan always has a nearest neighbour — a query about nothing
+    in the corpus still comes back full. The floor is what makes "no chunk is close
+    enough" an expressible outcome; see `search_min_vector_similarity` in
+    `api/config.py` for how the default was calibrated.
+    """
+    distance = Chunk.embedding.cosine_distance(embedding)
+    # Reported as similarity, not distance, so `score` means the same direction on
+    # both arms: higher is a better match.
+    stmt = select(Chunk, (1 - distance).label("score")).where(
+        Chunk.embedding.isnot(None)
     )
+    if min_similarity is not None:
+        stmt = stmt.where(distance <= 1 - min_similarity)
+    stmt = stmt.order_by(distance).limit(limit)
     result = await session.execute(_restrict(stmt, document_ids, sections))
     return [_row_to_search_result(row) for row in result.all()]
 

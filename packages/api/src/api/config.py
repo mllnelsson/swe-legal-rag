@@ -51,6 +51,18 @@ class SearchSettings(BaseSettings):
     # match. The vector arm already matches semantically, and a longer paraphrase
     # tends to blur the embedding rather than sharpen it.
     search_expand_vector_arm: bool = False
+    # Cosine similarity a chunk must reach before the vector arm will return it.
+    #
+    # Without a floor the arm returns `search_arm_limit` neighbours for every
+    # query, however unrelated — nearest is not the same as near — so an empty
+    # result is unreachable and every caller sees a full, confident-looking page.
+    # The fused RRF score cannot expose that, since it is derived from rank.
+    #
+    # The value is model- and corpus-specific rather than a property of the
+    # algorithm, so it is declared in `.env` where it can be tuned per
+    # environment; the default here is what `.env` ships with. The calibration
+    # behind it lives in /retrieval/deterministic-search.md#the-similarity-floor.
+    search_min_vector_similarity: float = 0.78
 
 
 @lru_cache(maxsize=1)

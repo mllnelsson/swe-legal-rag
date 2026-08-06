@@ -57,6 +57,8 @@ def _empty_search_response(limit: int = 10) -> SearchResponse:
             fused_chunk_count=0,
             expanded=False,
             widened_to_appendices=False,
+            vector_similarity_floor=0.78,
+            top_vector_similarity=None,
         ),
     )
 

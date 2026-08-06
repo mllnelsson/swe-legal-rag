@@ -29,6 +29,11 @@ class ChunkSearchResult(BaseModel):
     document_id: uuid.UUID
     chunk_text: str
     chunk_index: int
+    # The arm's own relevance, higher is better on both: cosine *similarity* for
+    # the vector arm (not distance) and `ts_rank` for the text arm. The two are
+    # not comparable to each other — fusion works on rank, not on this number —
+    # but each is comparable across queries, which is what lets a caller tell a
+    # close match from a merely nearest one.
     score: float
     section: ChunkSection = ChunkSection.BODY
     appendix_label: str | None = None

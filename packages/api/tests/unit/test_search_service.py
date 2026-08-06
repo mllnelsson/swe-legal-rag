@@ -21,6 +21,7 @@ def _settings(
     search_candidate_limit: int = 500,
     search_max_query_variants: int = 3,
     search_expand_vector_arm: bool = False,
+    search_min_vector_similarity: float = 0.78,
 ) -> SearchSettings:
     """Search settings with test defaults.
 
@@ -36,18 +37,22 @@ def _settings(
         search_candidate_limit=search_candidate_limit,
         search_max_query_variants=search_max_query_variants,
         search_expand_vector_arm=search_expand_vector_arm,
+        search_min_vector_similarity=search_min_vector_similarity,
     )
 
 
 def _chunk(
-    document_id: uuid.UUID, text: str = "chunk text", index: int = 0
+    document_id: uuid.UUID,
+    text: str = "chunk text",
+    index: int = 0,
+    score: float = 0.5,
 ) -> ChunkSearchResult:
     return ChunkSearchResult(
         id=uuid.uuid4(),
         document_id=document_id,
         chunk_text=text,
         chunk_index=index,
-        score=0.5,
+        score=score,
         section=ChunkSection.BODY,
     )
 
@@ -588,3 +593,165 @@ class TestPaging:
 
         assert result.total == 4
         assert len(result.items) == 2
+
+
+class TestRelevanceSignal:
+    """Whether a caller can tell a real match from the merely nearest paragraph.
+
+    A nearest-neighbour scan always has a nearest neighbour, so without a floor
+    the vector arm answers every query — including one whose words appear nowhere
+    — with a full page. The fused `score` cannot expose that: RRF derives it from
+    rank, so the top hit of any search is `1/(k+1)` regardless of how close the
+    match was.
+    """
+
+    async def test_the_vector_arm_is_asked_for_a_similarity_floor(self):
+        document_id = uuid.uuid4()
+        with (
+            patch("api.services.search_service.chunk_repo") as mock_chunk,
+            patch("api.services.search_service.document_repo") as mock_doc,
+        ):
+            mock_chunk.vector_search = AsyncMock(return_value=[_chunk(document_id)])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+            mock_doc.get_by_id = AsyncMock(return_value=_doc(document_id))
+
+            await search_documents(
+                SearchQuery(query="utlämnande"),
+                MagicMock(),
+                embedding_provider=_embedding_provider(),
+                settings=_settings(search_min_vector_similarity=0.83),
+            )
+
+        assert mock_chunk.vector_search.call_args.kwargs["min_similarity"] == 0.83
+
+    async def test_the_floor_also_applies_to_the_appendix_widening(self):
+        """Otherwise a nonsense query escapes the floor by falling through it."""
+        with (
+            patch("api.services.search_service.chunk_repo") as mock_chunk,
+            patch("api.services.search_service.document_repo"),
+        ):
+            mock_chunk.vector_search = AsyncMock(return_value=[])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+
+            await search_documents(
+                SearchQuery(query="zzzqqq xylofon traktor"),
+                MagicMock(),
+                embedding_provider=_embedding_provider(),
+                settings=_settings(search_min_vector_similarity=0.83),
+            )
+
+        assert mock_chunk.vector_search.await_count == 2
+        for call in mock_chunk.vector_search.call_args_list:
+            assert call.kwargs["min_similarity"] == 0.83
+
+    async def test_a_query_nothing_is_close_to_returns_no_results(self):
+        """The empty result the frontend needs, reachable without a filter.
+
+        Before the floor this was unreachable: only an excluding filter could
+        empty the result set, so a nonsense query looked like a successful search.
+        """
+        with (
+            patch("api.services.search_service.chunk_repo") as mock_chunk,
+            patch("api.services.search_service.document_repo"),
+        ):
+            mock_chunk.vector_search = AsyncMock(return_value=[])
+            mock_chunk.text_search = AsyncMock(return_value=[])
+
+            result = await search_documents(
+                SearchQuery(query="zzzqqq xylofon traktor"),
+                MagicMock(),
+                embedding_provider=_embedding_provider(),
+                settings=_settings(),
+            )
+
+        assert result.items == []
+        assert result.total == 0
+        # Not the filter's doing — which is the distinction the empty state draws.
+        assert result.diagnostics.filter_applied is False
+        assert result.diagnostics.candidate_document_count is None
+        assert result.diagnostics.top_vector_similarity is None
+
+    async def test_each_chunk_carries_the_arm_scores_behind_its_rank(self):
+        document_id = uuid.uuid4()
+        vector_only = _chunk(document_id, text="vector only", score=0.86)
+        both_vector = _chunk(document_id, text="both arms", score=0.81)
+        both_text = ChunkSearchResult(
+            id=both_vector.id,
+            document_id=document_id,
+            chunk_text="both arms",
+            chunk_index=0,
+            score=0.42,
+            section=ChunkSection.BODY,
+        )
+
+        with (
+            patch("api.services.search_service.chunk_repo") as mock_chunk,
+            patch("api.services.search_service.document_repo") as mock_doc,
+        ):
+            mock_chunk.vector_search = AsyncMock(
+                return_value=[vector_only, both_vector]
+            )
+            mock_chunk.text_search = AsyncMock(return_value=[both_text])
+            mock_doc.get_by_id = AsyncMock(return_value=_doc(document_id))
+
+            result = await search_documents(
+                SearchQuery(query="utlämnande"),
+                MagicMock(),
+                embedding_provider=_embedding_provider(),
+                settings=_settings(),
+            )
+
+        by_id = {chunk.chunk_id: chunk for chunk in result.items[0].chunks}
+        assert by_id[vector_only.id].vector_similarity == 0.86
+        assert by_id[vector_only.id].text_score is None
+        assert by_id[both_vector.id].vector_similarity == 0.81
+        assert by_id[both_vector.id].text_score == 0.42
+
+    async def test_diagnostics_report_the_floor_and_the_best_similarity(self):
+        document_id = uuid.uuid4()
+        chunks = [
+            _chunk(document_id, text="närmast", score=0.87),
+            _chunk(document_id, text="svagare", score=0.79),
+        ]
+        with (
+            patch("api.services.search_service.chunk_repo") as mock_chunk,
+            patch("api.services.search_service.document_repo") as mock_doc,
+        ):
+            mock_chunk.vector_search = AsyncMock(return_value=chunks)
+            mock_chunk.text_search = AsyncMock(return_value=[])
+            mock_doc.get_by_id = AsyncMock(return_value=_doc(document_id))
+
+            result = await search_documents(
+                SearchQuery(query="utlämnande"),
+                MagicMock(),
+                embedding_provider=_embedding_provider(),
+                settings=_settings(search_min_vector_similarity=0.78),
+            )
+
+        assert result.diagnostics.vector_similarity_floor == 0.78
+        assert result.diagnostics.top_vector_similarity == 0.87
+
+    async def test_a_text_only_result_reports_no_vector_similarity(self):
+        """The floor emptied the vector arm; the lexical arm still answered."""
+        document_id = uuid.uuid4()
+        with (
+            patch("api.services.search_service.chunk_repo") as mock_chunk,
+            patch("api.services.search_service.document_repo") as mock_doc,
+        ):
+            mock_chunk.vector_search = AsyncMock(return_value=[])
+            mock_chunk.text_search = AsyncMock(
+                return_value=[_chunk(document_id, score=0.31)]
+            )
+            mock_doc.get_by_id = AsyncMock(return_value=_doc(document_id))
+
+            result = await search_documents(
+                SearchQuery(query="sekretess"),
+                MagicMock(),
+                embedding_provider=_embedding_provider(),
+                settings=_settings(),
+            )
+
+        assert len(result.items) == 1
+        assert result.diagnostics.top_vector_similarity is None
+        assert result.items[0].chunks[0].vector_similarity is None
+        assert result.items[0].chunks[0].text_score == 0.31

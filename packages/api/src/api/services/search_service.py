@@ -61,22 +61,38 @@ class SearchQuery(BaseModel):
 
 
 class SearchChunk(BaseModel):
-    """A matched passage, verbatim, with how each arm ranked it."""
+    """A matched passage, verbatim, with how each arm scored and ranked it."""
 
     chunk_id: uuid.UUID
     chunk_index: int
     text: str
     section: ChunkSection
     appendix_label: str | None
+    # Fused rank score. It orders the result and nothing else: RRF derives it from
+    # rank alone, so the top hit of any search scores ~1/(k+1) whether the corpus
+    # answered the question or merely contained the nearest paragraph to it. The
+    # two fields below are the ones that carry relevance.
     score: float
     # None means that arm did not return this chunk at all. Together with
     # `score` they make the fused ordering auditable rather than opaque.
     vector_rank: int | None
     text_rank: int | None
+    # Cosine similarity against the query embedding, at or above
+    # `search_min_vector_similarity`. Comparable across queries, unlike `score`:
+    # this is how a caller tells a close match from a distant one.
+    vector_similarity: float | None
+    # Postgres `ts_rank` over the Swedish tsvector. Comparable within one query
+    # only — ts_rank has no absolute scale — so it explains an ordering rather
+    # than grading a match.
+    text_score: float | None
 
 
 class SearchHit(BaseModel):
-    """One decision, with the passages that matched it."""
+    """One decision, with the passages that matched it.
+
+    ``score`` is the best chunk's fused rank score and carries the same caveat:
+    it orders decisions, it does not grade them. Read ``chunks[0]`` for relevance.
+    """
 
     document_id: uuid.UUID
     case_number: str | None
@@ -105,6 +121,13 @@ class SearchDiagnostics(BaseModel):
     fused_chunk_count: int
     expanded: bool
     widened_to_appendices: bool
+    # The floor the vector arm applied, echoed so a caller can read
+    # `top_vector_similarity` against the bar it had to clear.
+    vector_similarity_floor: float
+    # Best similarity any chunk reached. None means the vector arm returned
+    # nothing — every neighbour fell below the floor, so whatever is in `items`
+    # got there on the text arm alone.
+    top_vector_similarity: float | None
 
 
 class SearchResponse(Page[SearchHit]):
@@ -119,6 +142,8 @@ class _ArmOutcome(BaseModel):
     chunks: dict[uuid.UUID, ChunkSearchResult]
     vector_ranks: dict[uuid.UUID, int]
     text_ranks: dict[uuid.UUID, int]
+    vector_similarities: dict[uuid.UUID, float]
+    text_scores: dict[uuid.UUID, float]
     vector_hit_count: int
     text_hit_counts: dict[str, int]
 
@@ -188,11 +213,17 @@ async def _run_arms(
     candidate_ids: list[uuid.UUID] | None,
     sections: Sections,
     arm_limit: int,
+    min_vector_similarity: float,
 ) -> _ArmOutcome:
     """Every arm of the hybrid search, in parallel, as rankings to fuse."""
     vector_calls = [
         chunk_repo.vector_search(
-            session, embedding, candidate_ids, limit=arm_limit, sections=sections
+            session,
+            embedding,
+            candidate_ids,
+            limit=arm_limit,
+            sections=sections,
+            min_similarity=min_vector_similarity,
         )
         for embedding in query_embeddings
     ]
@@ -210,6 +241,8 @@ async def _run_arms(
     chunks: dict[uuid.UUID, ChunkSearchResult] = {}
     vector_ranks: dict[uuid.UUID, int] = {}
     text_ranks: dict[uuid.UUID, int] = {}
+    vector_similarities: dict[uuid.UUID, float] = {}
+    text_scores: dict[uuid.UUID, float] = {}
 
     for hits in vector_results:
         rankings.append([hit.id for hit in hits])
@@ -218,6 +251,12 @@ async def _run_arms(
             # Best rank across variants: the reported rank is the strongest
             # showing, not whichever arm happened to run last.
             vector_ranks[hit.id] = min(vector_ranks.get(hit.id, rank), rank)
+            # Best score, for the same reason. Kept per arm rather than folded
+            # into one number: cosine similarity and ts_rank have unrelated
+            # scales, and averaging them would invent a unit neither has.
+            vector_similarities[hit.id] = max(
+                vector_similarities.get(hit.id, hit.score), hit.score
+            )
 
     text_hit_counts: dict[str, int] = {}
     for query, hits in zip(queries, text_results, strict=True):
@@ -226,12 +265,15 @@ async def _run_arms(
         for rank, hit in enumerate(hits, start=1):
             chunks.setdefault(hit.id, hit)
             text_ranks[hit.id] = min(text_ranks.get(hit.id, rank), rank)
+            text_scores[hit.id] = max(text_scores.get(hit.id, hit.score), hit.score)
 
     return _ArmOutcome(
         rankings=rankings,
         chunks=chunks,
         vector_ranks=vector_ranks,
         text_ranks=text_ranks,
+        vector_similarities=vector_similarities,
+        text_scores=text_scores,
         vector_hit_count=len({hit.id for hits in vector_results for hit in hits}),
         text_hit_counts=text_hit_counts,
     )
@@ -249,6 +291,8 @@ def _make_search_chunk(
         score=score,
         vector_rank=outcome.vector_ranks.get(chunk.id),
         text_rank=outcome.text_ranks.get(chunk.id),
+        vector_similarity=outcome.vector_similarities.get(chunk.id),
+        text_score=outcome.text_scores.get(chunk.id),
     )
 
 
@@ -314,6 +358,7 @@ def _empty_response(
     expanded: bool,
     filter_applied: bool,
     candidate_document_count: int | None,
+    vector_similarity_floor: float,
 ) -> SearchResponse:
     return SearchResponse(
         items=[],
@@ -329,6 +374,8 @@ def _empty_response(
             fused_chunk_count=0,
             expanded=expanded,
             widened_to_appendices=False,
+            vector_similarity_floor=vector_similarity_floor,
+            top_vector_similarity=None,
         ),
     )
 
@@ -373,6 +420,7 @@ async def search_documents(
                 expanded=False,
                 filter_applied=True,
                 candidate_document_count=0,
+                vector_similarity_floor=settings.search_min_vector_similarity,
             )
 
     queries, expanded = await _resolve_queries(query, settings, llm_provider)
@@ -392,13 +440,16 @@ async def search_documents(
         candidate_ids=candidate_ids,
         sections=sections,
         arm_limit=settings.search_arm_limit,
+        min_vector_similarity=settings.search_min_vector_similarity,
     )
 
     widened = False
     if not outcome.chunks and sections is not None:
         # Nothing in the nämnd's own text matched. Widen once rather than return
         # empty; every chunk carries its section, so the caller can still tell
-        # whose words these are.
+        # whose words these are. With the similarity floor in place this can now
+        # come back empty too — which is the honest answer to a question the
+        # corpus does not address.
         logger.info("No body chunks matched; widening search to appendices")
         outcome = await _run_arms(
             session,
@@ -407,6 +458,7 @@ async def search_documents(
             candidate_ids=candidate_ids,
             sections=None,
             arm_limit=settings.search_arm_limit,
+            min_vector_similarity=settings.search_min_vector_similarity,
         )
         widened = True
 
@@ -440,6 +492,10 @@ async def search_documents(
             fused_chunk_count=len(fused),
             expanded=expanded,
             widened_to_appendices=widened,
+            vector_similarity_floor=settings.search_min_vector_similarity,
+            top_vector_similarity=max(
+                outcome.vector_similarities.values(), default=None
+            ),
         ),
     )
 
