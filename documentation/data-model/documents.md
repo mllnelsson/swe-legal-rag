@@ -4,7 +4,7 @@ title: documents
 description: The document registry — one row per PDF, tracking both identity and progressive ingestion state.
 resource: postgres://documents
 tags: [data-model, table, documents, registry]
-timestamp: 2026-08-04T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # `documents`
@@ -15,7 +15,8 @@ The registry. One row per PDF. Tracks both identity and ingestion progress.
 |---|---|---|
 | id | UUID | PK |
 | source_url | TEXT | Canonical PDF URL, keyed on the CMS document id (`default.aspx?id=...`). Unique constraint — dedup key. |
-| source_document_id | INTEGER | Nullable. CMS `documentId` from the OData listing. Unique constraint — second dedup backstop. Null for rows predating the OData crawler. |
+| source_document_id | INTEGER | Nullable. CMS `documentId` from the OData listing. Unique constraint — a dedup backstop. Null for rows predating the OData crawler. |
+| source_decision_number | VARCHAR | Nullable. The beslutsnummer parsed out of `source_headline` by `shared.source_headline.parse_source_headline`, canonical `N/YYYY` — the same space as `decision_number`. Unique constraint, and the crawl worker's **actual** dedup key: `source_url` and `source_document_id` both identify the listing entry, and the listing once published decision 21/2021 under two of those. Nullable because a headline the parser does not recognise must still be crawlable — Postgres allows repeated `NULL`s under the constraint. See [crawl worker](/pipeline/crawl.md#deduplication-and-idempotency). |
 | source_headline | TEXT | Nullable. Headline from the OData listing, set at crawl time. Stored **verbatim** — its contract is "what the listing said," so it is never split into its beslutsnummer/title parts on write. It corroborates `decision_number` (fallback only, trailer wins) and `category` (fallback only, PDF header wins) at metadata-extraction time; see [document structure](/reference/document-structure.md#corroborating-source-the-crawler-headline). Split only at the point a headline is projected to a client, via `shared.source_headline.headline_title` |
 | source_published_at | TIMESTAMPTZ | Nullable. Publish date from the OData listing, set at crawl time |
 | gcs_uri | TEXT | Nullable. Set after download step |

@@ -4,7 +4,7 @@ title: Decision Document Structure
 description: The anatomy of an Överklagandenämnden decision PDF — header, holding, trailer and appendices — and the anchors the pipeline segments it with.
 resource: packages/shared/src/shared/segmentation.py
 tags: [segmentation, parsing, appendix, bilaga, corpus]
-timestamp: 2026-08-07T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Decision Document Structure
@@ -162,6 +162,33 @@ before it, `worker-metadata` stored `2025-0017` while the extractor yielded
 one corpus decision uses (`Beslut: 23-2026`); both halves are length-bounded and
 word-anchored so the hyphen form cannot swallow an ärendenummer, a date, or a mandate
 period.
+
+### Citing a beslutsnummer the year-first way
+
+A citation can write the same beslutsnummer with its halves the other way round —
+"beslut 2022/15" for decision 15/2022, the order the registry uses in its own listing
+headlines (`Beslut 2022-15`; see [corroborating source](#corroborating-source-the-crawler-headline)
+below). This shape is **not** part of `_DECISION_NUMBER_RE` or `normalize_decision_number`
+— year-first is also the shape an ärendenummer citation has, so reading it as a
+beslutsnummer is only safe once the caller already knows it followed the word "beslut".
+`shared.segmentation.normalize_cited_decision_number`, used by
+[extract](/pipeline/extract.md)'s reference scanner, is the function that applies that
+knowledge; the plain `normalize_decision_number` is unchanged and does not accept this
+form, because the document's own trailer (`Beslut: N/YYYY`) never uses it.
+
+Two citations in the 2020-2026 corpus settle that this is the beslutsnummer space, not
+the ärendenummer one — both readings name a real document, and only one names the right
+one:
+
+- 25/2026, refusing a *begäran om utlämnande*, cites "beslut 2010/06 och 2022/15".
+  Decision 15/2022 is "Utlämnande av handling"; ärende 2022-0015 belongs to a
+  verkställighetsförbud ruling.
+- 23/2022, on beredningens kvalitet *i ett beslutsprövningsärende*, cites "beslut
+  2020/24". Decision 24/2020 is "Beslutsprövning".
+
+Reading the year-first form as an ärendenummer instead would also turn each decision's
+own title line ("Beslut 2020/02") into a bogus outbound citation, where reading it as a
+beslutsnummer makes it the self-reference it already is.
 
 `normalize_case_number` zero-pads the sequence to four digits, so `ÖN 2026-04` stores as
 `2026-0004`. Unpadded, a citation written the long way could never resolve to a document

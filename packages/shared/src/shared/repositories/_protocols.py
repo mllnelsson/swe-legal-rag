@@ -51,6 +51,10 @@ class DocumentRepo(Protocol):
         self,
     ) -> Callable[[AsyncSession, str], Awaitable[DocumentRead | None]]: ...
     @property
+    def get_by_source_decision_number(
+        self,
+    ) -> Callable[[AsyncSession, str], Awaitable[DocumentRead | None]]: ...
+    @property
     def get_by_case_number(
         self,
     ) -> Callable[[AsyncSession, str], Awaitable[DocumentRead | None]]: ...

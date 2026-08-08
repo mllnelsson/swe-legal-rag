@@ -4,7 +4,7 @@ title: Repository Layer
 description: The function-based data-access layer bridging SQLAlchemy models and Pydantic DTOs, injected into services as Protocol-typed namespaces.
 resource: packages/shared/src/shared/repositories
 tags: [data-model, repositories, data-layer, dto, protocol]
-timestamp: 2026-08-07T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Repository Layer
@@ -35,13 +35,19 @@ the session/dependency flow explicit.
 ## Notable functions
 
 - `document.update` — `model_dump(exclude_none=True)`, updating only provided fields
+- `document.get_by_source_decision_number` — lookup by the beslutsnummer the *listing
+  headline* states, unique unlike the two below. This is the crawl worker's actual dedup
+  key: `source_url` and `source_document_id` both identify the listing entry the OData
+  API served, and that listing once published decision 21/2021 under two of those.
 - `document.get_by_case_number` / `document.get_by_decision_number` — lookup by either
-  identifier. Neither is unique in the corpus: an ärendenummer names an *ärende*, and the
-  nämnd rules more than once within one (three decisions can share one case number), and
-  the source listing separately publishes one decision twice under two document ids. Both
-  functions order by `decision_date` (nulls last, then `id`) and return the earliest match
-  rather than raising on a second row — there is no correct row to prefer, but raising
-  failed the *citing* document's extract step over an ambiguity in the document it cited.
+  identifier read from the **PDF itself** (trailer, with a body fallback). Neither is
+  declared unique, for two different reasons: an ärendenummer names an *ärende*, and the
+  nämnd rules more than once within one (three decisions can share one case number);
+  a beslutsnummer really does name one decision, but this column is filled by the
+  metadata step from the PDF's own text, which can misread. Both functions order by
+  `decision_date` (nulls last, then `id`) and return the earliest match rather than
+  raising on a second row — there is no correct row to prefer, but raising failed the
+  *citing* document's extract step over an ambiguity in the document it cited.
 - `task.update_status` — sets `started_at` on `processing`, `completed_at` on
   `completed`/`failed` (compared against `TaskStatus` members)
 - `task.count_by_step_and_status(session)` — `GROUP BY step, status` counts as a

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import (
     SPECIAL_TOKEN_COUNT,
+    close_llm_clients,
     create_embedding_provider,
     create_embedding_ruler,
     get_embedding_prefixes,
@@ -75,6 +76,7 @@ def subscribe() -> QueueSubscriber:
         queue_settings=get_settings().queue,
         handle=handle,
         scope=worker_trace_scope(NAME),
+        teardown=close_llm_clients,
     )
 
 

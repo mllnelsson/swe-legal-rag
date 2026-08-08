@@ -41,7 +41,7 @@ from shared.enums import PipelineStep
 from shared.queue import create_queue_subscriber
 from shared.queue.base import QueueMessage, QueueSubscriber
 
-__all__ = ["MessageScope", "StepHandler", "serve", "subscribe_step"]
+__all__ = ["MessageScope", "StepHandler", "StepTeardown", "serve", "subscribe_step"]
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,12 @@ type StepHandler = Callable[[QueueMessage, AsyncSession], Awaitable[None]]
 # handler spawns.
 type MessageScope = Callable[[QueueMessage], AbstractContextManager[object]]
 
+# Anything else pooled against this message's event loop, released while that
+# loop is still running. Injected rather than imported for the same reason
+# `MessageScope` is: the one caller that needs it is llm-core's HTTP client pool,
+# and `shared` must not depend on llm-core.
+type StepTeardown = Callable[[], Awaitable[None]]
+
 
 def subscribe_step(
     *,
@@ -62,11 +68,15 @@ def subscribe_step(
     queue_settings: QueueSettings,
     handle: StepHandler,
     scope: MessageScope | None = None,
+    teardown: StepTeardown | None = None,
 ) -> QueueSubscriber:
     """Register `handle` for `topic` and return the subscriber, not yet started.
 
     Returning before starting is what lets one process host several workers.
     Call :func:`serve` to block on it.
+
+    `teardown` releases whatever else this worker pooled against the message's
+    loop — a worker that makes LLM calls passes `ai.close_llm_clients`.
     """
     subscriber = create_queue_subscriber(queue_settings)
 
@@ -76,9 +86,12 @@ def subscribe_step(
                 async with get_async_session() as session:
                     await handle(message, session)
             finally:
-                # This loop closes when `asyncio.run` returns, and an asyncpg
-                # connection cannot outlive the loop that opened it: leaving one
-                # pooled hands the next message a connection whose loop is gone.
+                # This loop closes when `asyncio.run` returns, and neither an
+                # asyncpg connection nor an httpx one can outlive the loop that
+                # opened it: leaving one pooled hands the next message a
+                # connection whose loop is gone.
+                if teardown is not None:
+                    await teardown()
                 await dispose_async_engine()
 
         with nullcontext() if scope is None else scope(message):

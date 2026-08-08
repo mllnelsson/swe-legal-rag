@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -71,7 +71,9 @@ lives in the [ai package](/packages/ai.md).
   — no new provider class, and no code change at all. Maps
   `Message`/`ToolDefinition`/`response_schema` to OpenAI's chat-completions shape (tool
   calls, `response_format` json_schema for structured output) and wraps SDK exceptions
-  in `ProviderError`.
+  in `ProviderError`. `__init__` only validates credentials — it does **not** build the
+  SDK client; every call fetches one from `llm_core._clients.get_async_openai()`
+  instead, per [loop-bound clients](#loop-bound-clients-_clientspy) below.
 - **`providers/_null.py`** — `NullProvider`, a provider configured to not exist.
   Constructing it always succeeds: no key, no base URL, no client library, so a process
   whose LLM steps are switched off starts normally instead of dying on a credential it
@@ -92,6 +94,40 @@ the API says it **served** rather than the one configured — hosts resolve alia
 dated builds, and cost must attach to what actually ran. Gemini's thinking tokens are
 folded into output, since they bill at the output rate but are excluded from
 `candidates_token_count`.
+
+## Loop-bound clients (`_clients.py`)
+
+An `AsyncOpenAI` client owns an `httpx` connection pool, and a pooled connection
+belongs to the event loop that opened it — the same rule
+[`shared.db`](/packages/shared.md) already applies to the asyncpg engine. Every worker
+that makes LLM calls runs `asyncio.run()` once per queue message
+([worker patterns](/pipeline/worker-patterns.md)), so a client built once in a
+provider's `__init__` handed the *second* message a connection whose loop had already
+closed: that first attempt failed instantly with no HTTP response, and the SDK's
+generic retry silently absorbed it onto a fresh connection, which was then pooled for
+the next dead loop in turn. The 2020-2026 ingest logged **219 retries against 221
+calls** this way — every one the SDK's first retry, every underlying response `200 OK`.
+
+`get_async_openai(*, api_key, base_url) -> AsyncOpenAI` keys a client cache on
+`(running loop, api_key, base_url)`, so a caller inside a loop always gets the client
+that belongs to it — built once and reused for the rest of that loop's calls, and
+never handed across a loop boundary. `OpenAiCompatibleProvider` and
+[`OpenAiCompatibleEmbeddingProvider`](/packages/ai.md) both call it per request instead
+of holding a client as an attribute. `aclose_async_openai()` is the counterpart to
+`shared.db.dispose_async_engine()`: whoever owns a loop for one unit of work must
+await it before that loop closes, or the pool never actually releases its sockets.
+Skipping it does not leak the cache entry — a closed loop's entry is dropped on the
+next lookup — but it is noisy, since `AsyncOpenAI.__del__` schedules a close on
+whatever loop happens to be running when garbage collection reaches it.
+
+`shared.worker.subscribe_step` takes teardown as an injected `StepTeardown` parameter
+for exactly this reason — `shared` must not depend on `llm-core`, so it cannot call
+`aclose_async_openai()` itself. Every LLM-calling worker (chunk, embed, extract,
+metadata) passes `ai.close_llm_clients`, which awaits it; worker-download and
+worker-parse make no LLM calls and pass no teardown. See [worker
+patterns](/pipeline/worker-patterns.md). A process with one long-lived loop — the API
+server's lifespan — builds one client per set of credentials and keeps its keep-alive
+pool for the process lifetime, exactly as before this existed.
 
 ## Tracing: the hook, never the writer
 

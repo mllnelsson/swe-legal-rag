@@ -1,14 +1,18 @@
 ---
 type: Decision
 title: Embedding model hosting
-description: Where the e5-large embedding model is hosted — Berget.ai hosted inference is the default, replacing any self-hosted option.
+description: Where the e5-large embedding model is hosted — Berget.ai hosted inference rather than any self-hosted option, selected per environment via llm_config.yaml, which ships defaulting to the in-process local fallback.
 tags: [embedding, hosting, berget, infrastructure]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Embedding model hosting
 
-**Status:** Accepted — Berget.ai hosted `e5-large` (`EMBEDDING_PROVIDER=berget`)
+**Status:** Accepted — Berget.ai hosted `e5-large`, selected by setting
+`embedding.provider: berget` in [`llm_config.yaml`](/reference/llm-config.md). The
+config as shipped in this repo defaults `embedding.provider` to `local` instead — see
+[Current default](#current-default) below; the decision to prefer Berget when a key is
+available is unchanged.
 
 The embedding model ([e5-large, 1024 dims](/decisions/embedding-model.md)) is needed at
 both **ingestion time** ([worker-embed](/pipeline/embed.md), batch) and **query time**
@@ -43,15 +47,32 @@ inference provider — instead of self-hosting it anywhere. Rationale:
 5. **Reuses the Berget account/API key** already needed for the LLM provider — no
    separate infrastructure to provision.
 
-**Implementation:** `packages/ai/src/ai/providers/berget_embeddings.py` —
-`BergetEmbeddingProvider` implements `EmbeddingProvider` via
+**Implementation:** `packages/ai/src/ai/providers/openai_compatible_embeddings.py` —
+`OpenAiCompatibleEmbeddingProvider` implements `EmbeddingProvider` via
 `openai.AsyncOpenAI.embeddings.create()` (Berget's inference API is a drop-in OpenAI
-API). Selected via `EMBEDDING_PROVIDER=berget`, reusing `BERGET_API_KEY`. See the
-[ai package](/packages/ai.md).
+API). The class was generalised from an earlier `BergetEmbeddingProvider`/
+`berget_embeddings.py` that took no Berget-specific behaviour — it works against any
+OpenAI-compatible embeddings endpoint, Berget included, chosen by which `providers:`
+entry `embedding.provider` names in `llm_config.yaml`. Reuses `BERGET_API_KEY` when
+that entry is `berget`. See the [ai package](/packages/ai.md).
 
-**Fallback preserved.** `EMBEDDING_PROVIDER=local` (`sentence-transformers` in-process)
-remains fully implemented for offline development and tests that must not depend on
-network access or a Berget API key.
+**Fallback preserved — and, as shipped, the default.**
+`LocalEmbeddingProvider` (`sentence-transformers` in-process) remains fully implemented
+for offline development and tests that must not depend on network access or a Berget
+API key. Selected by `embedding.provider: local` in `llm_config.yaml`, or the
+`EMBEDDING_PROVIDER` env var — which takes an `EmbeddingBackend` **kind**
+(`openai_compatible` or `local`), not a `providers:` name, so `EMBEDDING_PROVIDER=berget`
+is not a valid value. See the [env-var registry](/reference/llm-config.md#env-var-registry).
+
+### Current default
+
+The `llm_config.yaml` checked into this repo ships with `embedding.provider: local`,
+not `berget` — this decision's preference for Berget applies once a `BERGET_API_KEY`
+is configured and `embedding.provider` is pointed at that `providers:` entry, which is
+an environment-specific choice rather than a code default. Nothing above the
+[constraints](#constraints) changes: Berget remains the intended hosted path, `local`
+remains the offline fallback, and this doc's job is only to describe which one the
+shipped config selects.
 
 ## Trade-offs
 

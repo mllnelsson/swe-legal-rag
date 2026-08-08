@@ -4,7 +4,7 @@ title: Crawl Worker
 description: One-shot pipeline entry point — queries the Svenska kyrkan OData API for decisions, deduplicates, and enqueues download tasks.
 resource: packages/worker-crawl
 tags: [pipeline, worker, crawl, odata]
-timestamp: 2026-08-05T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Crawl Worker (`packages/worker-crawl/`)
@@ -50,10 +50,22 @@ reporting an empty crawl.
 ## Deduplication and idempotency
 
 `get_by_source_url()` is checked before creating a document; `source_url` is the
-document-id-keyed `default.aspx?id=...` URL, which is stable across renames. On race
-conditions, `IntegrityError` is caught per-document — the session is rolled back and the
-document counted as skipped. Since the OData listing supplies a stable `documentId`,
-`documents.source_document_id` carries a second unique constraint as a backstop.
+document-id-keyed `default.aspx?id=...` URL, which is stable across renames. But
+`source_url` and `source_document_id` both identify the *listing entry*, not the
+decision — the OData listing itself published decision 21/2021 twice, under ids
+2265536 and 2266136 three days apart, and neither key caught it, so the corpus held
+the same decision twice with its own chunks and entity links. The listing headline
+states the decision's own identity (`Beslut 2021-21 Beslutsprövning`), so once the
+`source_url` check misses, `_store_decision` parses the headline with
+`shared.source_headline.parse_source_headline` and checks
+`document_repo.get_by_source_decision_number` before creating the row, skipping (and
+logging which listing id lost) on a hit. This is what the [`source_decision_number`
+column](/data-model/documents.md) is for. On race conditions, `IntegrityError` is
+caught per-document — the session is rolled back and the document counted as
+skipped. `documents.source_document_id` and `documents.source_decision_number` both
+carry unique constraints as backstops; a headline the parser does not recognise
+leaves `source_decision_number` `NULL`, which repeats freely under Postgres'
+NULL-tolerant UNIQUE.
 
 **A skipped document publishes nothing**, which is what strands a document whose earlier
 run died mid-pipeline: it is already in `documents`, so every later crawl skips it, and

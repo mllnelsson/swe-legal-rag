@@ -3,7 +3,7 @@ type: Concept
 title: Testing Strategy
 description: The two-level (unit + integration) testing approach — what to test, what to mock, how the split is enforced, and the separate database integration tests run against.
 tags: [testing, pytest, strategy]
-timestamp: 2026-08-04T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Testing Strategy
@@ -107,19 +107,23 @@ Every package gets unit tests. Mock at the interface boundary — the abstractio
 - Pub/Sub/queue → mock the queue interface
 
 **LLM/embedding provider unit tests never make live calls.** `GeminiProvider` tests
-mock the `google-genai` SDK client (`test_gemini_mapping.py`);
-`OpenAiCompatibleProvider` and `BergetEmbeddingProvider` tests mock `openai.AsyncOpenAI`
-the same way (`test_openai_compatible_mapping.py`, `test_berget_embedding_provider.py`)
-— construct the provider, replace `provider._client` (or patch `openai.AsyncOpenAI`
-before construction), and assert on the mapped request/response shape. Real API calls to
-Berget or Gemini never happen in unit tests. Composition roots that construct real
-providers at startup (`api/main.py`'s `_lifespan`, worker `__main__.py`/factory
-functions) need a dummy `BERGET_API_KEY` in the test environment for construction to
-succeed — see the `_berget_api_key` autouse fixture in
-`packages/api/tests/unit/conftest.py` and
-`packages/worker-extract/tests/unit/conftest.py`. Constructing an `AsyncOpenAI` client
-makes no network calls by itself; only an actual `.generate()`/`.embed()` call would,
-and those call sites are the ones under test/mocked.
+mock the `google-genai` SDK client (`test_gemini_mapping.py`); `OpenAiCompatibleProvider`
+and `OpenAiCompatibleEmbeddingProvider` tests mock `openai.AsyncOpenAI` the same way
+(`test_openai_compatible_mapping.py`, `test_openai_compatible_embedding_provider.py`) —
+construct the provider, then patch `llm_core._clients.get_async_openai` (each module
+imports it by name, so patch it at the accessor in that module, e.g.
+`_openai_compatible.get_async_openai`) to return a `MagicMock()`, and assert on the
+mapped request/response shape. There is no `provider._client` to replace: a provider
+looks its client up per call, bound to the running loop, rather than holding one built
+at construction — see [loop-bound
+clients](/packages/llm-core.md#loop-bound-clients-_clientspy). Real API calls to Berget
+or Gemini never happen in unit tests. Composition roots that construct real providers at
+startup (`api/main.py`'s `_lifespan`, worker `__main__.py`/factory functions) need a
+dummy `BERGET_API_KEY` in the test environment for construction to succeed — see the
+`_berget_api_key` autouse fixture in `packages/api/tests/unit/conftest.py` and
+`packages/worker-extract/tests/unit/conftest.py`. Constructing a provider makes no
+network calls by itself; only an actual `.generate()`/`.embed()` call would, and those
+call sites are the ones under test/mocked.
 
 **What to assert:**
 - Your service logic given known inputs from mocks

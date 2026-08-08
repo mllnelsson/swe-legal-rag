@@ -26,6 +26,7 @@ def _doc(document_id: uuid.UUID, *, gcs_uri: str | None = "gs://bucket/key"):
         source_url="https://example.com/beslut.pdf",
         source_document_id=None,
         source_headline="Beslut om utlämnande",
+        source_decision_number=None,
         source_published_at=None,
         gcs_uri=gcs_uri,
         raw_text="text",

@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Worker Architecture Patterns
-description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, its per-step progress logging, the subscribe/serve startup split, injected trace scopes, and the commit-before-publish invariant.
+description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, its per-step progress logging, the subscribe/serve startup split, injected trace scopes and teardown, and the commit-before-publish invariant.
 tags: [pipeline, workers, task-envelope, patterns, logging]
-timestamp: 2026-08-05T12:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Worker Architecture Patterns
@@ -107,7 +107,7 @@ six competing sets of signal handlers. It serves exactly one subscriber, at the 
 after crawl has filled the queue; every subscriber fronts the same broker, so pumping
 one pumps all six.
 
-`subscribe_step(*, topic, queue_settings, handle, scope=None)` owns what
+`subscribe_step(*, topic, queue_settings, handle, scope=None, teardown=None)` owns what
 `__main__.py` used to do by hand: it creates the `QueueSubscriber`, and its inner
 `handle_message` opens a fresh `AsyncSession` per message (via `get_async_session()`)
 and calls `handle(message, session)` inside `asyncio.run()`. `handle` is a worker's
@@ -123,6 +123,17 @@ fails with `got Future attached to a different loop` — see
 [shared](/packages/shared.md). The same obligation falls on anything else that owns a
 loop for one unit of work, which is why `worker_crawl.__main__` disposes after its own
 `asyncio.run()` too.
+
+**`teardown`, a `StepTeardown` (`Callable[[], Awaitable[None]]`), releases whatever else
+a worker pooled against the message's loop, in the same `finally` as
+`dispose_async_engine` and before it closes.** An `AsyncOpenAI` client's `httpx`
+connection pool has exactly the same per-loop binding as the asyncpg engine, so a worker
+that makes LLM calls must release it the same way; `shared` must not depend on
+[llm-core](/packages/llm-core.md), so it cannot call that release itself and takes it
+injected instead, the same reason `scope` is injected below. The four LLM-calling
+workers — chunk, embed, extract, metadata — pass `ai.close_llm_clients`; download and
+parse make no LLM calls and pass no `teardown`, same as they pass no `scope`. See [loop-bound
+clients](/packages/llm-core.md#loop-bound-clients-_clientspy).
 
 ## Trace scope injection
 

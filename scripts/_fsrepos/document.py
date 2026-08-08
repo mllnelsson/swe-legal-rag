@@ -19,6 +19,7 @@ async def create(session: AsyncSession, dto: DocumentCreate) -> DocumentRead:
         source_url=dto.source_url,
         source_document_id=dto.source_document_id,
         source_headline=dto.source_headline,
+        source_decision_number=dto.source_decision_number,
         source_published_at=dto.source_published_at,
         gcs_uri=None,
         raw_text=None,
@@ -43,6 +44,19 @@ async def get_by_source_url(
     session: AsyncSession, source_url: str
 ) -> DocumentRead | None:
     return next((d for d in _rows(session) if d.source_url == source_url), None)
+
+
+async def get_by_source_decision_number(
+    session: AsyncSession, source_decision_number: str
+) -> DocumentRead | None:
+    return next(
+        (
+            d
+            for d in _rows(session)
+            if d.source_decision_number == source_decision_number
+        ),
+        None,
+    )
 
 
 async def get_by_case_number(

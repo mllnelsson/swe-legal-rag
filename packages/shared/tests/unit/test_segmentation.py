@@ -14,6 +14,7 @@ from shared.segmentation import (
     TrailerField,
     find_segmentation_gaps,
     normalize_case_number,
+    normalize_cited_decision_number,
     normalize_decision_number,
     parse_keywords,
     parse_trailer_fields,
@@ -376,6 +377,38 @@ class TestNormalizeDecisionNumber:
         assert normalize_case_number("5/2021") is None
         assert normalize_case_number("ÖN 2021/5") == "2021-0005"
         assert normalize_decision_number("ÖN 2021/5") is None
+
+
+class TestNormalizeCitedDecisionNumber:
+    """The year-first spelling, which only a caller reading a citation may apply."""
+
+    def test_the_plain_form_still_wins(self) -> None:
+        assert normalize_cited_decision_number("nämndens beslut 13/2025") == "13/2025"
+
+    def test_the_year_first_form_is_the_same_beslutsnummer(self) -> None:
+        # 25/2026 cites "beslut 2010/06 och 2022/15" for a begäran om utlämnande;
+        # decision 15/2022 is "Utlämnande av handling".
+        assert normalize_cited_decision_number("beslut 2022/15") == "15/2022"
+        assert normalize_cited_decision_number("beslut 2010/06") == "6/2010"
+
+    def test_the_headline_spelling_is_accepted(self) -> None:
+        # The listing writes "Beslut 2020-24" for decision 24/2020, and the PDF's
+        # own title line writes "Beslut 2020/24".
+        assert normalize_cited_decision_number("Beslut 2020-24") == "24/2020"
+
+    def test_a_date_is_not_a_citation(self) -> None:
+        # "Domkapitlets beslut 2025-08-19 § 104" and a line-wrapped "2024-10-\n14".
+        assert normalize_cited_decision_number("beslut 2025-08-19") is None
+        assert normalize_cited_decision_number("beslutet 2024-10-\n14") is None
+
+    def test_a_mandate_period_is_not_a_citation(self) -> None:
+        assert normalize_cited_decision_number("mandatperioden 2026-2029") is None
+
+    def test_the_strict_function_is_left_alone(self) -> None:
+        # Widening `normalize_decision_number` itself would make an ärendenummer
+        # read as a beslutsnummer everywhere the trailer is parsed.
+        assert normalize_decision_number("2022/15") is None
+        assert normalize_case_number("ÖN 2022/15") == "2022-0015"
 
 
 class TestParseKeywords:

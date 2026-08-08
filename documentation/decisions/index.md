@@ -3,7 +3,7 @@
 * [Architectural Decision Register](architectural-register.md) - The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 * [Per-task LLM model and provider selection](llm-model-selection.md) - Why each task gets its own model and provider, declared in llm_config.yaml rather than in environment variables or code.
 * [Embedding model choice](embedding-model.md) - Why intfloat/multilingual-e5-large (1024 dims) was selected for Swedish retrieval.
-* [Embedding model hosting](embedding-hosting.md) - Where the e5-large embedding model is hosted — Berget.ai hosted inference is the default, replacing any self-hosted option.
+* [Embedding model hosting](embedding-hosting.md) - Where the e5-large embedding model is hosted — Berget.ai hosted inference rather than any self-hosted option, selected per environment via llm_config.yaml, which ships defaulting to the in-process local fallback.
 * [Embedding dimension coupling and startup verification](embedding-dimension.md) - Why EMBEDDING_MODEL and EMBEDDING_DIMENSION must change together, and how a startup check guards the mismatch.
 * [Embedding sequence window is observed, not declared](embedding-window.md) - Why the chunk token budget is derived from the embedding model's own tokenizer and its observed sequence window rather than a hand-picked constant, and the arithmetic behind the 349-token chunk budget.
 * [The crawl tag filter is mandatory](tag-filter.md) - Why the crawl query must filter on decision tags — without it the API returns every binary file on the web, not the decision corpus.

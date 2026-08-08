@@ -10,9 +10,25 @@ from llm_core import LLMOperation, Usage, set_trace_recorder
 
 from ai.embedding import EmbeddingConfig, create_embedding_provider
 from ai.errors import MissingApiKeyError
+from ai.providers import openai_compatible_embeddings
 from ai.providers.openai_compatible_embeddings import OpenAiCompatibleEmbeddingProvider
 
 _BASE_URL = "https://api.berget.test/v1"
+
+
+@pytest.fixture(autouse=True)
+def sdk_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """The SDK client the provider will be handed for the running loop.
+
+    Patched at the accessor rather than on the instance: the provider looks its
+    client up per call, because a client outliving its event loop is what caused
+    the ingest's near-100 % retry rate. See `llm_core._clients`.
+    """
+    client = MagicMock()
+    monkeypatch.setattr(
+        openai_compatible_embeddings, "get_async_openai", lambda **_kwargs: client
+    )
+    return client
 
 
 def _make_config(
@@ -32,47 +48,55 @@ def test_missing_api_key_raises() -> None:
         OpenAiCompatibleEmbeddingProvider(config)
 
 
-def test_uses_configured_base_url() -> None:
+async def test_uses_configured_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     """There is no built-in default: the host comes from llm_config.yaml, so a
     provider pointed at nothing is a configuration error, not a silent fallback
     onto whichever host happened to be wired up first."""
-    config = _make_config(base_url="https://example.test/v1")
-    with patch("openai.AsyncOpenAI") as mock_cls:
-        OpenAiCompatibleEmbeddingProvider(config)
-    mock_cls.assert_called_once_with(
-        api_key="test-key", base_url="https://example.test/v1"
+    requested: list[dict[str, object]] = []
+    client = MagicMock()
+    client.embeddings.create = AsyncMock(
+        return_value=SimpleNamespace(data=[SimpleNamespace(embedding=[0.1])])
     )
+
+    def _record(**kwargs: object) -> MagicMock:
+        requested.append(kwargs)
+        return client
+
+    monkeypatch.setattr(openai_compatible_embeddings, "get_async_openai", _record)
+    provider = OpenAiCompatibleEmbeddingProvider(
+        _make_config(base_url="https://example.test/v1")
+    )
+
+    await provider.embed(["a"])
+
+    assert requested == [{"api_key": "test-key", "base_url": "https://example.test/v1"}]
 
 
 @pytest.mark.asyncio
-async def test_embed_returns_vectors() -> None:
-    config = _make_config()
-    with patch("openai.AsyncOpenAI"):
-        provider = OpenAiCompatibleEmbeddingProvider(config)
+async def test_embed_returns_vectors(sdk_client: MagicMock) -> None:
+    provider = OpenAiCompatibleEmbeddingProvider(_make_config())
 
     response = MagicMock()
     response.data = [MagicMock(embedding=[0.1, 0.2]), MagicMock(embedding=[0.3, 0.4])]
-    provider._client.embeddings.create = AsyncMock(return_value=response)
+    sdk_client.embeddings.create = AsyncMock(return_value=response)
 
     result = await provider.embed(["a", "b"])
 
     assert result == [[0.1, 0.2], [0.3, 0.4]]
-    provider._client.embeddings.create.assert_called_once_with(
+    sdk_client.embeddings.create.assert_called_once_with(
         model="intfloat/multilingual-e5-large", input=["a", "b"]
     )
 
 
 @pytest.mark.asyncio
-async def test_empty_input_short_circuits() -> None:
-    config = _make_config()
-    with patch("openai.AsyncOpenAI"):
-        provider = OpenAiCompatibleEmbeddingProvider(config)
-    provider._client.embeddings.create = AsyncMock()
+async def test_empty_input_short_circuits(sdk_client: MagicMock) -> None:
+    provider = OpenAiCompatibleEmbeddingProvider(_make_config())
+    sdk_client.embeddings.create = AsyncMock()
 
     result = await provider.embed([])
 
     assert result == []
-    provider._client.embeddings.create.assert_not_called()
+    sdk_client.embeddings.create.assert_not_called()
 
 
 def test_create_embedding_provider_openai_compatible_dispatch() -> None:
@@ -105,8 +129,7 @@ class TestEmbedTracing:
         set_trace_recorder(None)
 
     def _provider(self):
-        with patch("openai.AsyncOpenAI"):
-            return OpenAiCompatibleEmbeddingProvider(_make_config())
+        return OpenAiCompatibleEmbeddingProvider(_make_config())
 
     def _response(self, **attrs):
         return SimpleNamespace(
@@ -115,9 +138,9 @@ class TestEmbedTracing:
         )
 
     @pytest.mark.asyncio
-    async def test_successful_embed_is_recorded(self, recorder) -> None:
+    async def test_successful_embed_is_recorded(self, recorder, sdk_client) -> None:
         provider = self._provider()
-        provider._client.embeddings.create = AsyncMock(
+        sdk_client.embeddings.create = AsyncMock(
             return_value=self._response(
                 usage=SimpleNamespace(prompt_tokens=812, total_tokens=812),
                 model="intfloat/multilingual-e5-large",
@@ -134,10 +157,12 @@ class TestEmbedTracing:
         assert record.provider == "openai_compatible"
 
     @pytest.mark.asyncio
-    async def test_record_counts_texts_without_storing_them(self, recorder) -> None:
+    async def test_record_counts_texts_without_storing_them(
+        self, recorder, sdk_client
+    ) -> None:
         """Chunk text is already in Postgres; copying it here buys nothing."""
         provider = self._provider()
-        provider._client.embeddings.create = AsyncMock(
+        sdk_client.embeddings.create = AsyncMock(
             return_value=self._response(usage=None, model=None)
         )
 
@@ -151,9 +176,11 @@ class TestEmbedTracing:
         assert record.response_text is None
 
     @pytest.mark.asyncio
-    async def test_failed_embed_is_recorded_and_reraised(self, recorder) -> None:
+    async def test_failed_embed_is_recorded_and_reraised(
+        self, recorder, sdk_client
+    ) -> None:
         provider = self._provider()
-        provider._client.embeddings.create = AsyncMock(
+        sdk_client.embeddings.create = AsyncMock(
             side_effect=RuntimeError("upstream 503")
         )
 
@@ -165,9 +192,9 @@ class TestEmbedTracing:
         assert record.error_type == "RuntimeError"
 
     @pytest.mark.asyncio
-    async def test_empty_input_records_nothing(self, recorder) -> None:
+    async def test_empty_input_records_nothing(self, recorder, sdk_client) -> None:
         provider = self._provider()
-        provider._client.embeddings.create = AsyncMock()
+        sdk_client.embeddings.create = AsyncMock()
 
         await provider.embed([])
 

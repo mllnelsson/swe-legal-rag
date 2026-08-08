@@ -19,10 +19,26 @@ from llm_core._types import (
     ToolDefinition,
     Usage,
 )
+from llm_core.providers import _openai_compatible
 from llm_core.providers._openai_compatible import (
     OpenAiCompatibleProvider,
     _usage_from_openai,
 )
+
+
+@pytest.fixture(autouse=True)
+def sdk_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """The SDK client the provider will be handed for the running loop.
+
+    Patched at the accessor rather than on the instance: the provider looks its
+    client up per call, because a client outliving its event loop is what caused
+    the ingest's near-100 % retry rate. See `llm_core._clients`.
+    """
+    client = MagicMock()
+    monkeypatch.setattr(
+        _openai_compatible, "get_async_openai", lambda **_kwargs: client
+    )
+    return client
 
 
 def _make_provider(stream_usage: bool = True) -> OpenAiCompatibleProvider:
@@ -30,7 +46,8 @@ def _make_provider(stream_usage: bool = True) -> OpenAiCompatibleProvider:
     provider._model = "test-model"
     provider._temperature = 0.0
     provider._max_tokens = None
-    provider._client = MagicMock()
+    provider._api_key = "test-key"
+    provider._base_url = "https://example.invalid/v1"
     provider._provider_name = ProviderKind.OPENAI_COMPATIBLE
     provider._stream_usage = stream_usage
     return provider
@@ -207,54 +224,58 @@ class TestFromOpenaiMessage:
 
 class TestGenerate:
     @pytest.mark.asyncio
-    async def test_generate_wraps_sdk_errors(self) -> None:
+    async def test_generate_wraps_sdk_errors(self, sdk_client: MagicMock) -> None:
         provider = _make_provider()
-        provider._client.chat.completions.create = AsyncMock(
-            side_effect=RuntimeError("boom")
-        )
+        sdk_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(ProviderError):
             await provider.generate([Message(role=Role.user, content="hi")])
 
     @pytest.mark.asyncio
-    async def test_generate_returns_mapped_response(self) -> None:
+    async def test_generate_returns_mapped_response(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider()
         message = MagicMock()
         message.content = "answer"
         message.tool_calls = None
         response = MagicMock()
         response.choices = [MagicMock(message=message)]
-        provider._client.chat.completions.create = AsyncMock(return_value=response)
+        sdk_client.chat.completions.create = AsyncMock(return_value=response)
 
         result = await provider.generate([Message(role=Role.user, content="hi")])
 
         assert result.message.content == "answer"
-        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        call_kwargs = sdk_client.chat.completions.create.call_args.kwargs
         assert call_kwargs["model"] == "test-model"
         assert call_kwargs["tools"] is omit
         assert call_kwargs["response_format"] is omit
 
     @pytest.mark.asyncio
-    async def test_generate_with_response_schema_sets_response_format(self) -> None:
+    async def test_generate_with_response_schema_sets_response_format(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider()
         message = MagicMock()
         message.content = '{"ranked_indices": [0, 1]}'
         message.tool_calls = None
         response = MagicMock()
         response.choices = [MagicMock(message=message)]
-        provider._client.chat.completions.create = AsyncMock(return_value=response)
+        sdk_client.chat.completions.create = AsyncMock(return_value=response)
 
         await provider.generate(
             [Message(role=Role.user, content="hi")],
             response_schema=_RerankResult,
         )
 
-        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        call_kwargs = sdk_client.chat.completions.create.call_args.kwargs
         assert call_kwargs["response_format"]["type"] == "json_schema"
 
 
 class TestGenerateStream:
     @pytest.mark.asyncio
-    async def test_generate_stream_yields_text_chunks(self) -> None:
+    async def test_generate_stream_yields_text_chunks(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider()
 
         async def _fake_stream():
@@ -266,9 +287,7 @@ class TestGenerateStream:
             empty_chunk.choices = [MagicMock(delta=MagicMock(content=None))]
             yield empty_chunk
 
-        provider._client.chat.completions.create = AsyncMock(
-            return_value=_fake_stream()
-        )
+        sdk_client.chat.completions.create = AsyncMock(return_value=_fake_stream())
 
         chunks = [
             chunk
@@ -281,11 +300,11 @@ class TestGenerateStream:
         assert all(isinstance(c, StreamChunk) for c in chunks)
 
     @pytest.mark.asyncio
-    async def test_generate_stream_wraps_sdk_errors(self) -> None:
+    async def test_generate_stream_wraps_sdk_errors(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider()
-        provider._client.chat.completions.create = AsyncMock(
-            side_effect=RuntimeError("boom")
-        )
+        sdk_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(ProviderError):
             await provider.generate_stream([Message(role=Role.user, content="hi")])
 
@@ -305,7 +324,9 @@ class TestUsageMapping:
 
 class TestResponseAttribution:
     @pytest.mark.asyncio
-    async def test_generate_attaches_usage_model_and_provider(self) -> None:
+    async def test_generate_attaches_usage_model_and_provider(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider()
         message = SimpleNamespace(content="answer", tool_calls=None)
         response = SimpleNamespace(
@@ -313,7 +334,7 @@ class TestResponseAttribution:
             usage=_make_usage(10, 4, 14),
             model="test-model-2026-07-01",
         )
-        provider._client.chat.completions.create = AsyncMock(return_value=response)
+        sdk_client.chat.completions.create = AsyncMock(return_value=response)
 
         result = await provider.generate([Message(role=Role.user, content="hi")])
 
@@ -322,11 +343,13 @@ class TestResponseAttribution:
         assert result.provider == ProviderKind.OPENAI_COMPATIBLE
 
     @pytest.mark.asyncio
-    async def test_model_falls_back_to_the_configured_name(self) -> None:
+    async def test_model_falls_back_to_the_configured_name(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider()
         message = SimpleNamespace(content="answer", tool_calls=None)
         response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
-        provider._client.chat.completions.create = AsyncMock(return_value=response)
+        sdk_client.chat.completions.create = AsyncMock(return_value=response)
 
         result = await provider.generate([Message(role=Role.user, content="hi")])
 
@@ -354,16 +377,16 @@ class TestStreamUsage:
         ]
 
     @pytest.mark.asyncio
-    async def test_final_usage_chunk_is_not_dropped(self) -> None:
+    async def test_final_usage_chunk_is_not_dropped(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider()
 
         async def _fake_stream():
             yield self._text_chunk("Hej")
             yield self._usage_chunk()
 
-        provider._client.chat.completions.create = AsyncMock(
-            return_value=_fake_stream()
-        )
+        sdk_client.chat.completions.create = AsyncMock(return_value=_fake_stream())
 
         chunks = await self._collect(provider)
 
@@ -374,45 +397,45 @@ class TestStreamUsage:
         assert chunks[-1].model == "served"
 
     @pytest.mark.asyncio
-    async def test_choiceless_chunk_without_usage_is_still_skipped(self) -> None:
+    async def test_choiceless_chunk_without_usage_is_still_skipped(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider()
 
         async def _fake_stream():
             yield SimpleNamespace(choices=[])
             yield self._text_chunk("Hej")
 
-        provider._client.chat.completions.create = AsyncMock(
-            return_value=_fake_stream()
-        )
+        sdk_client.chat.completions.create = AsyncMock(return_value=_fake_stream())
 
         assert [c.text for c in await self._collect(provider)] == ["Hej"]
 
     @pytest.mark.asyncio
-    async def test_stream_options_requested_when_enabled(self) -> None:
+    async def test_stream_options_requested_when_enabled(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider(stream_usage=True)
 
         async def _fake_stream():
             yield self._text_chunk("Hej")
 
-        provider._client.chat.completions.create = AsyncMock(
-            return_value=_fake_stream()
-        )
+        sdk_client.chat.completions.create = AsyncMock(return_value=_fake_stream())
         await provider.generate_stream([Message(role=Role.user, content="hi")])
 
-        kwargs = provider._client.chat.completions.create.call_args.kwargs
+        kwargs = sdk_client.chat.completions.create.call_args.kwargs
         assert kwargs["stream_options"] == {"include_usage": True}
 
     @pytest.mark.asyncio
-    async def test_stream_options_omitted_when_disabled(self) -> None:
+    async def test_stream_options_omitted_when_disabled(
+        self, sdk_client: MagicMock
+    ) -> None:
         provider = _make_provider(stream_usage=False)
 
         async def _fake_stream():
             yield self._text_chunk("Hej")
 
-        provider._client.chat.completions.create = AsyncMock(
-            return_value=_fake_stream()
-        )
+        sdk_client.chat.completions.create = AsyncMock(return_value=_fake_stream())
         await provider.generate_stream([Message(role=Role.user, content="hi")])
 
-        kwargs = provider._client.chat.completions.create.call_args.kwargs
+        kwargs = sdk_client.chat.completions.create.call_args.kwargs
         assert kwargs["stream_options"] is omit

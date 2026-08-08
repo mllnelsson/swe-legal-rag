@@ -4,7 +4,7 @@ title: Extract Worker
 description: Subscriber worker that extracts entities, declared keywords, and cross-references from document text into the graph-in-Postgres tables, then enqueues chunk tasks.
 resource: packages/worker-extract
 tags: [pipeline, worker, extract, entities, keywords, references, graph]
-timestamp: 2026-08-07T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Extract Worker (`packages/worker-extract/`)
@@ -148,16 +148,39 @@ Pure functions, no I/O:
 - **Legal concepts:** exact-word lookup from a known set (`överklagande`, `behörighet`,
   `jäv`, `verkställighet`, `tjänstetillsättning`, `överklaganderätt`,
   `tjänsteförseelse`, `disciplinärende`) with the same inflection handling
-- **Cross-references:** two identifier spaces, both canonicalised by
-  `shared.segmentation`, both scanned in **`segments.body` only**:
-  - `_CASE_REF_RE` matches `ÖN YYYY-NNNN` with optional `dnr` prefix → `YYYY-NNNN`
-  - `_DECISION_REF_RE` matches `beslut N/YYYY`, and the hyphen spelling `beslut N-YYYY`
-    one corpus decision uses → `N/YYYY`
+- **Cross-references:** two identifier spaces, both scanned in **`segments.body`
+  only**. A citation is an **anchor word followed by a list**, not a single number: the
+  corpus writes "nämndens beslut 13/2011, 31/2011 och 16/2015", and a pattern requiring
+  the anchor before every item found only the first. `_cited_identifiers()` matches the
+  anchor once, then walks the identifiers after it while a separator
+  (`,`/`och`/`samt`/`respektive`, `_REF_LIST_SEPARATOR_RE`) keeps introducing another —
+  every item shares the anchor's own sentence as `reference_context`, since the second
+  item of a list has no context of its own worth keeping. One line break is tolerated
+  wherever a space is, because the PDF wraps mid-list.
+  - `_CASE_ANCHOR_RE`/`_CASE_IDENT_RE` — `ÖN`, optionally preceded by `ärende(t/n)` and
+    followed by `dnr`, then `YYYY-NNNN` → canonicalised by `normalize_case_number`.
+  - `_DECISION_ANCHOR_RE`/`_DECISION_IDENT_RE` — `beslut(et/en)`, then a beslutsnummer in
+    either order the corpus writes it: number-first (`13/2025`, and the hyphen spelling
+    `13-2025`) or **year-first** (`2022/15`) — the order the registry's own listing
+    headlines use (see [corroborating source: the crawler
+    headline](/reference/document-structure.md#corroborating-source-the-crawler-headline)).
+    Canonicalised by `shared.segmentation.normalize_cited_decision_number`, which is why
+    the anchor is not optional: year-first has the same shape as an ärendenummer
+    citation, and only the anchor word says which space it is in. See [identifier
+    spaces](/reference/document-structure.md#identifier-spaces) for the corpus evidence
+    that this reads as beslutsnummer, not ärendenummer.
 
-  The surrounding sentence is kept as `reference_context`. Excluding the trailer is what
-  stops a decision citing itself: it holds the document's own `Ärendenummer:` and
-  `Beslut:` lines. Excluding appendices matters because a citation there is the *lower
-  instance* citing something, not Överklagandenämnden.
+  Both identifier patterns keep the guard `shared.segmentation` already applies — a
+  following date component disqualifies the match (`beslutet 2024-10-\n14` is a date,
+  not decision 10/2024) — using `\s*` rather than `[ \t]*` because the corpus wraps a
+  citation across that exact boundary.
+
+  Measured over all 185 corpus documents: identifiers extracted rise from 54 to 116, with
+  zero previously-found citations lost.
+
+  Excluding the trailer is what stops a decision citing itself: it holds the document's
+  own `Ärendenummer:` and `Beslut:` lines. Excluding appendices matters because a
+  citation there is the *lower instance* citing something, not Överklagandenämnden.
 - **Relevance:** entities found in `segments.holding` are `primary`; everything else in
   the body is `mentioned`. Entities are also extracted from **appendices**, always as
   `mentioned` — the appealed decision's entities stay findable via the pre-filter but can

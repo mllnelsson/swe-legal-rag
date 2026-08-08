@@ -9,6 +9,7 @@ from shared.dtos.task import TaskCreate
 from shared.enums import PipelineStep, TaskStatus
 from shared.queue.base import QueueMessage, QueuePublisher
 from shared.repositories import DocumentRepo, TaskRepo
+from shared.source_headline import parse_source_headline
 from worker_crawl._protocols import DecisionSource
 from worker_crawl.odata import DecisionListing, ODataConfig
 from worker_crawl.tags import parse_tag_index, select_tag_ids
@@ -97,6 +98,25 @@ async def _store_decision(
     if existing is not None:
         return False
 
+    # The URL and the document id both identify the *listing entry*. The listing
+    # published 21/2021 twice, under ids 2265536 and 2266136 three days apart,
+    # and neither key saw it: the corpus held the same decision twice, with its
+    # own chunks, its own entity links and its own place in every search result.
+    # The headline states the decision's own identity, so that is what decides.
+    parsed_headline = parse_source_headline(listing.headline)
+    if parsed_headline is not None:
+        duplicate = await document_repo.get_by_source_decision_number(
+            session, parsed_headline.decision_number
+        )
+        if duplicate is not None:
+            logger.info(
+                "Decision %s already crawled as document %s; skipping listing %d",
+                parsed_headline.decision_number,
+                duplicate.source_document_id,
+                listing.document_id,
+            )
+            return False
+
     try:
         doc = await document_repo.create(
             session,
@@ -104,12 +124,16 @@ async def _store_decision(
                 source_url=url,
                 source_document_id=listing.document_id,
                 source_headline=listing.headline,
+                source_decision_number=(
+                    parsed_headline.decision_number if parsed_headline else None
+                ),
                 source_published_at=listing.published_at,
             ),
         )
     except IntegrityError:
-        # Raced with another run, or the same document reachable under a second URL --
-        # the uq_documents_source_document_id constraint is the backstop.
+        # Raced with another run, or the same decision reachable under a second
+        # listing entry -- uq_documents_source_document_id and
+        # uq_documents_source_decision_number are the backstops.
         await session.rollback()
         return False
 

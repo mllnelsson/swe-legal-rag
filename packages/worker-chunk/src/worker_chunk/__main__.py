@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import (
+    close_llm_clients,
     create_embedding_ruler,
     get_embedding_prefixes,
     install_file_tracing,
@@ -86,6 +87,7 @@ def subscribe() -> QueueSubscriber:
         queue_settings=settings.queue,
         handle=handle,
         scope=worker_trace_scope(NAME),
+        teardown=close_llm_clients,
     )
 
 

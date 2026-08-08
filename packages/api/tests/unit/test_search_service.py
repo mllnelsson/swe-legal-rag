@@ -64,6 +64,7 @@ def _doc(document_id: uuid.UUID) -> DocumentRead:
         source_url="https://example.com/beslut.pdf",
         source_document_id=None,
         source_headline="Beslut om utlämnande",
+        source_decision_number=None,
         source_published_at=None,
         gcs_uri="gs://bucket/key",
         raw_text="text",

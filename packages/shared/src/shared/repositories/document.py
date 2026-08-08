@@ -35,6 +35,24 @@ async def get_by_source_url(
     return DocumentRead.model_validate(doc) if doc else None
 
 
+async def get_by_source_decision_number(
+    session: AsyncSession, source_decision_number: str
+) -> DocumentRead | None:
+    """Look up by the beslutsnummer the *listing headline* states.
+
+    The crawl dedup key. Unique, unlike `decision_number` — this one is read from
+    the listing before anything is downloaded, and one beslutsnummer is one
+    decision however many listing entries point at it.
+    """
+    result = await session.execute(
+        select(Document).where(
+            Document.source_decision_number == source_decision_number
+        )
+    )
+    doc = result.scalar_one_or_none()
+    return DocumentRead.model_validate(doc) if doc else None
+
+
 async def get_by_case_number(
     session: AsyncSession, case_number: str
 ) -> DocumentRead | None:
@@ -60,9 +78,16 @@ async def get_by_decision_number(
     """Look up by beslutsnummer ("1/2026") rather than ärendenummer.
 
     Decisions cite each other in both identifier spaces, so reference resolution
-    has to try both. Not unique either, for a different reason: the source listing
-    publishes decision 21/2021 twice, under two document ids, with byte-identical
-    text. See `get_by_case_number` for why that is answered rather than raised on.
+    has to try both.
+
+    Not declared unique, and not for `get_by_case_number`'s reason: a
+    beslutsnummer really does name one decision. The corpus once held 21/2021
+    twice because the listing published it under two document ids and crawl
+    de-duplicated on the id — a defect now prevented at the source by
+    `get_by_source_decision_number`. The tolerance stays because this column is
+    filled by the metadata step from the PDF's own text, which can misread, and
+    failing a *citing* document's extract over that is worse than answering with
+    the earliest match. See `get_by_case_number`.
     """
     return await _first_matching(session, Document.decision_number == decision_number)
 

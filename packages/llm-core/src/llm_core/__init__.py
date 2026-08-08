@@ -1,3 +1,4 @@
+from llm_core._clients import aclose_async_openai, get_async_openai
 from llm_core._config import LLMConfig, ProviderKind, create_provider
 from llm_core._exceptions import (
     LLMDisabledError,
@@ -70,6 +71,10 @@ __all__ = [
     "ToolExecutor",
     "ToolCallCallback",
     "ToolResultCallback",
+    # For callers that build their own OpenAI-compatible client — embeddings,
+    # say — and must not outlive the loop its connection pool belongs to.
+    "get_async_openai",
+    "aclose_async_openai",
     "LLMError",
     "ProviderError",
     "MissingCredentialError",

@@ -5,7 +5,7 @@ import logging
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai import install_file_tracing, worker_trace_scope
+from ai import install_file_tracing, close_llm_clients, worker_trace_scope
 from shared.config import get_settings
 from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher
@@ -59,6 +59,7 @@ def subscribe() -> QueueSubscriber:
         queue_settings=settings.queue,
         handle=handle,
         scope=worker_trace_scope(NAME),
+        teardown=close_llm_clients,
     )
 
 

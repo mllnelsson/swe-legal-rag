@@ -62,7 +62,7 @@ from ai.tokenization import (
     create_embedding_ruler,
     verify_embedding_window,
 )
-from ai.worker import worker_trace_scope
+from ai.worker import close_llm_clients, worker_trace_scope
 
 __all__ = [
     # Observability. Every process making LLM calls installs tracing once at
@@ -71,6 +71,7 @@ __all__ = [
     "LLMTraceConfig",
     "trace_context",
     "worker_trace_scope",
+    "close_llm_clients",
     # Service functions
     "decompose_query",
     "expand_query",

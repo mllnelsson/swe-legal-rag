@@ -20,6 +20,7 @@ def _make_doc_read(
         source_url="https://example.com/doc.pdf",
         source_document_id=None,
         source_headline=None,
+        source_decision_number=None,
         source_published_at=None,
         gcs_uri=gcs_uri,
         raw_text=None,

@@ -15,23 +15,59 @@ appealed decision as an appendix (see :mod:`shared.segmentation`):
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
 from ai.dtos import EntityResult, ExtractedEntity, ExtractedReference
 from shared.enums import EntityRelevance, EntityType
 from shared.segmentation import (
     DocumentSegments,
     normalize_case_number,
-    normalize_decision_number,
+    normalize_cited_decision_number,
 )
 from worker_extract.entities import deduplicate_entities
 
-# "ÖN 2025-0017" / "ÖN dnr 2025-0017" — the ärendenummer space.
-_CASE_REF_RE = re.compile(r"\bÖN\s+(?:dnr\s+)?\d{4}[-–]\d{3,}\b", re.IGNORECASE)
+# A citation is an anchor word followed by a list of numbers. Both halves matter:
+#
+#   * The **anchor** is what picks the identifier space, because the two spaces
+#     share a shape — "ÖN 2020-36" is ärende 2020-0036 while "beslut 2020-36" is
+#     decision 36/2020. It is also what keeps bare fractions and dates in prose
+#     from being read as citations at all.
+#   * The **list** is what the previous single-shot patterns missed. The corpus
+#     writes "nämndens beslut 13/2011, 31/2011 och 16/2015", and requiring the
+#     anchor before every item found only the first — 54 references over the
+#     2020-2026 corpus where scanning the list finds 116.
+#
+# The PDF wraps mid-list, so one line break is allowed wherever a space is.
+_REF_GAP = r"[ \t]*\n?[ \t]*"
+_REF_SEPARATOR = r"[ \t]*[/–-][ \t]*"
+# The guards `shared.segmentation` already applies: a following date component
+# disqualifies the match, so "beslutet 2024-10-\n14" is a date, not decision
+# 10/2024. `\s` and not `[ \t]`, precisely because the line may break there.
+_REF_NOT_A_DATE = r"\b(?![-–/]\s*\d)"
 
-# "beslut 13/2025", and the hyphen spelling one decision uses. Requires the
-# leading word so bare fractions and dates in prose are not mistaken for citations.
-_DECISION_REF_RE = re.compile(
-    r"\bbeslut(?:et)?\s+(\d{1,3}\s*[/-]\s*\d{4})\b", re.IGNORECASE
+# "ÖN 2025-0017", "ÖN dnr 2025-0017", "ärende ÖN 2022/2" — the ärendenummer space.
+_CASE_ANCHOR_RE = re.compile(
+    rf"\b(?:ärende[nt]?{_REF_GAP})?ÖN{_REF_GAP}(?:dnr{_REF_GAP})?", re.IGNORECASE
+)
+_CASE_IDENT_RE = re.compile(
+    rf"\d{{4}}{_REF_SEPARATOR}(?!(?:19|20)\d{{2}}\b)\d{{1,4}}{_REF_NOT_A_DATE}"
+)
+
+# "beslut 13/2025", the hyphen spelling one decision uses, and the year-first
+# spelling the registry uses in its own headlines — see
+# `shared.segmentation.normalize_cited_decision_number` for why that is a
+# beslutsnummer and not an ärendenummer.
+_DECISION_ANCHOR_RE = re.compile(rf"\bbeslut(?:et|en)?{_REF_GAP}", re.IGNORECASE)
+_DECISION_IDENT_RE = re.compile(
+    rf"(?:\d{{1,3}}{_REF_SEPARATOR}(?:19|20)\d{{2}}"
+    rf"|(?:19|20)\d{{2}}{_REF_SEPARATOR}\d{{1,3}}){_REF_NOT_A_DATE}"
+)
+
+# What continues a list rather than ending it: "25/2007, 06/2008 och 14/2016".
+# The conjunctions are word-anchored so none of them can match the front of a
+# longer word; the comma needs no such guard.
+_REF_LIST_SEPARATOR_RE = re.compile(
+    rf"{_REF_GAP}(?:,|(?:och|samt|respektive)\b){_REF_GAP}", re.IGNORECASE
 )
 
 # Kyrkoordningen is cited by two names and in both orders. Measured over the
@@ -182,30 +218,50 @@ _NON_NAME_WORDS = _KNOWN_ROLES | frozenset(
 def extract_references(segments: DocumentSegments) -> list[ExtractedReference]:
     """Find citations to other decisions, in either identifier space.
 
-    Both spellings are canonicalised so `reference_service` can resolve them
-    against `documents.case_number` / `documents.decision_number`. The two formats
-    are disjoint, so the canonical string alone says which column to try.
+    Every spelling is canonicalised so `reference_service` can resolve it against
+    `documents.case_number` / `documents.decision_number`. The canonical forms are
+    disjoint, so the resulting string alone says which column to try.
     """
     references: list[ExtractedReference] = []
     seen: set[str] = set()
 
     matchers = (
-        (_CASE_REF_RE, normalize_case_number),
-        (_DECISION_REF_RE, normalize_decision_number),
+        (_CASE_ANCHOR_RE, _CASE_IDENT_RE, normalize_case_number),
+        (_DECISION_ANCHOR_RE, _DECISION_IDENT_RE, normalize_cited_decision_number),
     )
-    for pattern, normalize in matchers:
-        for match in pattern.finditer(segments.body):
-            case_number = normalize(match.group(0))
-            if case_number is None or case_number in seen:
+    for anchor, ident, normalize in matchers:
+        for start, cited in _cited_identifiers(segments.body, anchor, ident):
+            canonical = normalize(cited)
+            if canonical is None or canonical in seen:
                 continue
-            seen.add(case_number)
+            seen.add(canonical)
             references.append(
                 ExtractedReference(
-                    case_number=case_number,
-                    reference_context=_extract_sentence(segments.body, match.start()),
+                    case_number=canonical,
+                    reference_context=_extract_sentence(segments.body, start),
                 )
             )
     return references
+
+
+def _cited_identifiers(
+    body: str, anchor: re.Pattern[str], ident: re.Pattern[str]
+) -> Iterator[tuple[int, str]]:
+    """Every identifier an anchor introduces, including the rest of its list.
+
+    Yields the anchor's own offset with each one so the whole list shares the
+    sentence that introduced it — the second item of "beslut 25/2007, 06/2008"
+    has no context of its own worth keeping.
+    """
+    for match in anchor.finditer(body):
+        position = match.end()
+        while (cited := ident.match(body, position)) is not None:
+            yield match.start(), cited.group(0)
+            position = cited.end()
+            separator = _REF_LIST_SEPARATOR_RE.match(body, position)
+            if separator is None:
+                break
+            position = separator.end()
 
 
 def extract_entities_rule_based(segments: DocumentSegments) -> list[ExtractedEntity]:

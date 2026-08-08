@@ -4,7 +4,7 @@ title: Crawl Source — Svenska kyrkan OData API
 description: Authoritative reference for where Överklagandenämnden decisions come from and why the crawl worker is shaped the way it is.
 resource: https://www.svenskakyrkan.se/webapi/api-v3/odata/
 tags: [crawl, odata, source, svenska-kyrkan]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Crawl Source — Svenska kyrkan OData API
@@ -144,6 +144,15 @@ without it every download fails on a 302.
 The listing also yields `documentId`, `headline` and `publishDate`, persisted as
 `source_document_id` (unique), `source_headline` and `source_published_at`. See the
 [documents table](/data-model/documents.md).
+
+`source_url` and `source_document_id` both identify the *listing entry* the crawler
+saw, not the decision itself — the listing published decision 21/2021 twice, under
+ids 2265536 and 2266136 three days apart, and the corpus held it twice as a result.
+The crawl worker's actual dedup key is the beslutsnummer parsed out of `headline` by
+`shared.source_headline.parse_source_headline`, stored as
+`documents.source_decision_number` (unique, nullable): `_store_decision` checks it
+after the `source_url` lookup misses and skips the listing entry on a hit. See
+[deduplication and idempotency](/pipeline/crawl.md#deduplication-and-idempotency).
 
 ## Module layout
 

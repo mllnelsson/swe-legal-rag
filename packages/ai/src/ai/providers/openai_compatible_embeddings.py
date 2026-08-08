@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from llm_core import LLMOperation, Usage, trace_context, trace_outcome, traced_call
+from llm_core import (
+    LLMOperation,
+    Usage,
+    get_async_openai,
+    trace_context,
+    trace_outcome,
+    traced_call,
+)
 
 from ai.errors import MissingApiKeyError
 
@@ -35,8 +42,6 @@ def _usage_from_embeddings(usage: Any) -> Usage | None:
 
 class OpenAiCompatibleEmbeddingProvider:
     def __init__(self, config: EmbeddingConfig) -> None:
-        from openai import AsyncOpenAI
-
         if not config.api_key:
             raise MissingApiKeyError(
                 "An API key is required for OpenAiCompatibleEmbeddingProvider. "
@@ -44,10 +49,10 @@ class OpenAiCompatibleEmbeddingProvider:
                 "LLM_API_KEY."
             )
 
-        self._client = AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=config.base_url,
-        )
+        # Credentials here, client per call: its connection pool cannot outlive
+        # the event loop that filled it. See `llm_core._clients`.
+        self._api_key = config.api_key
+        self._base_url = config.base_url
         self._model = config.model
         self._provider_name = config.provider
 
@@ -67,9 +72,8 @@ class OpenAiCompatibleEmbeddingProvider:
                 LLMOperation.embed, model=self._model, provider=self._provider_name
             ) as trace,
         ):
-            response = await self._client.embeddings.create(
-                model=self._model, input=texts
-            )
+            client = get_async_openai(api_key=self._api_key, base_url=self._base_url)
+            response = await client.embeddings.create(model=self._model, input=texts)
             trace_outcome(
                 trace,
                 usage=_usage_from_embeddings(getattr(response, "usage", None)),

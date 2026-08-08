@@ -33,6 +33,7 @@ def _mock_document(**kwargs):
         source_url="https://example.com",
         source_document_id=None,
         source_headline=None,
+        source_decision_number=None,
         source_published_at=None,
         gcs_uri=None,
         raw_text=None,

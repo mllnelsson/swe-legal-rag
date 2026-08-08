@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -26,7 +26,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `providers/openai_compatible_embeddings.py` | `OpenAiCompatibleEmbeddingProvider` — any OpenAI-compatible embeddings endpoint (Berget hosted, by default) |
 | `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers` (offline dev/test fallback) |
 | `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
-| `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step` (see [worker patterns](/pipeline/worker-patterns.md)) |
+| `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step`; `close_llm_clients()` — the `StepTeardown` the four LLM-calling workers hand to the same call, releasing the loop-bound OpenAI-compatible client pool before their `asyncio.run()` loop closes (see [worker patterns](/pipeline/worker-patterns.md)) |
 | `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |
 | `prompts/_templates.py` | The five template constants |
 | `__init__.py` | Public API — service functions, embedding types, and DTOs |
@@ -198,15 +198,22 @@ Both sides come from one place so they cannot drift apart; the query half is use
 [retrieval agent](/retrieval/agent.md) and the passage half by
 [worker-embed](/pipeline/embed.md).
 
-- **`OpenAiCompatibleEmbeddingProvider`** (default; `embedding.provider: berget` in
-  `llm_config.yaml`) — calls Berget's hosted `intfloat/multilingual-e5-large` via
-  `openai.AsyncOpenAI.embeddings.create()`. Requires both `api_key` and `base_url`;
-  raises `ai.errors.MissingApiKeyError` if the key is missing. **Traced**: embedding runs
-  once per chunk over the whole corpus, so it is plausibly the largest single line of
-  token spend.
-- **`LocalEmbeddingProvider`** (`EMBEDDING_PROVIDER=local`) — `sentence-transformers`
-  in-process; the offline dev/test fallback. **Not traced** — no API call, no token
-  accounting, and a contribution of exactly zero to what a question cost.
+- **`OpenAiCompatibleEmbeddingProvider`** (`embedding.provider: berget` in
+  `llm_config.yaml`; the checked-in config actually ships `local`, below) — calls
+  Berget's hosted `intfloat/multilingual-e5-large` via
+  `openai.AsyncOpenAI.embeddings.create()`. `__init__` validates `api_key` and
+  `base_url` (raising `ai.errors.MissingApiKeyError` if the key is missing) but does
+  not build the client — each `embed()` call fetches one from
+  `llm_core.get_async_openai()`, bound to the loop it is running on, rather than
+  holding one built at construction; see [loop-bound
+  clients](/packages/llm-core.md#loop-bound-clients-_clientspy). **Traced**: embedding
+  runs once per chunk over the whole corpus, so it is plausibly the largest single line
+  of token spend.
+- **`LocalEmbeddingProvider`** (`embedding.provider: local` — the default in this
+  repo's checked-in `llm_config.yaml`, or `EMBEDDING_PROVIDER=local`) —
+  `sentence-transformers` in-process; the offline dev/test fallback. **Not traced** — no
+  API call, no token accounting, and a contribution of exactly zero to what a question
+  cost.
 
 Tracing sits inside `OpenAiCompatibleEmbeddingProvider` rather than in a wrapper: a
 wrapper implementing `EmbeddingProvider` could time the call but not see token usage,

@@ -40,6 +40,7 @@ __all__ = [
     "TrailerField",
     "find_segmentation_gaps",
     "normalize_case_number",
+    "normalize_cited_decision_number",
     "normalize_decision_number",
     "parse_keywords",
     "parse_trailer_fields",
@@ -171,6 +172,14 @@ _CASE_NUMBER_RE = re.compile(
 # ("2026-2029").
 _DECISION_NUMBER_RE = re.compile(r"\b(\d{1,3})[ \t]*[/-][ \t]*(\d{4})\b")
 
+# The same beslutsnummer with the halves the other way round — "2022/15" for
+# decision 15/2022. Deliberately *not* part of `_DECISION_NUMBER_RE`: year-first
+# is the shape an ärendenummer also has, so only a caller who already knows it is
+# reading a beslutsnummer may apply it. See `normalize_cited_decision_number`.
+_YEAR_FIRST_DECISION_RE = re.compile(
+    r"\b((?:19|20)\d{2})[ \t]*[/–-][ \t]*(\d{1,3})\b(?![-–/]\s*\d)"
+)
+
 # One labelled trailer line. Built from the enum so a label cannot be added to
 # `TrailerField` without the parser recognising it.
 _TRAILER_FIELD_RE = re.compile(
@@ -252,6 +261,44 @@ def normalize_decision_number(raw: str) -> str | None:
     if match is None:
         return None
     return f"{int(match.group(1))}/{match.group(2)}"
+
+
+def normalize_cited_decision_number(raw: str) -> str | None:
+    """Like :func:`normalize_decision_number`, but also reads the year-first form.
+
+    Decisions cite each other with the halves in either order — "beslut 13/2025"
+    and "Överklagandenämndens beslut 2022/15" are both beslutsnummer, the second
+    written the way the registry writes its own listing headlines ("Beslut
+    2022-15"; see :mod:`shared.source_headline`).
+
+    Two citations in the 2020-2026 corpus settle that this is the beslutsnummer
+    space and not the ärendenummer one, because both readings name a real
+    document and only one names the right document:
+
+    * 25/2026, refusing a *begäran om utlämnande*, cites "beslut 2010/06 och
+      2022/15". Decision 15/2022 is "Utlämnande av handling"; ärende 2022-0015
+      belongs to a verkställighetsförbud ruling.
+    * 23/2022, on beredningens kvalitet *i ett beslutsprövningsärende*, cites
+      "beslut 2020/24". Decision 24/2020 is "Beslutsprövning".
+
+    Reading the year-first form as an ärendenummer instead would also turn each
+    decision's own title line ("Beslut 2020/02") into an outbound citation,
+    where reading it as a beslutsnummer makes it the self-reference it is.
+
+    Kept separate from :func:`normalize_decision_number` because the two
+    identifier spaces have to stay distinguishable by shape everywhere else —
+    ``ÖN 2020-36`` is ärende ``2020-0036``, not decision ``36/2020``. Only a
+    caller that has already seen the word "beslut" may resolve the ambiguity
+    this way.
+    """
+    canonical = normalize_decision_number(raw)
+    if canonical is not None:
+        return canonical
+
+    match = _YEAR_FIRST_DECISION_RE.search(raw)
+    if match is None:
+        return None
+    return f"{int(match.group(2))}/{match.group(1)}"
 
 
 def find_segmentation_gaps(segments: DocumentSegments) -> list[SegmentationGap]:

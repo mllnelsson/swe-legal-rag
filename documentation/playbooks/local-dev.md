@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-05T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Local Development Environment
@@ -341,13 +341,18 @@ uv run --package worker-embed python -m worker_embed
   [embedding window](/decisions/embedding-window.md).
 
 **worker-embed notes:**
-- Default `EMBEDDING_PROVIDER=berget` calls Berget's hosted
-  `intfloat/multilingual-e5-large` over HTTP — requires `BERGET_API_KEY`, no local model
-  download, no cold start (see [embedding hosting](/decisions/embedding-hosting.md)).
-- Set `EMBEDDING_PROVIDER=local` to run `sentence-transformers` in-process instead — no
-  API key required, but the ~2.2 GB model is downloaded to the HuggingFace cache on first
-  use, so the first embed (and the first API query, if the API is also configured for
-  `local`) is slow. Subsequent runs use the cached model.
+- The checked-in `llm_config.yaml` ships `embedding.provider: local`, which runs
+  `sentence-transformers` in-process — no API key required, but the ~2.2 GB model is
+  downloaded to the HuggingFace cache on first use, so the first embed (and the first
+  API query) is slow. Subsequent runs use the cached model.
+- Point `embedding.provider` at a `providers:` entry — `berget` — to call Berget's
+  hosted `intfloat/multilingual-e5-large` over HTTP instead: requires `BERGET_API_KEY`,
+  no local model download, no cold start. That is the intended hosted path; see
+  [embedding hosting](/decisions/embedding-hosting.md).
+- The `EMBEDDING_PROVIDER` env var overrides the file, but takes an `EmbeddingBackend`
+  **kind** — `openai_compatible` or `local` — not a `providers:` name, so
+  `EMBEDDING_PROVIDER=berget` is not a valid value. See the
+  [env-var registry](/reference/llm-config.md#env-var-registry).
 
 ## Running in Containers
 
@@ -434,7 +439,7 @@ where `alembic` comes from) and the whole workspace; a Cloud Run image wants nei
 | Secrets | — | `.env` file | Secret Manager |
 | Embedding dim | `EMBEDDING_DIMENSION` | `1024` | `1024` — must match `embedding.model` in both environments |
 | LLM provider | `llm_config.yaml` `roles.*.provider` | `berget` (default) or `gemini`, per role | Same — no local/GCP distinction, just a config choice |
-| Embedding provider | `llm_config.yaml` `embedding.provider` | `berget` (default) or `local` | Same — `local` is an offline dev/test fallback, not a GCP-vs-local split |
+| Embedding provider | `llm_config.yaml` `embedding.provider` | `local` (default, as shipped) or `berget` | Same — no GCP-vs-local split; `berget` is the intended hosted path once a key is configured, `local` the offline fallback |
 
 Development defaults: `STORAGE_BACKEND=local` and `QUEUE_BACKEND=sync`. No GCS or Pub/Sub
 credentials required for local development. The full local↔GCP mapping and the

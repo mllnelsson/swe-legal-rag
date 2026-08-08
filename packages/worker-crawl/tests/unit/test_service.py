@@ -47,13 +47,16 @@ def _listing(document_id: int, headline: str = "Beslut") -> DecisionListing:
 
 
 def _make_doc_read(
-    source_url: str, source_document_id: int | None = None
+    source_url: str,
+    source_document_id: int | None = None,
+    source_decision_number: str | None = None,
 ) -> DocumentRead:
     now = datetime.now(tz=timezone.utc)
     return DocumentRead(
         id=uuid.uuid4(),
         source_url=source_url,
         source_document_id=source_document_id,
+        source_decision_number=source_decision_number,
         source_headline=None,
         source_published_at=None,
         gcs_uri=None,
@@ -112,8 +115,24 @@ def _make_deps(
 
     doc_repo.get_by_source_url = get_by_source_url
 
+    # Stateful, so a second listing entry for a decision this run already stored
+    # is found the same way it would be in Postgres.
+    stored_by_decision_number: dict[str, DocumentRead] = {}
+
+    async def get_by_source_decision_number(
+        _session, decision_number: str
+    ) -> DocumentRead | None:
+        return stored_by_decision_number.get(decision_number)
+
+    doc_repo.get_by_source_decision_number = get_by_source_decision_number
+
     async def create_doc(_session, dto):
-        return _make_doc_read(dto.source_url, dto.source_document_id)
+        doc = _make_doc_read(
+            dto.source_url, dto.source_document_id, dto.source_decision_number
+        )
+        if dto.source_decision_number is not None:
+            stored_by_decision_number[dto.source_decision_number] = doc
+        return doc
 
     doc_repo.create = create_doc
 
@@ -181,6 +200,74 @@ async def test_run_skips_existing_documents() -> None:
 
     assert (result.total_found, result.new_documents, result.skipped) == (2, 1, 1)
     assert publisher.publish.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_one_decision_published_under_two_ids_is_crawled_once() -> None:
+    # The listing did exactly this for 21/2021 — ids 2265536 and 2266136, three
+    # days apart, byte-identical text. Neither the URL nor the document id sees
+    # it; the headline names the decision itself.
+    headline = "Beslut 2021-21 Beslutsprövning"
+    kwargs, _session, publisher, _ = _make_deps(
+        [_listing(2265536, headline), _listing(2266136, headline)]
+    )
+
+    result = await process_crawl(**kwargs)
+
+    assert (result.total_found, result.new_documents, result.skipped) == (2, 1, 1)
+    assert publisher.publish.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_the_parsed_beslutsnummer_is_stored_as_the_dedup_key() -> None:
+    captured: list = []
+    kwargs, _session, _publisher, _ = _make_deps(
+        [_listing(2953158, "Beslut 2025-21 Avvisning")]
+    )
+
+    async def capture_create(_session, dto):
+        captured.append(dto)
+        return _make_doc_read(dto.source_url, dto.source_document_id)
+
+    kwargs["document_repo"].create = capture_create
+
+    await process_crawl(**kwargs)
+
+    assert captured[0].source_decision_number == "21/2025"
+
+
+@pytest.mark.asyncio
+async def test_an_unparsable_headline_is_still_crawled() -> None:
+    # Nullable for exactly this: a headline the parser does not recognise must
+    # not cost the decision its place in the corpus.
+    captured: list = []
+    kwargs, _session, publisher, _ = _make_deps([_listing(1, "Protokollsutdrag")])
+
+    async def capture_create(_session, dto):
+        captured.append(dto)
+        return _make_doc_read(dto.source_url, dto.source_document_id)
+
+    kwargs["document_repo"].create = capture_create
+
+    result = await process_crawl(**kwargs)
+
+    assert result.new_documents == 1
+    assert captured[0].source_decision_number is None
+    assert publisher.publish.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_two_unparsable_headlines_do_not_collide() -> None:
+    # NULL is not a dedup key: Postgres permits repeated NULLs under UNIQUE, and
+    # so must the lookup that precedes it.
+    kwargs, _session, publisher, _ = _make_deps(
+        [_listing(1, "Protokollsutdrag"), _listing(2, "Protokollsutdrag")]
+    )
+
+    result = await process_crawl(**kwargs)
+
+    assert (result.new_documents, result.skipped) == (2, 0)
+    assert publisher.publish.call_count == 2
 
 
 @pytest.mark.asyncio

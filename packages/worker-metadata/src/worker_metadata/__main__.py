@@ -6,7 +6,7 @@ import logging
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai import install_file_tracing, worker_trace_scope
+from ai import install_file_tracing, close_llm_clients, worker_trace_scope
 from ai.providers.roles import LLMRole, create_llm_provider
 from ai.services import extract_metadata as _ai_extract_metadata
 from llm_core import LLMProvider
@@ -83,6 +83,7 @@ def subscribe() -> QueueSubscriber:
         queue_settings=settings.queue,
         handle=handle,
         scope=worker_trace_scope(NAME),
+        teardown=close_llm_clients,
     )
 
 

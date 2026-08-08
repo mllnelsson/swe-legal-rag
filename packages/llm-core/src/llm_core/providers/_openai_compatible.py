@@ -5,6 +5,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
+from llm_core._clients import get_async_openai
 from llm_core._exceptions import MissingCredentialError, ProviderError
 from llm_core._types import (
     LLMResponse,
@@ -17,6 +18,7 @@ from llm_core._types import (
 )
 
 if TYPE_CHECKING:
+    from openai import AsyncOpenAI
     from openai.types.chat import (
         ChatCompletionMessageParam,
         ChatCompletionToolUnionParam,
@@ -47,8 +49,6 @@ class OpenAiCompatibleProvider:
     """
 
     def __init__(self, config: LLMConfig) -> None:
-        from openai import AsyncOpenAI
-
         if not config.api_key:
             raise MissingCredentialError(
                 "An API key is required for OpenAiCompatibleProvider. Set it via "
@@ -60,15 +60,21 @@ class OpenAiCompatibleProvider:
                 "the provider's base_url in llm_config.yaml, or LLM_BASE_URL."
             )
 
-        self._client = AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=config.base_url,
-        )
+        # Credentials are checked here but the client is not built here: it owns
+        # a connection pool that cannot outlive the event loop that filled it,
+        # and a provider is routinely constructed outside any loop and then used
+        # from a different one per message. See `llm_core._clients`.
+        self._api_key = config.api_key
+        self._base_url = config.base_url
         self._model = config.model
         self._temperature = config.temperature
         self._max_tokens = config.max_tokens
         self._provider_name = config.provider
         self._stream_usage = config.stream_usage
+
+    def _client(self) -> AsyncOpenAI:
+        """The client belonging to the loop this call is running on."""
+        return get_async_openai(api_key=self._api_key, base_url=self._base_url)
 
     def _to_openai_message(self, msg: Message) -> dict[str, Any]:
         match msg.role:
@@ -182,7 +188,7 @@ class OpenAiCompatibleProvider:
         )
 
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._client().chat.completions.create(
                 model=self._model,
                 messages=openai_messages,
                 temperature=self._temperature,
@@ -207,7 +213,7 @@ class OpenAiCompatibleProvider:
         )
 
         try:
-            sdk_stream = await self._client.chat.completions.create(
+            sdk_stream = await self._client().chat.completions.create(
                 model=self._model,
                 messages=openai_messages,
                 stream=True,

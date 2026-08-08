@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-05T12:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -103,9 +103,16 @@ territory — a single step against a real queue backend.
 discovered, so anything a previous run left stranded — a document already in
 `documents` whose `download` task is still `pending` — is invisible to it: the next
 crawl skips the document, and nothing ever sends the message its pending task is waiting
-for. Each run therefore queues every `pending` task before pumping, which is what picks
-those up. `run_pipeline_step` skips tasks that are already `completed`, so re-driving a
-finished document costs one no-op per step. Pass `--no-resume` to crawl only.
+for. Each run therefore queues every `pending` task **before** crawling, which is what
+picks those up. `run_pipeline_step` skips tasks that are already `completed`, so
+re-driving a finished document costs one no-op per step. Pass `--no-resume` to crawl
+only.
+
+Resume has to run before crawl, not after: on the sync backend nothing drains until
+`serve()`, so a task crawl has just created is still `pending` and indistinguishable
+from one stranded by an earlier run. Resuming afterwards published a second message for
+every newly discovered document — 320 `Queue -> download` messages for the 160
+documents of the 2020-2026 backfill.
 
 To see what is stranded before running:
 

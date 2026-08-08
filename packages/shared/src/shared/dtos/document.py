@@ -8,6 +8,7 @@ class DocumentCreate(BaseModel):
     source_url: str
     source_document_id: int | None = None
     source_headline: str | None = None
+    source_decision_number: str | None = None
     source_published_at: datetime | None = None
 
 
@@ -29,6 +30,7 @@ class DocumentRead(BaseModel):
     source_url: str
     source_document_id: int | None
     source_headline: str | None
+    source_decision_number: str | None
     source_published_at: datetime | None
     gcs_uri: str | None
     raw_text: str | None

@@ -98,3 +98,51 @@ conclude "nothing changed."
   but has no test in that specific file should NOT be added as a numbered honesty rule —
   document it in `frontend/overview.md` instead, and only fold it into honesty-rules.md
   if/when a test for it lands there.
+
+## Mapping learned on the crawl-dedup / citation-list / loop-bound-client pass (2026-08-08)
+- A new `documents.*` column that changes what the **crawl worker** dedups on (e.g.
+  `source_decision_number`) is a wide fan-out edit, not a single-file one: the column
+  itself (`data-model/documents.md`), the index (`data-model/indexes.md`), the "why this
+  column exists" narrative (`data-model/design-notes.md`, "Listing metadata persisted at
+  crawl time"), the worker's own dedup section (`pipeline/crawl.md`), and the source
+  contract doc (`reference/crawl-source.md`, "Document identity and download URL") all
+  independently describe the same fact and drift independently if only one is touched.
+- `scripts/run_pipeline.py`'s docstring/CLI-help prose and `playbooks/live-testing.md`'s
+  "A run resumes as well as crawls" paragraph make the *same* ordering claim in two
+  places (module docstring is code, not docs, but the playbook restates it) — when
+  `_queue_pending_tasks` moves relative to `run_crawl`, only the playbook needs a doc
+  edit, but check both.
+- Regex-based extraction rewrites in `worker-extract/extractors/rule_based.py` that
+  change *which strings a citation pattern matches* (anchor+list scanning replacing
+  single-shot patterns) map to two files, not one: `pipeline/extract.md`'s "Cross-references"
+  bullet (what the extractor does) and `reference/document-structure.md`'s "Identifier
+  spaces" section (the underlying ambiguity/disjointness argument the extractor relies
+  on) — the second is easy to skip because the changed code lives in worker-extract, not
+  `shared/segmentation.py`, even when the new canonicaliser (e.g.
+  `normalize_cited_decision_number`) does live in `shared/segmentation.py`.
+- A provider client construction change (e.g. "build once in `__init__`" →
+  "fetch per call, loop-bound") that fixes a retry/reliability defect touches: the new
+  module's own doc section (`packages/llm-core.md`), the worker startup-envelope concept
+  that gained the injection point (`pipeline/worker-patterns.md`, mirrors how `scope`
+  was already documented there), the consuming package's module table
+  (`packages/ai.md`, e.g. `worker.py`'s new export), and — easy to miss — `testing.md`'s
+  "what to mock" section if it names the old mocking pattern (`provider._client`) by
+  name; grep `testing.md` for the provider/class names being changed.
+- Pre-existing doc drift unrelated to the diff (e.g. `decisions/embedding-hosting.md`
+  claiming `EMBEDDING_PROVIDER=berget` is the default when `llm_config.yaml` ships
+  `local`, and naming a since-renamed `BergetEmbeddingProvider`) should only be corrected
+  where explicitly requested — fix that file, and fix the *same* claim in files you are
+  editing anyway for the requested change for free (here: `packages/ai.md`'s embedding
+  section, already being touched for the loop-bound-client note), but leave standing
+  drift in untouched playbooks (`playbooks/local-dev.md`, `playbooks/live-testing.md`
+  both also say `EMBEDDING_PROVIDER=berget` is default) for a separate pass and flag it
+  as Uncertain rather than fixing unilaterally.
+- Root `documentation/log.md` is the only `log.md` in this bundle (no per-subdirectory
+  logs exist as of this pass) — always add entries there, dated, newest-first within the
+  date heading, one bullet per logical change linking every concept file touched for it.
+- Same-file anchor links (`[text](#slug)`, GitHub-style slugify: strip backticks/parens/
+  punctuation, lowercase, spaces→hyphens, e.g. a heading `## Loop-bound clients
+  (\`_clients.py\`)` slugs to `#loop-bound-clients-_clientspy`) are an established
+  convention in this bundle (`testing.md`, `observability.md`, `local-dev.md`, etc.) —
+  fine to use for pointing at a subsection within the same file or, combined with the
+  `/path.md#slug` form, a subsection of another file.

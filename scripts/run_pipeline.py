@@ -21,8 +21,10 @@ For iterating on one step at a time instead, use ``scripts/run_step.py``.
 A run also re-drives anything a previous run left ``pending``, because crawl
 publishes only for documents it has just discovered: a document stranded
 mid-pipeline is already in ``documents``, so the next crawl skips it and its
-pending task is a message nobody would ever send. Pass ``--no-resume`` to crawl
-only.
+pending task is a message nobody would ever send. That pass runs *before* crawl,
+because a task crawl has just created is `pending` too and already has its
+message on the queue — resuming afterwards published every new document twice.
+Pass ``--no-resume`` to crawl only.
 
 Usage (from the repo root, with .env configured):
 
@@ -92,6 +94,12 @@ async def _queue_pending_tasks(publisher: QueuePublisher) -> int:
     nobody will ever send. This is what re-drives those: `run_pipeline_step`
     skips a task that is already completed, so queueing a document that needs
     nothing costs one no-op.
+
+    Call this *before* crawl. "Pending" cannot distinguish a task stranded by an
+    earlier run from one crawl created seconds ago and already published — on the
+    sync backend nothing drains until `serve`, so both look identical. Running
+    afterwards published a second message for every new document: 320 `Queue ->
+    download` for the 160 documents of the 2020-2026 backfill.
     """
     queued = 0
     async with get_async_session() as session:
@@ -193,13 +201,16 @@ def main() -> None:
     # of them pumps the whole queue.
     pump, *_ = [subscribe() for subscribe in _SUBSCRIBING_WORKERS]
 
-    logger.info("All downstream handlers registered; starting crawl")
-    run_crawl(["--years", args.years] if args.years else [])
-
+    # Before crawl, so that "pending" still means "left over from an earlier
+    # run" — see `_queue_pending_tasks`. Resumed work simply queues ahead of
+    # whatever crawl is about to discover.
     if args.resume:
         publisher = create_queue_publisher(get_settings().queue)
         resumed = asyncio.run(_queue_pending_tasks(publisher))
         logger.info("Queued %d task(s) left pending by an earlier run", resumed)
+
+    logger.info("All downstream handlers registered; starting crawl")
+    run_crawl(["--years", args.years] if args.years else [])
 
     # Crawl queued one download message per new document and ran none of them.
     # Draining is the pipeline: download publishes parse, parse publishes

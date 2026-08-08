@@ -3,7 +3,7 @@ type: Reference
 title: Indexes
 description: The index catalog across all tables — HNSW/GIN for retrieval, btree for constraints and lookups.
 tags: [data-model, indexes, pgvector, performance]
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Indexes
@@ -18,6 +18,7 @@ timestamp: 2026-07-26T00:00:00Z
 | tasks | btree | (step, status) | Query for retryable/pending tasks per step |
 | [documents](/data-model/documents.md) | btree | source_url | Unique constraint — dedup on crawl |
 | documents | btree | source_document_id | Unique constraint — dedup on the CMS document id |
+| documents | btree | source_decision_number | Unique constraint — the actual crawl dedup key, the beslutsnummer parsed from the listing headline |
 | documents | btree | decision_number | Resolve `beslut N/YYYY` citations to a document |
 | [entities](/data-model/entities.md) | btree | (name, type) | Unique constraint + lookup by entity |
 | entities | btree | type | Filter entities by type |

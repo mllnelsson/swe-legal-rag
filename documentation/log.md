@@ -2,6 +2,45 @@
 
 ## 2026-08-08
 
+* **Update**: [crawl worker](/pipeline/crawl.md), [crawl source](/reference/crawl-source.md),
+  [documents](/data-model/documents.md), [data model design notes](/data-model/design-notes.md),
+  [indexes](/data-model/indexes.md), [repository layer](/data-model/repositories.md) — crawl
+  now de-duplicates on the new `documents.source_decision_number` column, the beslutsnummer
+  parsed from the listing headline, because `source_url` and the CMS document id both name
+  the *listing entry* rather than the decision and let the listing's own duplicate
+  publication of 21/2021, under two document ids, through twice.
+* **Update**: [live testing](/playbooks/live-testing.md) — `scripts/run_pipeline.py` now
+  re-queues `pending` tasks *before* crawling rather than after; on the sync backend a task
+  crawl had just created was still `pending` and indistinguishable from one genuinely
+  stranded, so resuming afterwards published every newly discovered document's first task
+  twice.
+* **Update**: [extract worker](/pipeline/extract.md), [decision document
+  structure](/reference/document-structure.md) — cross-reference extraction now matches an
+  anchor word followed by a whole citation list, rather than only the first item after it,
+  and recognises the year-first beslutsnummer spelling (`beslut 2022/15`) the registry's own
+  listing headlines use, via new `shared.segmentation.normalize_cited_decision_number`.
+  Identifiers extracted rise from 54 to 116 over the 185-document corpus, with none
+  previously found lost.
+* **Update**: [llm-core](/packages/llm-core.md), [worker architecture
+  patterns](/pipeline/worker-patterns.md), [ai package](/packages/ai.md), [testing
+  strategy](/testing.md) — an `OpenAiCompatibleProvider`/`OpenAiCompatibleEmbeddingProvider`
+  client is now looked up per call, keyed to the event loop that pooled its connections,
+  rather than built once at construction; a client built once was producing 219 retries
+  against 221 calls on the 2020-2026 ingest, since a worker's `asyncio.run()`-per-message
+  pattern handed the second message a connection whose loop had closed.
+  `shared.worker.subscribe_step` gained an injected `teardown` parameter, released by the
+  four LLM-calling workers via `ai.close_llm_clients`. Unit tests mock the new
+  `llm_core._clients.get_async_openai` accessor rather than a `provider._client` attribute,
+  which no longer exists.
+* **Update**: [embedding model hosting](/decisions/embedding-hosting.md),
+  [local dev](/playbooks/local-dev.md) — corrected drift against the code: the shipped
+  `llm_config.yaml` defaults `embedding.provider` to `local`, not `berget`; the
+  implementation is `OpenAiCompatibleEmbeddingProvider`
+  (`openai_compatible_embeddings.py`), not the earlier `BergetEmbeddingProvider`; and
+  `EMBEDDING_PROVIDER=berget`, which both files gave as the default, was never a valid
+  value — that variable takes an `EmbeddingBackend` kind, as the
+  [env-var registry](/reference/llm-config.md#env-var-registry) already said. The
+  decision's rationale for preferring Berget once it is configured is unchanged.
 * **Update**: [search result honesty rules](/frontend/honesty-rules.md) — twelfth
   rule: with [query expansion](/retrieval/query-expansion.md) on, the phrasings the
   summary shows are partly a model's rather than the reader's own question, and the

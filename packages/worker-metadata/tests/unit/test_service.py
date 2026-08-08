@@ -30,6 +30,7 @@ def _make_doc_read(
         source_url="https://example.com/decision.pdf",
         source_document_id=None,
         source_headline=None,
+        source_decision_number=None,
         source_published_at=None,
         gcs_uri="gs://bucket/documents/x/original.pdf",
         raw_text=raw_text,

@@ -107,6 +107,84 @@ class TestRuleBasedCrossReferences:
         assert "2019-0001" not in case_numbers
 
 
+class TestCitationLists:
+    """One anchor introduces a whole list; every item in it is a citation."""
+
+    def test_every_item_of_a_comma_list_is_found(self) -> None:
+        refs = extract_references(
+            _segments(
+                "Nämnden har uttalat sig i tidigare beslut (se t.ex. "
+                "Överklagandenämndens beslut 25/2007, 06/2008 och 14/2016)."
+            )
+        )
+        assert {r.case_number for r in refs} == {"25/2007", "6/2008", "14/2016"}
+
+    def test_a_list_may_wrap_across_a_line(self) -> None:
+        # The PDF breaks the line right after the anchor, and again inside the list.
+        refs = extract_references(
+            _segments(
+                "se t.ex. Överklagandenämndens beslut \n11/2005, 10/2007,\n2/2008."
+            )
+        )
+        assert {r.case_number for r in refs} == {"11/2005", "10/2007", "2/2008"}
+
+    def test_an_arendenummer_list_is_scanned_the_same_way(self) -> None:
+        refs = extract_references(
+            _segments("Ärendena ÖN 2020/36, 2020/37 och 2020/39 handlades samlat.")
+        )
+        assert {r.case_number for r in refs} == {"2020-0036", "2020-0037", "2020-0039"}
+
+    def test_the_list_stops_at_something_that_is_not_a_citation(self) -> None:
+        refs = extract_references(
+            _segments("Se beslut 13/2011, 31/2011. Överklagandet avslås 2026-01-07.")
+        )
+        assert {r.case_number for r in refs} == {"13/2011", "31/2011"}
+
+    def test_a_whole_list_shares_the_sentence_that_introduced_it(self) -> None:
+        # The second item of a list has no context of its own worth keeping.
+        refs = extract_references(_segments("Jfr nämndens beslut 13/2011, 31/2011."))
+        assert len({r.reference_context for r in refs}) == 1
+        assert all("Jfr nämndens beslut" in r.reference_context for r in refs)
+
+
+class TestYearFirstCitations:
+    """The registry writes a beslutsnummer year-first too: 2022/15 is 15/2022.
+
+    See `shared.segmentation.normalize_cited_decision_number` for the corpus
+    evidence that this is the beslutsnummer space and not the ärendenummer one.
+    """
+
+    def test_the_year_first_spelling_is_a_beslutsnummer(self) -> None:
+        refs = extract_references(
+            _segments("(se Överklagandenämndens beslut 2020/24). Domkapitlets beslut")
+        )
+        assert {r.case_number for r in refs} == {"24/2020"}
+
+    def test_both_orders_mix_inside_one_list(self) -> None:
+        refs = extract_references(_segments("jfr nämndens beslut 2010/06 och 15/2022."))
+        assert {r.case_number for r in refs} == {"6/2010", "15/2022"}
+
+    def test_the_on_prefix_still_means_the_arendenummer_space(self) -> None:
+        # Identical shape, different space: the anchor word is what decides.
+        assert {r.case_number for r in extract_references(_segments("ÖN 2020-36"))} == {
+            "2020-0036"
+        }
+        assert {
+            r.case_number for r in extract_references(_segments("beslut 2020-36"))
+        } == {"36/2020"}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Domkapitlets beslut 2025-08-19 § 104 överklagades.",
+            "Y församlings beslut 2020-03-25 på det sätt som anges.",
+            "kännedom och information om beslutet 2024-10- 14 och räknar",
+        ],
+    )
+    def test_a_dated_decision_is_not_a_citation(self, text: str) -> None:
+        assert extract_references(_segments(text)) == []
+
+
 class TestRuleBasedEntityExtraction:
     def test_rule_based_extracts_role(self) -> None:
         result = extract_rule_based(_segments("Kyrkoherden överklagade beslutet."))

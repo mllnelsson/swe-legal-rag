@@ -3,7 +3,7 @@ type: Concept
 title: Data Model Design Notes
 description: Cross-cutting rationale behind the schema — progressive metadata, contextual text, idempotency, the graph-in-Postgres tables, and enum-backed columns.
 tags: [data-model, design, rationale]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Data Model Design Notes
@@ -71,12 +71,19 @@ through its lifecycle (see [worker patterns](/pipeline/worker-patterns.md)).
 
 The Svenska kyrkan OData listing supplies `documentId`, `headline` and `publishDate` for
 free, so they are stored rather than discarded. `source_document_id` gives a stable
-numeric identity that survives file renames and backs a second unique constraint;
+numeric identity that survives file renames and backs a unique constraint;
 `source_headline` and `source_published_at` let the metadata step cross-check the case
 number and date it extracts from the PDF text. All three are nullable so rows created by
 the earlier HTML scraper survive — Postgres allows repeated NULLs under a UNIQUE
 constraint, so those legacy rows do not collide. See
 [crawl source](/reference/crawl-source.md).
+
+`source_decision_number`, the beslutsnummer parsed out of `source_headline`, is also
+stored, and is the crawl worker's actual dedup key — `source_url` and
+`source_document_id` both identify the *listing entry*, and the listing once published
+one decision under two of those. It is nullable for the same reason the other two are:
+a headline the parser does not recognise must still be crawlable. See [crawl
+worker](/pipeline/crawl.md#deduplication-and-idempotency).
 
 ## Graph-in-Postgres
 
