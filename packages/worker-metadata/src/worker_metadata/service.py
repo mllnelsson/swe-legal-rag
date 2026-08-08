@@ -14,7 +14,9 @@ from shared.repositories import DocumentRepo, TaskRepo
 from shared.segmentation import find_segmentation_gaps, split_document
 from shared.source_headline import parse_source_headline
 from worker_metadata.patterns import (
+    IDENTIFIER_FIELDS,
     MetadataResult,
+    canonicalize_identifiers,
     extract_decision_number,
     is_complete,
 )
@@ -73,7 +75,9 @@ async def process_metadata(
             # outcome and diarienummer, and the LLM cannot tell them apart.
             body = split_document(document.raw_text).body
             try:
-                llm_result = await llm_extractor(body)
+                proposed = await llm_extractor(body)
+                llm_result = canonicalize_identifiers(proposed)
+                _log_discarded_identifiers(document_id, proposed, llm_result)
                 for field in missing:
                     llm_value = getattr(llm_result, field)
                     if llm_value is not None:
@@ -114,6 +118,26 @@ async def process_metadata(
         queue_publisher=queue_publisher,
         body=body,
     )
+
+
+def _log_discarded_identifiers(
+    document_id: UUID, proposed: MetadataResult, canonical: MetadataResult
+) -> None:
+    """Warn about identifier answers `canonicalize_identifiers` refused.
+
+    Silence here is what let the model's wrong answers through unnoticed: a
+    rejection is the only moment at which "the model read the appealed decision's
+    diarienummer" is visible at all. Never raises and never changes the outcome.
+    """
+    for field in IDENTIFIER_FIELDS:
+        if getattr(proposed, field) is not None and getattr(canonical, field) is None:
+            logger.warning(
+                "Document %s: discarded LLM %s %r — not an identifier in the "
+                "nämnd's registry",
+                document_id,
+                field,
+                getattr(proposed, field),
+            )
 
 
 def _log_template_drift(

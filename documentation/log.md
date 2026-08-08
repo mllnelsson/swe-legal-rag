@@ -1,5 +1,55 @@
 # Documentation Update Log
 
+## 2026-08-08
+
+* **Update**: [search result honesty rules](/frontend/honesty-rules.md) — twelfth
+  rule: with [query expansion](/retrieval/query-expansion.md) on, the phrasings the
+  summary shows are partly a model's rather than the reader's own question, and the
+  three outcomes (variants searched, none proposed, expansion unavailable) are
+  distinguished rather than collapsed.
+
+## 2026-08-07
+
+* **Update**: [decision document structure](/reference/document-structure.md) —
+  `_CASE_NUMBER_RE` now accepts `/` alongside `-`/`–` as the ärendenummer separator
+  (the registry wrote `ÖN 2021/2` throughout 2020–2021), and the raw/canonical
+  distinction is spelled out so this does not read as contradicting the
+  beslutsnummer/ärendenummer disjointness the reference-resolution machinery relies
+  on. `_HOLDING_RE` now also matches "Överklagandenämndens beslut" as a bare heading
+  on its own line, documented as a new "Holding anchor" section.
+* **Update**: [structural fields are parsed, not inferred](/decisions/structural-fields-are-parsed.md) —
+  records that `case_number` does reach the LLM fallback when the rule-based pass
+  finds nothing, and that its answer is now filtered by
+  [`canonicalize_identifiers`](/pipeline/metadata.md#identifier-validation) before
+  being accepted, since an unfiltered answer is exactly the "plausible wrong value"
+  this decision is written against.
+* **Update**: [metadata worker](/pipeline/metadata.md) — new "Identifier validation"
+  section documents `canonicalize_identifiers`: an LLM answer for `case_number` or
+  `decision_number` is only accepted if it is built from the nämnd's own optional
+  markers plus a number, and a rejection is logged as a WARNING naming the discarded
+  value.
+* **Update**: [extract worker](/pipeline/extract.md) — regulation citations: a
+  numeric section range of at most 6 provisions is now expanded into one entity per
+  section, a longer range stays whole, and a range or bare chapter subsumed by
+  another citation on the same document is dropped. Parish/diocese/pastorat
+  matching now takes a bounded run of capitalised words only and strips leading
+  role/sentence-opener words, cutting distinct parish entities from 122 to 43 on the
+  live corpus; `pastorat` is now a recognised head noun. Persistence now deletes a
+  document's stale `document_entities` rows via
+  `document_entity.delete_missing_for_document`, so re-extraction replaces a
+  document's entity set instead of only adding to it.
+* **Update**: [`document_entities`](/data-model/document-entities.md) and the
+  [repository layer](/data-model/repositories.md) — record
+  `delete_missing_for_document`, and that `document.get_by_case_number` /
+  `get_by_decision_number` now tolerate a second matching row (ordering by
+  `decision_date`, earliest first) instead of raising, since neither identifier is
+  unique in the corpus.
+* **Update**: [frontend](/frontend/overview.md) and [query
+  expansion](/retrieval/query-expansion.md) — query expansion is now reachable from
+  the UI, a checkbox above the filter rail carried in the URL as `?utoka=1`. Removes
+  the now-false claim in "Out of scope" that `expand: true` is never sent from the
+  frontend.
+
 ## 2026-08-06
 
 * **Update**: [local dev](/playbooks/local-dev.md) — `.claude/hooks/db-sandbox.sh

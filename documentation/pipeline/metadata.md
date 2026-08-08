@@ -4,7 +4,7 @@ title: Metadata Worker
 description: Subscriber worker that extracts structured metadata (case number, decision number, date, outcome, category) rule-based first with an LLM fallback for missing fields.
 resource: packages/worker-metadata
 tags: [pipeline, worker, metadata, extraction, llm]
-timestamp: 2026-08-04T00:00:00Z
+timestamp: 2026-08-07T00:00:00Z
 ---
 
 # Metadata Worker (`packages/worker-metadata/`)
@@ -19,7 +19,7 @@ tasks.
 | Module | Role |
 |---|---|
 | `config.py` | `MetadataSettings(BaseSettings)` — `METADATA_TOPIC` (`metadata`), `METADATA_NEXT_TOPIC` (`extract`). `get_metadata_settings()` is `@lru_cache`. |
-| `patterns.py` | `MetadataResult` dataclass + per-field pure extraction functions + `extract_metadata_rule_based()` + `is_complete()`. Field extractors take `DocumentSegments`, not raw text. |
+| `patterns.py` | `MetadataResult` dataclass + per-field pure extraction functions + `extract_metadata_rule_based()` + `is_complete()` + `canonicalize_identifiers()` (see Identifier validation below). Field extractors take `DocumentSegments`, not raw text. |
 | `service.py` | `process_metadata()` async function — orchestration via functional DI. |
 | `__main__.py` | Entry point. Loads `.env`, wires dependencies, defines the `_llm_extractor` closure, registers the handler, calls `subscriber.start()`. |
 
@@ -82,6 +82,32 @@ decision can never contribute its own date, outcome or diarienummer.
 
 All metadata fields are freeform `VARCHAR` — no enum constraints. Missing metadata (all
 fields `None`) is a valid outcome; the task still completes.
+
+## Identifier validation
+
+`case_number` and `decision_number` name a document in a registry rather than describe
+it, so an LLM answer for either can be *wrong*, not merely imprecise — the corpus has
+returned the diarienummer of the domkapitel or stift that issued the appealed decision
+(`DK 2020-0007`, `S 2020-0365`), and a plausible-looking value like that would otherwise
+be stored as-is.
+
+Before the LLM's raw answer is merged, both fields are run through
+`patterns.canonicalize_identifiers`, which keeps only what is built from the nämnd's own
+optional `ÖN`/`dnr` markers plus the number — nothing else — and reduces anything else to
+`None`. The check has to be this strict because the same canonicalisers that make it
+useful also *scan*: they have to, to read `Ärendenummer: ÖN 2025-0017` off a labelled
+trailer line, and scanning is exactly wrong for an unlabelled, free-text LLM answer,
+since `DK 2020-0007` scans down to a well-formed ärendenummer belonging to a registry
+that is not this one. `case_number` is the field this affects in practice — `decision_number`
+is never asked of the LLM at all (see `_METADATA_FIELDS` above) — but both fields go
+through the same check, since one function serves both and a rejected `decision_number`
+is worth logging even though it was never going to be stored.
+
+A rejected answer is logged as a WARNING naming the document, the field, and the
+discarded value, via `_log_discarded_identifiers`. `None` is what the column means when a
+document does not state an identifier the nämnd itself issued; a wrong identifier is
+worse than a missing one, since it silently misfiles the decision and can resolve
+another document's citation to it.
 
 ## Service layer and error handling
 

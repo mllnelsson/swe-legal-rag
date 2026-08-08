@@ -3,12 +3,12 @@ type: Concept
 title: Search result honesty rules
 description: The frontend's tested constraints on what it claims about a search result — each one exists because the data does not support the more convenient alternative.
 tags: [frontend, ui, honesty, search, appendix, rrf]
-timestamp: 2026-08-06T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Search result honesty rules
 
-Eleven constraints the frontend enforces on how it presents search results and
+Twelve constraints the frontend enforces on how it presents search results and
 decisions, each backed by a test in
 `src/components/research/honesty-rules.test.tsx`. They are not generic UI
 polish — each exists because the corpus or the [search
@@ -81,6 +81,16 @@ cannot back up.
     floor](/retrieval/deterministic-search.md#the-similarity-floor) landed, a
     widened search can come back empty too, which is what makes the gate
     necessary rather than theoretical.
+12. **Phrasings the user did not type are attributed to the model.** With
+    [query expansion](/retrieval/query-expansion.md) on, the summary's
+    prominent line is `effective_queries` — the original question followed by
+    variants a language model wrote. Unattributed, that presents generated
+    text as the reader's own question. Three outcomes are distinguished, not
+    two: variants were searched, the model proposed none, or expansion could
+    not be fetched at all. The third matters because expansion fails open —
+    the results are real, but the search that ran is not the search that was
+    asked for, and without the note it is indistinguishable from a plain
+    search.
 
 `decision_outcome` facet values are also worth recording here: they are
 verbatim holdings running 41–378 characters long, so the filter control

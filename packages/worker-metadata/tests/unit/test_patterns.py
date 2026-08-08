@@ -5,6 +5,7 @@ import datetime
 from shared.segmentation import split_document
 from worker_metadata.patterns import (
     MetadataResult,
+    canonicalize_identifiers,
     extract_case_number,
     extract_category,
     extract_decision_date,
@@ -38,6 +39,52 @@ def test_extract_case_number_falls_back_to_body() -> None:
 def test_extract_case_number_no_match() -> None:
     text = "Överklagandenämnden för Svenska kyrkan\n\nBeslut i ärendet om kyrkogård"
     assert extract_case_number(_segments(text)) is None
+
+
+def test_extract_case_number_from_the_slash_spelling() -> None:
+    # Beslut 5/2021's own trailer, verbatim. 41 decisions state their ärendenummer
+    # this way and every one of them was read as stating none.
+    text = (
+        "Överklagandenämnden avslår överklagandet.\n"
+        "Sökord: Beslutsprövning. Fastighetsförsäljning.\n"
+        "Ärendenummer: ÖN 2021/2\n"
+        "Beslut: 5/2021\n"
+    )
+    assert extract_case_number(_segments(text)) == "2021-0002"
+
+
+def test_the_trailers_two_identifiers_do_not_cross() -> None:
+    # Both are written with a slash now. "Beslut: 5/2021" must not be read as an
+    # ärendenummer, nor "ÖN 2021/2" as a beslutsnummer.
+    text = "Beslut.\nÄrendenummer: ÖN 2021/2\nBeslut: 5/2021\n"
+    segments = _segments(text)
+    assert extract_case_number(segments) == "2021-0002"
+    assert extract_decision_number(segments) == "5/2021"
+
+
+def test_canonicalize_identifiers_drops_another_registrys_number() -> None:
+    result = canonicalize_identifiers(
+        MetadataResult(case_number="DK 2020-0007", decision_number="Dk 2022-0024")
+    )
+    assert result.case_number is None
+    assert result.decision_number is None
+
+
+def test_canonicalize_identifiers_keeps_the_other_fields() -> None:
+    # Only the two identifier fields are validated: a category or an outcome is
+    # free text the model is allowed to phrase however the decision does.
+    result = canonicalize_identifiers(
+        MetadataResult(
+            case_number="ÖN 2020-3",
+            decision_date=datetime.date(2020, 6, 16),
+            decision_outcome="Överklagandenämnden avslår överklagandet.",
+            category="DOMKAPITLETS BESLUT",
+        )
+    )
+    assert result.case_number == "2020-0003"
+    assert result.decision_date == datetime.date(2020, 6, 16)
+    assert result.decision_outcome == "Överklagandenämnden avslår överklagandet."
+    assert result.category == "DOMKAPITLETS BESLUT"
 
 
 def test_extract_case_number_ignores_appendix_diarienummer() -> None:

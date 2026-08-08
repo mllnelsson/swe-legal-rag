@@ -123,6 +123,11 @@ class DocumentEntityRepo(Protocol):
         [AsyncSession, DocumentEntityCreate], Awaitable[DocumentEntityRead]
     ]: ...
 
+    @property
+    def delete_missing_for_document(
+        self,
+    ) -> Callable[[AsyncSession, uuid.UUID, set[uuid.UUID]], Awaitable[None]]: ...
+
 
 class DocumentReferenceRepo(Protocol):
     @property

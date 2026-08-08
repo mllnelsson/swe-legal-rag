@@ -24,6 +24,9 @@ export type SearchState = {
   dateTo: string | null;
   /** Decisions that cite, or are cited by, this case. */
   referencesCaseNumber: string | null;
+  /** Also search phrasings the model proposes for the question. Additive, never a
+   *  replacement — see documentation/retrieval/query-expansion.md. */
+  expand: boolean;
   page: number;
 };
 
@@ -35,6 +38,7 @@ export const EMPTY_SEARCH: SearchState = {
   dateFrom: null,
   dateTo: null,
   referencesCaseNumber: null,
+  expand: false,
   page: 1,
 };
 
@@ -46,8 +50,12 @@ const PARAM = {
   dateFrom: "fran",
   dateTo: "tom",
   references: "refs",
+  expand: "utoka",
   page: "sida",
 } as const;
+
+/** The only spelling `toSearchParams` writes, so a shared URL round-trips. */
+const EXPAND_ON = "1";
 
 function readPage(raw: string | null): number {
   if (raw === null) return 1;
@@ -64,6 +72,7 @@ export function parseSearchState(params: URLSearchParams): SearchState {
     dateFrom: params.get(PARAM.dateFrom),
     dateTo: params.get(PARAM.dateTo),
     referencesCaseNumber: params.get(PARAM.references),
+    expand: params.get(PARAM.expand) === EXPAND_ON,
     page: readPage(params.get(PARAM.page)),
   };
 }
@@ -79,6 +88,7 @@ export function toSearchParams(state: SearchState): URLSearchParams {
   if (state.referencesCaseNumber !== null) {
     params.set(PARAM.references, state.referencesCaseNumber);
   }
+  if (state.expand) params.set(PARAM.expand, EXPAND_ON);
   if (state.page > 1) params.set(PARAM.page, String(state.page));
   return params;
 }
@@ -102,9 +112,12 @@ export function toSearchQuery(state: SearchState): SearchQuery {
   return {
     query: state.query,
     queries: null,
-    // Server-side expansion is the one search parameter that invokes an LLM role.
-    // Leaving it off keeps the app runnable with no model credentials configured.
-    expand: false,
+    // Off unless asked for: expansion is the one search parameter that invokes an
+    // LLM role, so the default is what keeps the app usable with no model
+    // credentials configured. Turning it on cannot lose a hit — the original
+    // query's ranking is always fused in — but it does cost a model call per
+    // search, which is the user's to spend.
+    expand: state.expand,
     filter: toDocumentFilter(state),
     limit: PAGE_SIZE,
     offset: (state.page - 1) * PAGE_SIZE,
@@ -139,6 +152,8 @@ export function describeFilters(state: SearchState): string[] {
   return described;
 }
 
+/** Drops what narrows the corpus. `expand` survives: it widens the search rather
+ *  than narrowing it, so clearing filters to find more results should not undo it. */
 export function clearFilters(state: SearchState): SearchState {
-  return { ...EMPTY_SEARCH, query: state.query };
+  return { ...EMPTY_SEARCH, query: state.query, expand: state.expand };
 }

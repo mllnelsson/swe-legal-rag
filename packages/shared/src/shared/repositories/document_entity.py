@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import case, func, nulls_last, select
+from sqlalchemy import case, delete, func, nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.dtos.document_entity import (
@@ -67,6 +67,26 @@ async def upsert(
         await session.flush()
         await session.refresh(de)
     return DocumentEntityRead.model_validate(de)
+
+
+async def delete_missing_for_document(
+    session: AsyncSession, document_id: uuid.UUID, entity_ids: set[uuid.UUID]
+) -> None:
+    """Drop this document's links to entities outside ``entity_ids``.
+
+    What makes re-extraction mean anything. `upsert` alone can only add, so a
+    document re-extracted after the rules were tightened kept every entity the old
+    rules had found — the corrected run was invisible underneath them.
+
+    Rows in `entities` are left alone. An entity no document links to is unreachable
+    rather than wrong: the vocabulary and facet counts both join through this table.
+    """
+    await session.execute(
+        delete(DocumentEntity).where(
+            DocumentEntity.document_id == document_id,
+            DocumentEntity.entity_id.notin_(entity_ids),
+        )
+    )
 
 
 async def get_by_entity_id(

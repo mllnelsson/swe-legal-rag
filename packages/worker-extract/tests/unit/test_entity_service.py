@@ -22,6 +22,14 @@ def _entity(
     return ExtractedEntity(name=name, type=etype, relevance=relevance)
 
 
+def _doc_entity_repo() -> MagicMock:
+    """The `DocumentEntityRepo` surface `persist_entities` uses, both members."""
+    repo = MagicMock()
+    repo.upsert = AsyncMock()
+    repo.delete_missing_for_document = AsyncMock()
+    return repo
+
+
 def _entity_read(name: str) -> EntityRead:
     return EntityRead(
         id=uuid.uuid4(),
@@ -74,8 +82,7 @@ class TestPersistEntities:
         entity_read = _entity_read("kyrkoherde")
         entity_repo = MagicMock()
         entity_repo.upsert = AsyncMock(return_value=entity_read)
-        doc_entity_repo = MagicMock()
-        doc_entity_repo.upsert = AsyncMock()
+        doc_entity_repo = _doc_entity_repo()
 
         doc_id = uuid.uuid4()
         entities = [_entity("Kyrkoherde"), _entity("Stiftet", EntityType.PARISH)]
@@ -88,8 +95,7 @@ class TestPersistEntities:
         entity_read = _entity_read("kyrkoherde")
         entity_repo = MagicMock()
         entity_repo.upsert = AsyncMock(return_value=entity_read)
-        doc_entity_repo = MagicMock()
-        doc_entity_repo.upsert = AsyncMock()
+        doc_entity_repo = _doc_entity_repo()
 
         doc_id = uuid.uuid4()
         entities = [_entity("Kyrkoherde"), _entity("Stiftet", EntityType.PARISH)]
@@ -102,8 +108,7 @@ class TestPersistEntities:
         entity_read = _entity_read("kyrkoherde")
         entity_repo = MagicMock()
         entity_repo.upsert = AsyncMock(return_value=entity_read)
-        doc_entity_repo = MagicMock()
-        doc_entity_repo.upsert = AsyncMock()
+        doc_entity_repo = _doc_entity_repo()
 
         await persist_entities(
             session,
@@ -120,8 +125,7 @@ class TestPersistEntities:
         entity_read = _entity_read("kyrkoherde")
         entity_repo = MagicMock()
         entity_repo.upsert = AsyncMock(return_value=entity_read)
-        doc_entity_repo = MagicMock()
-        doc_entity_repo.upsert = AsyncMock()
+        doc_entity_repo = _doc_entity_repo()
 
         entities = [
             _entity("kyrkoherde", relevance=EntityRelevance.MENTIONED),
@@ -135,13 +139,44 @@ class TestPersistEntities:
         doc_create_dto = doc_entity_repo.upsert.call_args[0][1]
         assert doc_create_dto.relevance == "primary"
 
-    async def test_entity_persist_empty_entities_does_nothing(self) -> None:
+    async def test_entity_persist_empty_entities_writes_nothing(self) -> None:
         entity_repo = MagicMock()
         entity_repo.upsert = AsyncMock()
-        doc_entity_repo = MagicMock()
-        doc_entity_repo.upsert = AsyncMock()
+        doc_entity_repo = _doc_entity_repo()
 
         await persist_entities(session, entity_repo, doc_entity_repo, uuid.uuid4(), [])
 
         entity_repo.upsert.assert_not_called()
         doc_entity_repo.upsert.assert_not_called()
+
+    async def test_entity_persist_clears_links_this_run_did_not_write(self) -> None:
+        # The point of the delete: a document re-extracted after the rules were
+        # tightened must end up with this run's entities, not this run's plus every
+        # earlier run's.
+        entity_read = _entity_read("kyrkoherde")
+        entity_repo = MagicMock()
+        entity_repo.upsert = AsyncMock(return_value=entity_read)
+        doc_entity_repo = _doc_entity_repo()
+
+        doc_id = uuid.uuid4()
+        await persist_entities(
+            session, entity_repo, doc_entity_repo, doc_id, [_entity("Kyrkoherde")]
+        )
+
+        doc_entity_repo.delete_missing_for_document.assert_awaited_once_with(
+            session, doc_id, {entity_read.id}
+        )
+
+    async def test_entity_persist_of_nothing_clears_every_link(self) -> None:
+        # Extraction finding nothing is an answer, not a no-op: whatever the
+        # document was linked to before, it is linked to nothing now.
+        entity_repo = MagicMock()
+        entity_repo.upsert = AsyncMock()
+        doc_entity_repo = _doc_entity_repo()
+
+        doc_id = uuid.uuid4()
+        await persist_entities(session, entity_repo, doc_entity_repo, doc_id, [])
+
+        doc_entity_repo.delete_missing_for_document.assert_awaited_once_with(
+            session, doc_id, set()
+        )

@@ -76,11 +76,47 @@ _REGULATION_PATTERNS = [
 # Both range spellings collapse to a hyphen so one provision has one name.
 _REGULATION_SECTION_SEPARATOR_RE = re.compile(r"[ \t]*(?:[-–]|och)[ \t]*")
 
-_PARISH_PATTERNS = [
-    re.compile(r"\b([A-ZÅÄÖ][a-zåäö]+(?:\s+[A-Za-zÅÄÖåäö]+){0,3})\s+församling\b"),
-    re.compile(r"\b([A-ZÅÄÖ][a-zåäö]+(?:\s+[A-Za-zÅÄÖåäö]+){0,3})\s+stift\b"),
-    re.compile(r"\bförsamlingen\s+i\s+([A-ZÅÄÖ][a-zåäö]+)\b"),
-]
+# How many provisions a section range may name before it is kept whole rather than
+# expanded. "57 kap. 8-19 §§" is the header lagrum line of 54 decisions — the
+# statutory basis of the appeal, not a targeted citation — and splitting it into
+# twelve entities would bury the provisions a decision actually turns on. Short
+# ranges are the opposite case: "47 kap. 1-3 §§" beside "47 kap. 1 §" and "47 kap.
+# 2 §" is one provision set written twice.
+_MAX_EXPANDED_SECTIONS = 6
+
+# A plain numeric range in the canonical section slot. Lettered sections ("1 a") and
+# three-part lists are deliberately not expanded — enumerating them needs knowledge
+# of the statute that a regex does not have.
+_SECTION_RANGE_RE = re.compile(r"^(?P<first>\d{1,3})-(?P<last>\d{1,3})$")
+
+# The two canonical shapes document-level subsumption compares. Parsing back what
+# `_canonical_regulations` emitted keeps the entity list the only thing that has to
+# cross between the body, the holding and the appendices.
+_CANONICAL_CHAPTER_RE = re.compile(r"^(?P<chapter>\d{1,3}) kap\. kyrkoordningen$")
+_CANONICAL_RANGE_RE = re.compile(
+    r"^(?P<chapter>\d{1,3}) kap\. (?P<first>\d{1,3})-(?P<last>\d{1,3}) §§ kyrkoordningen$"
+)
+
+# The bodies a decision names, and the word order they are named in.
+_PARISH_HEADS = ("församling", "stift", "pastorat")
+
+# One word of a name: a capital and its lower-case tail. `pastorat` is here because
+# the corpus names one 224 times and the patterns used to ignore it entirely.
+#
+# Excluding lower-case words is what bounds the run: "Kyrkofullmäktige i Y
+# församling" stops at "Y" because "i" cannot join it. The old pattern took up to
+# three words of any case and produced "kyrkofullmäktige i y församling", "beslut
+# kyrkofullmäktige i y församling" and "motpart kyrkofullmäktige i y församling" as
+# three entities for one body.
+#
+# Note what this vocabulary is worth: 134 of the 185 decisions are anonymised, so
+# the names it finds are mostly the placeholders "X stift" and "Y församling". That
+# is the corpus telling the truth about itself, not the extractor failing.
+_NAME_WORD = r"[A-ZÅÄÖ][a-zåäö]*"
+_PARISH_RE = re.compile(
+    rf"\b(?P<name>{_NAME_WORD}(?:[ \t]+{_NAME_WORD}){{0,2}})"
+    rf"[ \t]+(?P<head>{'|'.join(_PARISH_HEADS)})\b"
+)
 
 _KNOWN_ROLES = frozenset(
     {
@@ -111,6 +147,36 @@ _KNOWN_LEGAL_CONCEPTS = frozenset(
 
 # Swedish definite/genitive suffixes the keyword lookups tolerate.
 _INFLECTION_SUFFIX = r"(?:en|et|s|ns|ts|n|t|r)?"
+
+# Capitalised words that open a line, a sentence or a table row rather than a name.
+# Derived from the corpus rather than from Swedish grammar: these are the words
+# actually seen leading a parish match ("Motpart Y församling", "Eftersom S stift",
+# the generic "En församling"), and the list grows when a new one shows up.
+#
+# Roles are stripped for the same reason and lose nothing: "Motpart Kyrkofullmäktige
+# Y församling" is a table row, and `kyrkofullmäktige` is already extracted as a ROLE
+# entity in its own right.
+_NON_NAME_WORDS = _KNOWN_ROLES | frozenset(
+    {
+        "att",
+        "av",
+        "de",
+        "den",
+        "det",
+        "eftersom",
+        "en",
+        "ett",
+        "för",
+        "från",
+        "huruvida",
+        "i",
+        "motpart",
+        "och",
+        "som",
+        "till",
+        "ägare",
+    }
+)
 
 
 def extract_references(segments: DocumentSegments) -> list[ExtractedReference]:
@@ -149,12 +215,16 @@ def extract_entities_rule_based(segments: DocumentSegments) -> list[ExtractedEnt
     every holding entity is also found at MENTIONED and de-duplication resolves the
     pair in PRIMARY's favour. Appendix entities stay MENTIONED unconditionally —
     they belong to the appealed decision, not to this one.
+
+    Regulation subsumption runs last, over the merged list: whether a chapter is
+    also cited at section level is a fact about the whole decision, not about the
+    segment a citation happened to sit in.
     """
     entities = _entities_in(segments.holding or "", EntityRelevance.PRIMARY)
     entities += _entities_in(segments.body, EntityRelevance.MENTIONED)
     for appendix in segments.appendices:
         entities += _entities_in(appendix.text, EntityRelevance.MENTIONED)
-    return deduplicate_entities(entities)
+    return _drop_subsumed_regulations(deduplicate_entities(entities))
 
 
 def extract_rule_based(segments: DocumentSegments) -> EntityResult:
@@ -181,10 +251,7 @@ def _entities_in(text: str, relevance: EntityRelevance) -> list[ExtractedEntity]
         return []
     found = (
         [(name, EntityType.REGULATION) for name in _match_regulations(text)]
-        + [
-            (name, EntityType.PARISH)
-            for name in _match_patterns(text, _PARISH_PATTERNS)
-        ]
+        + [(name, EntityType.PARISH) for name in _match_parishes(text)]
         + [(name, EntityType.ROLE) for name in _match_keywords(text, _KNOWN_ROLES)]
         + [
             (name, EntityType.LEGAL_CONCEPT)
@@ -209,44 +276,155 @@ def _match_regulations(text: str) -> list[str]:
     seen: set[str] = set()
     for pattern in _REGULATION_PATTERNS:
         for match in pattern.finditer(collapsed):
-            name = _canonical_regulation(match)
-            if name not in seen:
-                seen.add(name)
-                names.append(name)
+            for name in _canonical_regulations(match):
+                if name not in seen:
+                    seen.add(name)
+                    names.append(name)
     return names
 
 
-def _canonical_regulation(match: re.Match[str]) -> str:
-    """One spelling per cited provision: ``N kap. M § kyrkoordningen``.
+def _canonical_regulations(match: re.Match[str]) -> list[str]:
+    """The provisions one citation names: ``N kap. M § kyrkoordningen`` each.
 
     Follows the order the corpus overwhelmingly uses, so both citation orders and
     both names of the statute collapse to one entity rather than four.
 
     The sub-clause is deliberately dropped: "58 kap. 18 §" and "58 kap. 18 §
     tredje stycket" cite the same provision, and keeping them apart fragments the
-    vocabulary the entity graph exists to join on. Ranges are normalised but not
-    expanded — "57 kap. 8-19 §§" stays one entity rather than twelve.
+    vocabulary the entity graph exists to join on.
+
+    Usually one name. A short range yields one per section, so a decision citing
+    both "47 kap. 1-3 §§" and "47 kap. 1 §" has one vocabulary rather than two
+    overlapping ones. A long range stays whole — see `_MAX_EXPANDED_SECTIONS` for
+    why the cap is where it is.
     """
     chapter = match.group("chapter")
     sections = match.groupdict().get("sections")
     if sections is None:
-        return f"{chapter} kap. kyrkoordningen"
+        return [f"{chapter} kap. kyrkoordningen"]
 
     normalized = _REGULATION_SECTION_SEPARATOR_RE.sub("-", " ".join(sections.split()))
+    expanded = _expand_section_range(normalized)
+    if expanded is not None:
+        return [f"{chapter} kap. {section} § kyrkoordningen" for section in expanded]
+
     marker = "§§" if "-" in normalized else "§"
-    return f"{chapter} kap. {normalized} {marker} kyrkoordningen"
+    return [f"{chapter} kap. {normalized} {marker} kyrkoordningen"]
 
 
-def _match_patterns(text: str, patterns: list[re.Pattern[str]]) -> list[str]:
+def _expand_section_range(sections: str) -> list[str] | None:
+    """The sections a short numeric range names, or ``None`` to keep it whole."""
+    match = _SECTION_RANGE_RE.match(sections)
+    if match is None:
+        return None
+
+    first, last = int(match.group("first")), int(match.group("last"))
+    if first >= last or last - first + 1 > _MAX_EXPANDED_SECTIONS:
+        return None
+    return [str(section) for section in range(first, last + 1)]
+
+
+def _drop_subsumed_regulations(
+    entities: list[ExtractedEntity],
+) -> list[ExtractedEntity]:
+    """Remove regulations another citation on the same document already covers.
+
+    Two redundancies survive canonicalisation, and both read on the decision page
+    as one provision listed several ways:
+
+    * a bare chapter says nothing a document that also cites "47 kap. 1 §" has not
+      already said;
+    * a range inside a longer range of the same chapter — "57 kap. 8-18 §§" against
+      "57 kap. 8-19 §§".
+
+    Only a range is ever dropped into a range, never a single section. The long
+    ranges `_canonical_regulations` leaves unexpanded are broad statutory bases:
+    letting "8 kap. 7-39 §§" swallow "8 kap. 12 §" would delete the one provision
+    the decision turns on.
+    """
+    regulations = [e for e in entities if e.type is EntityType.REGULATION]
+    names = {entity.name for entity in regulations}
+    ranges = [
+        parsed
+        for entity in regulations
+        if (parsed := _parse_canonical_range(entity.name)) is not None
+    ]
+    subsumed = {name for name in names if _is_subsumed(name, names, ranges)}
+    return [
+        entity
+        for entity in entities
+        if not (entity.type is EntityType.REGULATION and entity.name in subsumed)
+    ]
+
+
+def _parse_canonical_range(name: str) -> tuple[str, int, int] | None:
+    """``(chapter, first, last)`` for a canonical range name, else ``None``."""
+    match = _CANONICAL_RANGE_RE.match(name)
+    if match is None:
+        return None
+    return match.group("chapter"), int(match.group("first")), int(match.group("last"))
+
+
+def _is_subsumed(
+    name: str, names: set[str], ranges: list[tuple[str, int, int]]
+) -> bool:
+    chapter_match = _CANONICAL_CHAPTER_RE.match(name)
+    if chapter_match is not None:
+        prefix = f"{chapter_match.group('chapter')} kap. "
+        return any(other != name and other.startswith(prefix) for other in names)
+
+    own = _parse_canonical_range(name)
+    if own is None:
+        return False
+
+    chapter, first, last = own
+    return any(
+        other == chapter
+        and (other_first, other_last) != (first, last)
+        and other_first <= first
+        and last <= other_last
+        for other, other_first, other_last in ranges
+    )
+
+
+def _match_parishes(text: str) -> list[str]:
+    """Named parishes, dioceses and pastorat, one canonical name each.
+
+    The name is built from its parts rather than echoed from the source, so the
+    head noun is always spelled the same way and the leading words the pattern had
+    to allow through do not become part of it.
+    """
     names: list[str] = []
     seen: set[str] = set()
-    for pattern in patterns:
-        for match in pattern.finditer(text):
-            name = match.group(0).lower().strip()
-            if name not in seen:
-                seen.add(name)
-                names.append(name)
+    for match in _PARISH_RE.finditer(text):
+        words = _drop_leading_non_name(match.group("name").split())
+        if not words:
+            continue
+        name = f"{' '.join(words)} {match.group('head')}".lower()
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
     return names
+
+
+def _drop_leading_non_name(words: list[str]) -> list[str]:
+    """Strip the leading words that are not part of the name — see `_NON_NAME_WORDS`.
+
+    Leading only. A name's own words are never reconsidered once the run has
+    started, so "Mellersta Y pastorat" keeps both of its.
+    """
+    index = 0
+    while index < len(words) and _is_non_name_word(words[index]):
+        index += 1
+    return words[index:]
+
+
+def _is_non_name_word(word: str) -> bool:
+    lowered = word.lower()
+    return any(
+        re.fullmatch(re.escape(other) + _INFLECTION_SUFFIX, lowered)
+        for other in _NON_NAME_WORDS
+    )
 
 
 def _match_keywords(text: str, keywords: frozenset[str]) -> list[str]:

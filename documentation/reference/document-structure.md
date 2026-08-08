@@ -4,7 +4,7 @@ title: Decision Document Structure
 description: The anatomy of an Överklagandenämnden decision PDF — header, holding, trailer and appendices — and the anchors the pipeline segments it with.
 resource: packages/shared/src/shared/segmentation.py
 tags: [segmentation, parsing, appendix, bilaga, corpus]
-timestamp: 2026-08-04T00:00:00Z
+timestamp: 2026-08-07T00:00:00Z
 ---
 
 # Decision Document Structure
@@ -93,6 +93,16 @@ The trailer rule — a run of ellipsis characters, plain dots, or dashes, drawn 
 ways in the corpus — is stripped from the trailer as a whole line, so a `Sökord:` value
 ending in a full stop survives.
 
+## Holding anchor
+
+`_HOLDING_RE` matches either `Överklagandenämndens beslut:` followed by the ruling text,
+or the same three words alone on their own line with no colon — two decisions in the
+corpus write it that way and would otherwise lose `holding` (and with it
+`decision_outcome` and every PRIMARY entity) entirely. Requiring the colon *or* end of
+line is what keeps this from matching the in-prose citation "Överklagandenämndens beslut
+8/01", which names a different decision: that phrase is never alone on its line and never
+ends in a colon.
+
 ## Trailer fields
 
 `shared.segmentation.parse_trailer_fields(trailer) -> dict[TrailerField, str]` reads the
@@ -127,14 +137,22 @@ A decision carries **two** identifiers, and citations in the corpus use either:
 
 | | Example | Column | Canonicaliser |
 |---|---|---|---|
-| Ärendenummer | `ÖN 2025-0017`, `ÖN 2026-04` | `documents.case_number` | `normalize_case_number` → `2025-0017`, `2026-0004` (sequence zero-padded to 4 digits) |
+| Ärendenummer | `ÖN 2025-0017`, `ÖN 2026-04`, `ÖN 2021/2` | `documents.case_number` | `normalize_case_number` → `2025-0017`, `2026-0004`, `2021-0002` (sequence zero-padded to 4 digits) |
 | Beslutsnummer | `1/2026`, `23-2026` | `documents.decision_number` | `normalize_decision_number` → `1/2026`, `23/2026` |
 
-The canonical forms are **disjoint** — a beslutsnummer always contains `/`, an
+The canonical **stored** forms are **disjoint** — a beslutsnummer always contains `/`, an
 ärendenummer never does — so a reference string says for itself which column can resolve
 it. That is why `ExtractedReference` carries no separate "kind" field. See
 [document references](/data-model/document-references.md) and the
 [extract worker](/pipeline/extract.md).
+
+This holds even though a *raw* ärendenummer can be written with a slash: the registry
+wrote `ÖN 2021/2` throughout 2020–2021 and sporadically after, and slash and hyphen are
+two spellings of one identifier space, not two registries — decisions 29/2020 and
+30/2020 carry `ÖN 2020-37` and `ÖN 2020-36`, and 1/2021, the final decision in the same
+matter, lists `ÖN 2020/36, ÖN 2020/37, ÖN 2020/39`. `normalize_case_number` canonicalises
+either separator to the same hyphenated `YYYY-NNNN`, so the stored column never carries a
+slash regardless of which spelling the trailer used.
 
 Canonicalising both spellings is what makes self-reference detection work at all:
 before it, `worker-metadata` stored `2025-0017` while the extractor yielded
@@ -153,10 +171,11 @@ assumption behind padding is that the registrar never issues `2026-04` and `2026
 padding first would have turned a swallowed date into a plausible-looking `2026-0004`
 rather than an obviously wrong one.
 
-`_CASE_NUMBER_RE` also guards against reading a date or a mandate period as an
-ärendenummer, which matters because the body fallback runs this over free prose, not just
-the labelled trailer line. A sequence that is itself a year of this era is rejected — the
-mandate period `mandatperioden 2026-2029` no longer parses as case `2029` of `2026` — and a
+`_CASE_NUMBER_RE` accepts a hyphen, en dash, or slash as the year/sequence separator, and
+also guards against reading a date or a mandate period as an ärendenummer, which matters
+because the body fallback runs this over free prose, not just the labelled trailer line. A
+sequence that is itself a year of this era is rejected — the mandate period
+`mandatperioden 2026-2029` no longer parses as case `2029` of `2026` — and a
 following date component disqualifies the match — `Meddelat 2026-04-08` no longer parses as
 case `4` of `2026`. Case `1234` of `2020-1234` still parses.
 

@@ -90,6 +90,7 @@ def _make_repos(
     entity_repo.upsert = AsyncMock()
     doc_entity_repo = MagicMock()
     doc_entity_repo.upsert = AsyncMock()
+    doc_entity_repo.delete_missing_for_document = AsyncMock()
     ref_repo = MagicMock()
     ref_repo.upsert = AsyncMock()
     unresolved_repo = MagicMock()

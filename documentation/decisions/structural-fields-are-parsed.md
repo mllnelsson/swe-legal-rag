@@ -3,7 +3,7 @@ type: Decision
 title: Structural fields are parsed, not inferred
 description: Why case number, decision number, decision date, category, and lagrum citations are extracted by rule alone with no LLM fallback, and where LLM fallback is used instead.
 tags: [decisions, extraction, llm, rules, parsing]
-timestamp: 2026-08-04T00:00:00Z
+timestamp: 2026-08-07T00:00:00Z
 ---
 
 # Structural fields are parsed, not inferred
@@ -63,6 +63,15 @@ fields that have no fixed enumeration or fixed shape to write a rule against:
   judgement a regex does not have.
 * **Generative summaries** — [chunk worker](/pipeline/chunk.md)'s document summary is
   synthesis, not extraction; there is no rule to write in the first place.
+* **`case_number`, defensively** — the rule-based pass is what the corpus is measured
+  against and always wins when it finds a value, but a document whose trailer and body
+  anchors both miss still reaches the LLM. That answer is exactly the "plausible wrong
+  value" this decision is written against — the corpus has produced the diarienummer of
+  the domkapitel or stift that issued the appealed decision — so it is not accepted
+  outright: [metadata worker](/pipeline/metadata.md#identifier-validation) filters it
+  through `canonicalize_identifiers` first, and discards anything that is not built from
+  the nämnd's own markers plus a number. `decision_number` is never asked of the LLM at
+  all (see [metadata worker](/pipeline/metadata.md)).
 
 This round of fixes also makes that fallback fire *less* — worth recording so it is not
 read as the fallback becoming less useful. `_is_result_complete`'s entity-density check

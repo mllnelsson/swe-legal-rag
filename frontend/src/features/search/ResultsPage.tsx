@@ -81,6 +81,7 @@ export function ResultsPage() {
             effectiveQueries={search.data.effective_queries}
             total={search.data.total}
             diagnostics={search.data.diagnostics}
+            expandRequested={state.expand}
           />
 
           {activeFilters.length > 0 && (

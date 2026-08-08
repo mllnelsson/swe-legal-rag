@@ -123,7 +123,14 @@ _TRAILER_START_PATTERNS = (
     re.compile(r"^[ \t]*Ärendenummer:", re.MULTILINE),
 )
 
-_HOLDING_RE = re.compile(r"^[ \t]*Överklagandenämndens beslut:[ \t]*", re.MULTILINE)
+# The holding opens either "Överklagandenämndens beslut: <the decision>" or with the
+# same words as a bare heading on their own line. Only those two: the colon and the
+# end of the line are what separate the anchor from the in-prose citation
+# "Överklagandenämndens beslut 8/01", which names a *different* decision and must
+# never be read as the start of this one's holding.
+_HOLDING_RE = re.compile(
+    r"^[ \t]*Överklagandenämndens beslut(?::[ \t]*|[ \t]*$)", re.MULTILINE
+)
 
 # The typographic rule separating the trailer from the first appendix — a run of
 # ellipsis characters, dots, or dashes; the corpus draws it every one of those
@@ -134,6 +141,13 @@ _RULE_LINE_RE = re.compile(r"^[ \t]*[….\-–—_]{2,}[ \t]*$")
 # Ärendenummer: "ÖN 2026-0014", "ÖN 2026-04", "2026-0005" — the ÖN and Dnr markers
 # are both optional because the corpus omits them on some trailer lines.
 #
+# The separator is a slash as often as a hyphen. The registry wrote "ÖN 2021/2"
+# throughout 2020 and 2021 and sporadically after, and the two are spellings of one
+# identifier space rather than two registries: decisions 29/2020 and 30/2020 carry
+# "ÖN 2020-37" and "ÖN 2020-36", and 1/2021 — the final decision in the same matter,
+# of which those two were the interim rulings — lists "ÖN 2020/36, ÖN 2020/37, ÖN
+# 2020/39". Accepting both is what lets `normalize_case_number` give them one name.
+#
 # Two guards stop a year being read as an ärendenummer, which matters because the
 # body fallback runs this over free prose:
 #
@@ -142,8 +156,12 @@ _RULE_LINE_RE = re.compile(r"^[ \t]*[….\-–—_]{2,}[ \t]*$")
 #     kept;
 #   * a following date component disqualifies the match, so "Meddelat 2026-04-08"
 #     does not read as case 4 of 2026.
+#
+# Nothing anchors the left edge, deliberately: two trailers in the corpus read
+# "ÖN 32020/33" and "ÖN 32020/35", a stray digit the PDF glued to the front, and
+# scanning past it recovers the ärendenummer the surrounding sequence confirms.
 _CASE_NUMBER_RE = re.compile(
-    r"(?:ÖN\s*)?(?:dnr\s*)?(\d{4})\s*[-–]\s*(?!(?:19|20)\d{2}\b)(\d{1,4})\b(?![-–]\s*\d)",
+    r"(?:ÖN\s*)?(?:dnr\s*)?(\d{4})\s*[-–/]\s*(?!(?:19|20)\d{2}\b)(\d{1,4})\b(?![-–/]\s*\d)",
     re.IGNORECASE,
 )
 

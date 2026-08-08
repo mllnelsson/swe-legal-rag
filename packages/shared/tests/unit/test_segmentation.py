@@ -229,6 +229,30 @@ class TestHolding:
     def test_no_holding_anchor(self) -> None:
         assert split_document("Beslut i ärendet.\nSökord: X\n").holding is None
 
+    def test_the_anchor_written_as_a_bare_heading(self) -> None:
+        # Two corpus decisions head the holding without a colon. Missing it cost
+        # them their holding, and with it `decision_outcome` and every PRIMARY
+        # entity — the whole point of segmenting.
+        text = (
+            "YRKANDE M.M.\n"
+            "A har överklagat.\n"
+            "Överklagandenämndens beslut\n"
+            "Överklagandenämnden avslår överklagandet.\n"
+            "Sökord: Avvisning.\n"
+        )
+        assert (
+            split_document(text).holding == "Överklagandenämnden avslår överklagandet."
+        )
+
+    def test_the_anchor_is_not_matched_in_prose(self) -> None:
+        # "Överklagandenämndens beslut 8/01" names a different decision. Reading it
+        # as this one's holding would attribute another ruling's words to it.
+        text = (
+            "Jfr Överklagandenämndens beslut 8/01 och 2/04.\n"
+            "Nämnden avslår överklagandet.\n"
+        )
+        assert split_document(text).holding is None
+
 
 class TestNormalizeCaseNumber:
     def test_strips_the_on_prefix(self) -> None:
@@ -289,6 +313,29 @@ class TestNormalizeCaseNumber:
             "2025-0017"
         )
 
+    def test_the_slash_spelling_is_the_same_identifier(self) -> None:
+        # The registry wrote "ÖN 2021/2" through 2020 and 2021. Not accepting it
+        # left 41 decisions with no ärendenummer at all and sent 58 documents to
+        # the LLM fallback for a field their own trailer states.
+        assert normalize_case_number("Ärendenummer: ÖN 2021/2") == "2021-0002"
+
+    def test_both_separators_reach_the_same_canonical_form(self) -> None:
+        # Decision 30/2020 writes "ÖN 2020-36"; 1/2021 — the final decision in the
+        # same matter — writes "ÖN 2020/36" for the same ärende.
+        assert normalize_case_number("ÖN 2020/36") == normalize_case_number(
+            "ÖN 2020-36"
+        )
+
+    def test_a_stray_leading_digit_is_scanned_past(self) -> None:
+        # Two corpus trailers read "ÖN 32020/33" and "ÖN 32020/35". The recovered
+        # numbers are the ones the surrounding decisions confirm.
+        assert normalize_case_number("Ärendenummer: ÖN 32020/33") == "2020-0033"
+
+    def test_a_beslutsnummer_is_not_an_arendenummer(self) -> None:
+        # The two spaces must stay disjoint now that both can be written with a
+        # slash: an ärendenummer leads with the year, a beslutsnummer ends with it.
+        assert normalize_case_number("Beslut: 5/2021") is None
+
 
 class TestNormalizeDecisionNumber:
     def test_plain_form(self) -> None:
@@ -322,9 +369,13 @@ class TestNormalizeDecisionNumber:
         assert normalize_decision_number(text) is None
 
     def test_disjoint_from_case_numbers(self) -> None:
-        # Resolution relies on the two spaces never colliding.
-        assert "/" in "1/2026"
-        assert "/" not in "2025-0017"
+        # Resolution relies on the two spaces never colliding. The separator no
+        # longer says which is which — both are written with a slash somewhere in
+        # the corpus — so what keeps them apart is which side carries the year.
+        assert normalize_decision_number("5/2021") == "5/2021"
+        assert normalize_case_number("5/2021") is None
+        assert normalize_case_number("ÖN 2021/5") == "2021-0005"
+        assert normalize_decision_number("ÖN 2021/5") is None
 
 
 class TestParseKeywords:

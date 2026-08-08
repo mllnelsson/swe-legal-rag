@@ -1,7 +1,8 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from shared.dtos.document import DocumentCreate, DocumentRead, DocumentUpdate
 from shared.models.document import Document
@@ -37,11 +38,20 @@ async def get_by_source_url(
 async def get_by_case_number(
     session: AsyncSession, case_number: str
 ) -> DocumentRead | None:
-    result = await session.execute(
-        select(Document).where(Document.case_number == case_number)
-    )
-    doc = result.scalar_one_or_none()
-    return DocumentRead.model_validate(doc) if doc else None
+    """Look up by ärendenummer ("2025-0017"), earliest decision first.
+
+    Neither identifier is unique in the corpus, so neither lookup may assume it.
+    An ärendenummer names an *ärende*, and the nämnd rules more than once within
+    one: decisions 4/2020, 5/2020 and 8/2020 all carry ÖN 2020/12 — jäv,
+    vilandeförklaring and muntlig förhandling in a single matter. A citation to the
+    number names the matter, and nothing in the citing sentence says which ruling.
+
+    Taking the earliest is deterministic, not correct — there is no correct answer
+    to pick. What it replaces is worse than either: `scalar_one_or_none` raised on
+    the second row, which failed the *citing* document's extract step over an
+    ambiguity in the document it cited.
+    """
+    return await _first_matching(session, Document.case_number == case_number)
 
 
 async def get_by_decision_number(
@@ -50,10 +60,21 @@ async def get_by_decision_number(
     """Look up by beslutsnummer ("1/2026") rather than ärendenummer.
 
     Decisions cite each other in both identifier spaces, so reference resolution
-    has to try both.
+    has to try both. Not unique either, for a different reason: the source listing
+    publishes decision 21/2021 twice, under two document ids, with byte-identical
+    text. See `get_by_case_number` for why that is answered rather than raised on.
     """
+    return await _first_matching(session, Document.decision_number == decision_number)
+
+
+async def _first_matching(
+    session: AsyncSession, predicate: ColumnElement[bool]
+) -> DocumentRead | None:
     result = await session.execute(
-        select(Document).where(Document.decision_number == decision_number)
+        select(Document)
+        .where(predicate)
+        .order_by(nulls_last(Document.decision_date), Document.id)
+        .limit(1)
     )
     doc = result.scalar_one_or_none()
     return DocumentRead.model_validate(doc) if doc else None

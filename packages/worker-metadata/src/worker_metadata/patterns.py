@@ -39,6 +39,21 @@ _CATEGORY_OFFSET = 2
 _HEADER_SEARCH_LINES = 10
 
 
+# The two fields that name a document in a registry rather than describe it, and so
+# the two an answer can be *wrong* about rather than merely imprecise.
+IDENTIFIER_FIELDS = ("case_number", "decision_number")
+
+# Everything an identifier answer is allowed to consist of: the nämnd's own optional
+# markers, and the number. Nothing else, because the canonicalisers *scan* — they have
+# to, to read "Ärendenummer: ÖN 2025-0017" off a trailer line — and scanning is exactly
+# wrong for a free-text answer. "DK 2020-0007" is the domkapitel's diarienummer and
+# "S 2020-0365" the stift's; both scan down to a well-formed ärendenummer belonging to
+# a registry that is not this one. Only the prefix ever said otherwise.
+_BARE_IDENTIFIER_RE = re.compile(
+    r"(?:ÖN[ \t]*)?(?:dnr[ \t]*)?[\d\s/–-]+", re.IGNORECASE
+)
+
+
 @dataclasses.dataclass
 class MetadataResult:
     case_number: str | None = None
@@ -46,6 +61,38 @@ class MetadataResult:
     decision_date: datetime.date | None = None
     decision_outcome: str | None = None
     category: str | None = None
+
+
+def canonicalize_identifiers(result: MetadataResult) -> MetadataResult:
+    """Reduce the identifier fields to canonical form, dropping what is not one.
+
+    The rule-based pass reads identifiers off labelled trailer lines and hands them
+    straight to the canonicalisers, so this changes nothing for it. It exists for the
+    LLM fallback, whose answers are free text: over the 2020-2026 corpus the model
+    returned the appealed decision's diarienummer (`DK 2020-0007`, on three unrelated
+    decisions), the stift's (`S 2020-0365`), and the right ärende in a spelling
+    nothing could resolve against (`ÖN 2020-3`). Every one of those was stored.
+
+    A value that is not one becomes ``None``, which is what the column means: this
+    document does not state one. A plausible wrong identifier is worse than a missing
+    one — it silently misfiles the decision and can resolve another document's
+    citation to it.
+    """
+    return dataclasses.replace(
+        result,
+        case_number=_identifier_or_none(result.case_number, normalize_case_number),
+        decision_number=_identifier_or_none(
+            result.decision_number, normalize_decision_number
+        ),
+    )
+
+
+def _identifier_or_none(
+    value: str | None, normalize: Callable[[str], str | None]
+) -> str | None:
+    if value is None or _BARE_IDENTIFIER_RE.fullmatch(value.strip()) is None:
+        return None
+    return normalize(value)
 
 
 def extract_case_number(segments: DocumentSegments) -> str | None:

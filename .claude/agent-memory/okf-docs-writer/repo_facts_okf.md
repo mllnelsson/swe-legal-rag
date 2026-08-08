@@ -50,3 +50,51 @@ significantly from the PRD's chat-first requirements. Product requirements are a
 product decision, not something to silently rewrite during a docs-sync pass — flag
 this as Uncertain/out-of-scope rather than editing prd.md, unless a future
 instruction explicitly asks for the PRD itself to be brought current.
+
+## Uncommitted-diff pattern is normal here, not just a worktree edge case
+On the `feature/feedback-after-ingest` pass (2026-08-07), `git diff main...HEAD` /
+`git log main..HEAD` were *also* empty even though `git status` showed a long list of
+modified/untracked files — same root cause as the worktree note above (this branch was
+even with `main` at the same commit). Always run `git status` + `git diff` (working
+tree, no refs) as a fallback the moment the three-dot diff comes back empty; do not
+conclude "nothing changed."
+
+## Pipeline/data-model mapping learned on the ärendenummer/entity-hygiene pass
+- Segmentation anchor regex changes (`shared/segmentation.py`, e.g. `_CASE_NUMBER_RE`,
+  `_HOLDING_RE`) map to `documentation/reference/document-structure.md` (the "Anchors" /
+  "Identifier spaces" sections), not to `pipeline/metadata.md` — that file documents the
+  *worker*, this one documents the *document format* the worker relies on.
+- New validation logic in `worker-metadata/patterns.py` (e.g.
+  `canonicalize_identifiers`) that guards an LLM fallback answer belongs in
+  `pipeline/metadata.md` as its own subsection, AND, if it contradicts a blanket claim in
+  `decisions/structural-fields-are-parsed.md` ("field X has no LLM fallback" when the code
+  actually has a narrow defensive fallback), add a carve-out bullet there rather than
+  editing the top-line Decision statement — the decision's exceptions list already exists
+  for this pattern.
+- Rule-based entity-extraction tuning in `worker-extract/extractors/rule_based.py`
+  (regulation range expansion/subsumption, parish name-matching) maps to
+  `pipeline/extract.md`'s "Rule-based extraction" bullets — NOT to
+  `data-model/entities.md`, which only documents the table shape, not the extraction
+  rules that populate it.
+- A repo function that changes what persistence *does on re-run* (e.g.
+  `delete_missing_for_document` making `persist_entities` replace rather than
+  union-append a document's entity set) needs edits in three places: the worker doc
+  (`pipeline/extract.md`, in Persistence), the table doc for the junction table affected
+  (`data-model/document-entities.md`), and the repository catalogue
+  (`data-model/repositories.md`, Notable functions list).
+- A repo lookup function going from `scalar_one_or_none()` (raises on 2 rows) to
+  "take first ordered by X" is a `data-model/repositories.md` Notable-functions edit;
+  check whether the *reason* two rows can exist is corpus-specific (worth explaining) or
+  generic.
+- Frontend state additions gated by a URL param (e.g. `SearchState.expand` /
+  `?utoka=1`) that call an existing, already-documented backend feature (query expansion)
+  need edits in *both* `frontend/overview.md` (what the UI control does) and the
+  feature's own retrieval concept (`retrieval/query-expansion.md`, "reachable from the
+  UI" style section) — and grep the feature's doc for stale claims like "the UI never
+  sends this" before trusting it's still true.
+- `frontend/honesty-rules.md` is scoped tightly to claims backed by a test in
+  `src/components/research/honesty-rules.test.tsx`. A new frontend behavior that makes an
+  honest-sounding claim (e.g. `SearchSummary` attributing expanded phrasings to a model)
+  but has no test in that specific file should NOT be added as a numbered honesty rule —
+  document it in `frontend/overview.md` instead, and only fold it into honesty-rules.md
+  if/when a test for it lands there.

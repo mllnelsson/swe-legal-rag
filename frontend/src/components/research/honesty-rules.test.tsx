@@ -231,3 +231,50 @@ describe("a query whose words appear nowhere is flagged as matched by meaning", 
     expect(screen.queryByText(/Inget matchade i besluten själva/)).not.toBeInTheDocument();
   });
 });
+
+describe("rule 12 — generated phrasings are attributed to the model", () => {
+  test("a plain search says nothing about expansion", () => {
+    render(
+      <SearchSummary effectiveQueries={["jäv"]} total={3} diagnostics={makeDiagnostics()} />,
+    );
+    expect(screen.queryByText(/språkmodell/i)).not.toBeInTheDocument();
+  });
+
+  test("the extra phrasings are named as the model's, not the user's", () => {
+    render(
+      <SearchSummary
+        effectiveQueries={["jäv", "jävsinvändning", "opartiskhet"]}
+        total={3}
+        diagnostics={makeDiagnostics({ expanded: true })}
+        expandRequested
+      />,
+    );
+    expect(screen.getByText(/föreslagna av en språkmodell/)).toBeInTheDocument();
+  });
+
+  test("expansion that failed says so rather than passing for a plain search", () => {
+    // It fails open, so the results are real — but the search the user asked for
+    // is not the search that ran.
+    render(
+      <SearchSummary
+        effectiveQueries={["jäv"]}
+        total={3}
+        diagnostics={makeDiagnostics({ expanded: false })}
+        expandRequested
+      />,
+    );
+    expect(screen.getByText(/kunde inte hämtas/)).toBeInTheDocument();
+  });
+
+  test("a model that proposed nothing does not point at phrasings that are not there", () => {
+    render(
+      <SearchSummary
+        effectiveQueries={["jäv"]}
+        total={3}
+        diagnostics={makeDiagnostics({ expanded: true })}
+        expandRequested
+      />,
+    );
+    expect(screen.getByText(/inga andra formuleringar/)).toBeInTheDocument();
+  });
+});

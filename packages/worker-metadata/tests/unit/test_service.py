@@ -236,6 +236,58 @@ async def test_both_fail_all_none_still_completes() -> None:
     publisher.publish.assert_called_once()
 
 
+async def test_llm_identifier_that_is_not_one_is_discarded() -> None:
+    # `DK 2020-0007` is the *domkapitel's* diarienummer. The model read it out of
+    # the body and it was stored on three unrelated decisions. A missing
+    # ärendenummer is what the column means; a plausible wrong one misfiles the
+    # decision and can resolve another document's citation to it.
+    doc = _make_doc_read()
+    task = _make_task_read(doc.id)
+    session, doc_repo, task_repo, publisher = _make_deps(task, doc)
+
+    rule_extractor = MagicMock(return_value=MetadataResult())
+    llm_extractor = AsyncMock(return_value=MetadataResult(case_number="DK 2020-0007"))
+
+    await _call(
+        doc.id,
+        task.id,
+        session,
+        doc_repo,
+        task_repo,
+        publisher,
+        rule_extractor,
+        llm_extractor,
+    )
+
+    _session, _doc_id, update_dto = doc_repo.update.call_args[0]
+    assert update_dto.case_number is None
+
+
+async def test_llm_identifier_in_a_stale_spelling_is_canonicalised() -> None:
+    # The right ärende in a spelling nothing could ever resolve against. Stored raw,
+    # "2020/01" and "ÖN 2020-3" were unreachable from every citation to them.
+    doc = _make_doc_read()
+    task = _make_task_read(doc.id)
+    session, doc_repo, task_repo, publisher = _make_deps(task, doc)
+
+    rule_extractor = MagicMock(return_value=MetadataResult())
+    llm_extractor = AsyncMock(return_value=MetadataResult(case_number="2020/01"))
+
+    await _call(
+        doc.id,
+        task.id,
+        session,
+        doc_repo,
+        task_repo,
+        publisher,
+        rule_extractor,
+        llm_extractor,
+    )
+
+    _session, _doc_id, update_dto = doc_repo.update.call_args[0]
+    assert update_dto.case_number == "2020-0001"
+
+
 async def test_exception_during_processing_marks_task_failed() -> None:
     doc = _make_doc_read()
     task = _make_task_read(doc.id)

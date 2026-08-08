@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from _fsstore import store_of
@@ -27,3 +29,12 @@ async def upsert(
     )
     rows.append(de)
     return de
+
+
+async def delete_missing_for_document(
+    session: AsyncSession, document_id: uuid.UUID, entity_ids: set[uuid.UUID]
+) -> None:
+    rows = _rows(session)
+    rows[:] = [
+        de for de in rows if de.document_id != document_id or de.entity_id in entity_ids
+    ]

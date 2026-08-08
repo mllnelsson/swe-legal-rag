@@ -4,7 +4,7 @@ title: Repository Layer
 description: The function-based data-access layer bridging SQLAlchemy models and Pydantic DTOs, injected into services as Protocol-typed namespaces.
 resource: packages/shared/src/shared/repositories
 tags: [data-model, repositories, data-layer, dto, protocol]
-timestamp: 2026-08-05T12:00:00Z
+timestamp: 2026-08-07T00:00:00Z
 ---
 
 # Repository Layer
@@ -35,7 +35,13 @@ the session/dependency flow explicit.
 ## Notable functions
 
 - `document.update` — `model_dump(exclude_none=True)`, updating only provided fields
-- `document.get_by_case_number` — lookup by `case_number`
+- `document.get_by_case_number` / `document.get_by_decision_number` — lookup by either
+  identifier. Neither is unique in the corpus: an ärendenummer names an *ärende*, and the
+  nämnd rules more than once within one (three decisions can share one case number), and
+  the source listing separately publishes one decision twice under two document ids. Both
+  functions order by `decision_date` (nulls last, then `id`) and return the earliest match
+  rather than raising on a second row — there is no correct row to prefer, but raising
+  failed the *citing* document's extract step over an ambiguity in the document it cited.
 - `task.update_status` — sets `started_at` on `processing`, `completed_at` on
   `completed`/`failed` (compared against `TaskStatus` members)
 - `task.count_by_step_and_status(session)` — `GROUP BY step, status` counts as a
@@ -44,6 +50,10 @@ the session/dependency flow explicit.
   backfill that is far more tasks than there is reason to load
 - `entity.upsert` — check-then-insert on the `(name, type)` unique constraint
 - `document_entity.upsert` — check-then-insert; upgrades `mentioned` → `primary`
+- `document_entity.delete_missing_for_document(session, document_id, entity_ids)` —
+  deletes a document's `document_entities` rows for any entity outside `entity_ids`. Used
+  by [`persist_entities()`](/pipeline/extract.md) so re-extracting a document replaces its
+  entity set instead of only adding to it; leaves `entities` rows untouched.
 - `document_reference.upsert` — idempotent insert on the composite PK
 - `unresolved_reference.upsert/get_by_target_case_number/delete` — manages refs pending
   reconciliation

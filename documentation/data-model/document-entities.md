@@ -4,7 +4,7 @@ title: document_entities
 description: Junction table mapping entities to documents with a relevance weight (primary or mentioned).
 resource: postgres://document_entities
 tags: [data-model, table, junction, graph]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-07T00:00:00Z
 ---
 
 # `document_entities`
@@ -32,3 +32,12 @@ A row linking to a `keyword`-typed [entity](/data-model/entities.md) is always
 about, not an incidental mention extraction happened to pick up. That is also why
 [`/api/keywords/{id}/documents`](/api/keyword-documents.md), unlike the concept
 traversal, takes no `relevance` parameter — there is nothing to narrow by.
+
+Re-extracting a document replaces its full set of rows here rather than adding to it:
+[`persist_entities()`](/pipeline/extract.md) deletes any row for the document whose
+`entity_id` is not in what the new run just wrote, via
+`document_entity.delete_missing_for_document`. This is what makes a corrected extraction
+rule visible in the data — without it, the corrected entity set would sit beside the
+superseded one it was meant to replace. The corresponding rows in
+[`entities`](/data-model/entities.md) are never deleted; an entity nothing links to is
+unreachable rather than wrong.

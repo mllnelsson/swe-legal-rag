@@ -4,7 +4,7 @@ title: Extract Worker
 description: Subscriber worker that extracts entities, declared keywords, and cross-references from document text into the graph-in-Postgres tables, then enqueues chunk tasks.
 resource: packages/worker-extract
 tags: [pipeline, worker, extract, entities, keywords, references, graph]
-timestamp: 2026-08-04T00:00:00Z
+timestamp: 2026-08-07T00:00:00Z
 ---
 
 # Extract Worker (`packages/worker-extract/`)
@@ -100,18 +100,48 @@ Pure functions, no I/O:
   case-sensitively and word-anchored: lower-cased it is an ordinary Swedish noun, and
   requiring the statute's name at all is what keeps tryckfrihetsförordningen, OSL,
   rättegångsbalken and kyrkolagen — all cited in the identical `N kap. M §` shape — out of
-  the regulation vocabulary. `_canonical_regulation` normalises every match to one
+  the regulation vocabulary. `_canonical_regulations` normalises every match to one
   spelling, **`N kap. M § kyrkoordningen`** (`N kap. kyrkoordningen` with no section).
-  Two judgement calls are baked into that canonical form: the sub-clause is dropped, since
-  `58 kap. 18 §` and `58 kap. 18 § tredje stycket` cite the same provision and keeping them
-  apart would fragment the vocabulary the entity graph exists to join on; and a range is
-  normalised but **not expanded** — `57 kap. 8-19 §§` stays one entity, not twelve.
-  Range-expansion is deferred as a separate judgement about entity granularity, not ruled
-  out. Measured over the 25-document corpus: 213 of 215 citations put the lagrum first
-  (`58 kap. 1 § kyrkoordningen`), which the patterns previously did not match at all —
-  `EntityType.REGULATION` went from an empty vocabulary (0 rows, 0 documents) to 104 rows
-  across 59 distinct names in 24 of 25 documents; the 25th genuinely cites no lagrum.
-- **Parishes:** `X församling`, `X stift`, `församlingen i X`
+  The sub-clause is dropped, since `58 kap. 18 §` and `58 kap. 18 § tredje stycket` cite
+  the same provision and keeping them apart would fragment the vocabulary the entity graph
+  exists to join on. Measured over the 25-document corpus: 213 of 215 citations put the
+  lagrum first (`58 kap. 1 § kyrkoordningen`), which the patterns previously did not match
+  at all — `EntityType.REGULATION` went from an empty vocabulary (0 rows, 0 documents) to
+  104 rows across 59 distinct names in 24 of 25 documents; the 25th genuinely cites no
+  lagrum.
+
+  A range is normalised, then **expanded when short**: a numeric range of at most 6
+  provisions becomes one entity per section, so `47 kap. 1-3 §§` and `47 kap. 1 §` collapse
+  to the same vocabulary rather than sitting beside it as two overlapping ones. A longer
+  range stays whole — `57 kap. 8-19 §§` is the header lagrum line of 54 decisions, the
+  statutory basis of the appeal rather than a targeted citation, and splitting it into
+  twelve entities would bury the provisions a decision actually turns on.
+
+  Once every citation on a document has been canonicalised, `_drop_subsumed_regulations`
+  removes what another citation on the same document already covers: a range strictly
+  contained in another range of the same chapter (`57 kap. 8-18 §§` given `57 kap. 8-19
+  §§`), and a bare `N kap. kyrkoordningen` when the document also cites any section of that
+  chapter. Only ranges are ever dropped into a range — a single section is never subsumed,
+  since the long ranges left unexpanded are broad statutory bases and `8 kap. 12 §` has to
+  survive next to `8 kap. 7-39 §§`. Subsumption runs over the whole merged entity list
+  (holding, body and appendices together), since whether a chapter is also cited at section
+  level is a fact about the decision, not about the segment a citation happened to sit in.
+  Measured on the live corpus: regulation links go from 673 to 626, and decision 5/2021's
+  Lagrum list from 10 entries to 6.
+- **Parishes:** a bounded run of up to three **capitalised** words immediately before
+  `församling`, `stift`, or `pastorat` — a lower-case word cannot join the run, which is
+  what stops `Kyrkofullmäktige i Y församling` from matching past `Y`. Leading
+  sentence-openers, prepositions and role nouns (words already extracted as their own
+  `ROLE` entity, like `kyrkofullmäktige`) are stripped from the front of the match before
+  the name is built, so one mention no longer produces three overlapping entities
+  (`kyrkofullmäktige i y församling`, `beslut kyrkofullmäktige i y församling`, `motpart
+  kyrkofullmäktige i y församling`) for what is one parish. The name is built from its
+  remaining words rather than echoed from the source, so the head noun is always spelled
+  the same way regardless of source casing. `pastorat` is a recognised head noun — the
+  corpus names one 224 times. Measured on the live corpus: distinct parish entities go from
+  122 to 43. 134 of the 185 decisions are anonymised, so most of this vocabulary is the
+  placeholders `x stift` and `y församling`/`y pastorat` — that is the corpus describing
+  itself, not the extractor failing.
 - **Roles:** exact-word lookup from a known set (`kyrkoherde`, `kyrkoråd`,
   `kyrkofullmäktige`, `biskop`, `domkapitel`, `kontraktsprost`, `domprost`,
   `stiftsstyrelse`) with Swedish definite/genitive suffix handling
@@ -157,7 +187,16 @@ than inferred one, and would silently create a second path to the same data if k
 
 `persist_entities()` deduplicates within the batch (primary beats mentioned), upserts
 each entity (`entity.upsert`, unique on `name, type`), then upserts the
-`document_entities` row (upgrading `mentioned` → `primary` if re-seen as primary).
+`document_entities` row (upgrading `mentioned` → `primary` if re-seen as primary). It then
+calls `document_entity.delete_missing_for_document(session, document_id, written_ids)`
+with the entity ids it just wrote, deleting any of this document's `document_entities`
+rows pointing elsewhere — so re-extracting a document **replaces** its entity set rather
+than adding to it. Without this, re-running extraction after a rule change (like the
+regulation or parish rules above) would add the corrected entities and leave the
+superseded ones sitting beside them, indistinguishable from the fix not having worked.
+Rows in [`entities`](/data-model/entities.md) itself are left alone: an entity no document
+links to is unreachable, not wrong, and stays available if a later document cites it
+again.
 
 `process_references()` skips any reference matching one of the document's **own**
 identifiers (`case_number` or `decision_number`), then resolves the rest. Because the

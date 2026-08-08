@@ -1,4 +1,5 @@
 import { Icon } from "../../components/display/Icon";
+import type { IconName } from "../../components/display/icon-paths";
 import { Tag } from "../../components/display/Tag";
 import { Input } from "../../components/forms/Input";
 import { Select } from "../../components/forms/Select";
@@ -35,11 +36,71 @@ function toOptions(values: FacetValue[], shorten?: (value: string) => string) {
 
 const ANY = "";
 
+function RailHeading({ icon, children }: { icon: IconName; children: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+      <Icon name={icon} size={15} color="var(--text-muted)" />
+      <span
+        style={{
+          fontSize: "var(--text-overline-size)",
+          letterSpacing: "var(--text-overline-ls)",
+          textTransform: "uppercase",
+          fontWeight: "var(--text-overline-weight)",
+          color: "var(--text-faint)",
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+}
+
+/* The one control here that does not come from `/facets`. Rendered outside the
+ * `facets.data` gate on purpose: it needs no vocabulary, and hiding it while the
+ * facets load — or for good, if that call fails — would make expansion
+ * unreachable for a reason that has nothing to do with it. */
+function ExpandToggle({ state, onChange }: FacetRailProps) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      <RailHeading icon="search">Sökning</RailHeading>
+      <label
+        style={{
+          display: "flex",
+          gap: "var(--space-3)",
+          fontSize: "var(--text-small-size)",
+          color: "var(--text-body)",
+          cursor: "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={state.expand}
+          onChange={(event) => onChange({ ...state, expand: event.target.checked, page: 1 })}
+        />
+        Sök även på omformuleringar av frågan
+      </label>
+    </div>
+  );
+}
+
+const RAIL_STYLE = {
+  width: "var(--sidebar-w)",
+  flex: "none",
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-7)",
+  fontFamily: "var(--font-sans)",
+} as const;
+
 export function FacetRail({ state, onChange }: FacetRailProps) {
   const facets = useFacets();
 
   if (facets.data === undefined) {
-    return <aside style={{ width: "var(--sidebar-w)", flex: "none" }} />;
+    return (
+      <aside style={RAIL_STYLE}>
+        <ExpandToggle state={state} onChange={onChange} />
+      </aside>
+    );
   }
 
   const { categories, decision_outcomes, keywords, earliest_decision_date, latest_decision_date } =
@@ -53,30 +114,12 @@ export function FacetRail({ state, onChange }: FacetRailProps) {
   }
 
   return (
-    <aside
-      style={{
-        width: "var(--sidebar-w)",
-        flex: "none",
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--space-7)",
-        fontFamily: "var(--font-sans)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-        <Icon name="funnel" size={15} color="var(--text-muted)" />
-        <span
-          style={{
-            fontSize: "var(--text-overline-size)",
-            letterSpacing: "var(--text-overline-ls)",
-            textTransform: "uppercase",
-            fontWeight: "var(--text-overline-weight)",
-            color: "var(--text-faint)",
-          }}
-        >
-          Avgränsa
-        </span>
-      </div>
+    <aside style={RAIL_STYLE}>
+      {/* Above "Avgränsa" and outside it, because it is not a filter: everything
+          below narrows the corpus, this widens the query. */}
+      <ExpandToggle state={state} onChange={onChange} />
+
+      <RailHeading icon="funnel">Avgränsa</RailHeading>
 
       {/* Categories are free text lifted by regex, not a vocabulary. The live corpus
           holds both "Utlämnande av handling" and "Utlämnande av handlingar", and both

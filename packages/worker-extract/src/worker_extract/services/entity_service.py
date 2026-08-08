@@ -19,6 +19,7 @@ async def persist_entities(
     entities: list[ExtractedEntity],
 ) -> None:
     deduped = deduplicate_entities(entities)
+    written: set[UUID] = set()
     for entity in deduped:
         normalized_name = normalize_entity_name(entity.name)
         entity_read = await entity_repo.upsert(
@@ -32,3 +33,10 @@ async def persist_entities(
                 relevance=entity.relevance,
             ),
         )
+        written.add(entity_read.id)
+
+    # This document's entity set is whatever this run found — not that union'd with
+    # whatever every previous run found. Without the delete, re-extracting after a
+    # rule change adds the corrected entities and keeps the superseded ones beside
+    # them, which is indistinguishable from the fix not having worked.
+    await doc_entity_repo.delete_missing_for_document(session, document_id, written)
