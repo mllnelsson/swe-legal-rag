@@ -1,5 +1,36 @@
 # Applying branch `feature/feedback-after-ingest` to `overklagan`
 
+## The loop from last time — still not applied
+
+```bash
+for id in $(psql -d overklagan -At -c "select id from documents order by decision_date;"); do
+  uv run python scripts/run_step.py metadata "$id"
+  uv run python scripts/run_step.py extract  "$id"
+done
+```
+
+Still the right two steps, and `overklagan` confirms it has not run: 43 documents have
+no `case_number`, 6 hold a `DK`/`S`/`ÖN` prefix and 9 the slash form — exactly the
+pre-fix state.
+
+Three things have to happen around it now, though, so don't run it as it stands:
+
+- **Steps 1 and 2 below come first.** The duplicate 21/2021 has to go before the new
+  unique constraint can be built, and the migration has to be in before extract writes
+  anything.
+- **`document_references` needs truncating first** (step 4). It has no delete path —
+  only upsert — so when metadata corrects those 58 identifiers, every citation that
+  previously resolved to the wrong target keeps its wrong edge forever.
+- **Split it into two passes** rather than interleaving per document. Metadata for the
+  whole corpus, then extract for the whole corpus: a citation can only resolve against
+  identifiers that are already correct, and doing it in one pass leaves that to
+  `reconcile_references` to clean up afterwards.
+
+Steps 3 and 4 below are that loop, split and with the truncate in front. The rest is the
+same work you already had queued.
+
+---
+
 `overklagan` is yours — nothing in this branch has been run against it. Everything below
 was run verbatim against the `overklagan_coding_agent` sandbox first; the observed
 numbers are recorded at each step so you can tell a good run from a bad one.
