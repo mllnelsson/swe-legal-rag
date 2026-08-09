@@ -146,3 +146,79 @@ conclude "nothing changed."
   convention in this bundle (`testing.md`, `observability.md`, `local-dev.md`, etc.) —
   fine to use for pointing at a subsection within the same file or, combined with the
   `/path.md#slug` form, a subsection of another file.
+
+## `packages/agents/` mapping (the text-to-SQL agent, 2026-08-08)
+- New top-level `type: Package` concept is `documentation/packages/agents.md`, not folded
+  into `packages/ai.md` — an *agent* (stateless LLM tool loop, no session/streaming) is a
+  distinct kind of thing from `ai`'s prompt/DTO/service-function toolkit even though
+  `agents` depends on `ai`. If a second agent is ever added (not just the SQL one), it
+  gets its own section/subsection in this same file, matching how `agents/sql/` is one
+  subpackage of the `agents` package.
+- The wire contract (`agents/sql/_dtos.py` — `SqlAgentRequest`/`SqlAgentResult`/etc.) maps
+  to `api/sql-agent.md` (the `API Endpoint`), not to `packages/agents.md` — same
+  request/response-vs-module-structure split already used for `api/search.md` vs
+  `packages/api.md`.
+- A grounding/safety mechanism enforced *in code* (a tool executor refusing to run a query
+  until a precondition function has been called) is a `Decision` doc
+  (`decisions/sql-agent.md`), not just prose in the package doc — the package doc
+  describes *what* the modules do, the decision doc carries the *why*, the rejected
+  alternative (a structured query DTO), and the safety trade-off (table allow-list instead
+  of a dedicated DB role). Both docs cross-link into each other rather than one absorbing
+  the other's content.
+- A new `LLMRole` member is a **four-place fan-out**, not one: `packages/ai.md`'s role
+  table AND its `LLMRole` enum listing, `reference/llm-config.md`'s env-var registry row
+  for `LLM_MODEL_<ROLE>` (and its illustrative YAML block, which mirrors the real
+  `llm_config.yaml` closely enough that leaving a role out of it reads as stale), and
+  `decisions/llm-model-selection.md`'s `Status:` role count + its role/volume/wants table
+  — the last one is easy to skip since the decision record predates the new role by weeks
+  and nothing in the diff touches that file directly.
+- A new `PromptTemplate` used via a tool loop rather than `ai/services.py` (i.e. the
+  consuming package calls `ai.prompts.render()` directly instead of going through a
+  service function) is worth calling out explicitly in `packages/ai.md`'s prompt-templates
+  section — it's the one exception to "every template has a service function," and a
+  reader scanning `ai/services.py` for it would not find one.
+- `testing.md`'s "Per-module examples" list under Integration Tests is a real per-package
+  enumeration (not exhaustive of every worker, but each entry present is accurate) — a new
+  package with its own `tests/integration/` suite gets a bullet there, one line, same
+  "feed X → assert Y" shape as the others.
+
+## `semantic_model.yaml` extraction from `agents/sql/_schema.py` (2026-08-09)
+- When a prior pass documented a feature as "hand-written Python dicts/frozensets are the
+  prose source" (here: `agents/sql/_schema.py`'s `_COLUMN_NOTES`, `EXPOSED_TABLES`,
+  `BLOCKED_COLUMNS`, `GROUNDING_REQUIRED_COLUMNS`), and a later pass moves that prose into a
+  checked-in, ORM-validated YAML file, the new file gets its own top-level `Reference`
+  concept (`documentation/reference/semantic-model.md`) mirroring
+  `reference/llm-config.md`'s shape (file format table, flags, precedence/validation,
+  env-var override, "adding a role"-style walkthrough) rather than folding into the
+  existing package doc. The package doc (`packages/agents.md`) still needs its module
+  table and "what does X module do" prose rewritten in full — grep the package doc for
+  every removed constant name (`EXPOSED_TABLES` etc.) and every removed error class name,
+  they are never just additive edits.
+- Grep the *whole bundle* for the removed Python names before finishing, not just the
+  package doc — `decisions/sql-agent.md` had independently spelled out
+  `agents.sql._schema.EXPOSED_TABLES` and `GROUNDING_REQUIRED_COLUMNS` by name in its
+  "Safety posture" and "Decision" sections, and `check_schema_notes_complete()` /
+  `SchemaNotesIncompleteError` by name in its "Re-evaluation triggers" — a decision record
+  restates implementation details for its own argument's sake and drifts independently of
+  the package doc it cross-links.
+- A change to **when/whether a startup check is fatal** (here: `check_semantic_model()`
+  moving from "asserted by a unit test" to "first thing in API `_lifespan`, fatal") is a
+  `Decision`-doc-worthy fact on its own, even inside a decision doc that already exists for
+  the surrounding feature — added it as a new dated subsection
+  (`## The startup check became fatal`) rather than editing the original "Decision:"
+  section, because it reverses a *previously recorded* rationale (the old module docstring
+  argued the opposite) and that reversal is itself worth a paper trail, not a silent edit.
+- A guard/precondition bug fix that changes what a function scans (here: `_guard.py`'s
+  `find_predicate_columns` moving from "everything after the first WHERE/HAVING/ON" to
+  "predicate segments bounded by the next SELECT/GROUP BY/ORDER BY/etc., with `FROM`
+  deliberately not a terminator") is a `Decision`-doc subsection too if the original
+  decision doc already explained *why* the naive version existed (here: to avoid a
+  self-referential grounding deadlock) — the fix is prose explaining why the naive
+  implementation of an already-documented rule was wrong, not merely a changelog line.
+- Same-file anchor slugs with a file path in the heading (e.g. `` ## The semantic model
+  (`agents/sql/_semantic_model.py`) ``) drop backticks, parens, slashes and dots but keep
+  underscores: slugs to `#the-semantic-model-agentssql_semantic_modelpy`. Avoid writing a
+  heading with an ellipsis/colon combination (e.g. `` `JOIN ... ON` no longer drags in
+  `GROUP BY` ``) — the double-space left behind by stripped `...` makes the resulting slug
+  ambiguous to predict by hand; reworded to plain prose instead (`a JOIN no longer drags
+  GROUP BY into the predicate`) rather than risk a stale anchor.

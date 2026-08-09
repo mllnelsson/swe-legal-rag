@@ -36,6 +36,7 @@ class LLMRole(StrEnum):
     STRUCTURED = auto()
     SUMMARIZE = auto()
     CHAT = auto()
+    SQL = auto()
 
 
 def create_llm_provider(

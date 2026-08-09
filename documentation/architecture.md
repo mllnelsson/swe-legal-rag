@@ -3,7 +3,7 @@ type: Concept
 title: Architecture Overview
 description: The three-subsystem system architecture — ingestion pipeline, storage layer, and query/retrieval agent — and pointers to each area.
 tags: [architecture, overview, system]
-timestamp: 2026-08-05T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Architecture Overview
@@ -21,6 +21,21 @@ Three major subsystems, all running on GCP, scale-to-zero where possible:
 The backend is a uv workspace of [packages](/packages/overview.md); the
 [frontend](/frontend/overview.md) is a search UI over the deterministic
 retrieval API — it does not call the [chat endpoint](/api/chat-endpoint.md).
+
+## Three ways to query the corpus
+
+- **[Deterministic search](/retrieval/deterministic-search.md)** (`/api/search`) — hybrid
+  vector + full-text retrieval, no LLM unless expansion is requested. Finds passages; the
+  frontend's only backend.
+- **[The chat retrieval agent](/retrieval/agent.md)** (`/api/chat`, **deprecated**) —
+  decomposes, retrieves, and synthesizes a cited natural-language answer over an SSE
+  stream.
+- **[The SQL agent](/packages/agents.md)** (`/api/sql`) — answers what neither of the above
+  can: counting and aggregate questions over the corpus's structured metadata. An LLM tool
+  loop converts a Swedish question to a read-only SQL query, grounding any predicate over
+  a free-text column against the values that actually exist before running it (see [the
+  grounding decision](/decisions/sql-agent.md)), and returns the query and its rows — never
+  an interpreted answer. See [the endpoint contract](/api/sql-agent.md).
 
 ## Storage layer
 

@@ -40,6 +40,7 @@ dev = [
     "worker-chunk",
     "worker-embed",
     "ai",
+    "agents",
     "api",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
@@ -56,6 +57,7 @@ worker-extract = { workspace = true }
 worker-chunk = { workspace = true }
 worker-embed = { workspace = true }
 ai = { workspace = true }
+agents = { workspace = true }
 api = { workspace = true }
 
 [tool.ruff]
@@ -104,6 +106,7 @@ testpaths = [
     "packages/worker-chunk/tests",
     "packages/worker-embed/tests",
     "packages/api/tests",
+    "packages/agents/tests",
     "packages/llm-core/tests",
     "scripts/tests",
 ]

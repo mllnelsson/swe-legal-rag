@@ -230,6 +230,10 @@ convention, matching production; see [repositories](/data-model/repositories.md)
   contextual text, summary stored
 - [`worker-embed`](/pipeline/embed.md): feed chunks → assert embeddings written, correct
   dimensionality
+- [`agents`](/packages/agents.md): run model-authored SQL through the real read-only
+  sandbox → assert a write is refused by the transaction itself (not just the static
+  guard), and that a failed statement leaves the session usable for the request that
+  follows
 - [`api`](/packages/api.md): send a chat request → assert query decomposition runs,
   retrieval returns results, SSE stream produces expected event shapes
 

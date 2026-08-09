@@ -28,7 +28,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
 | `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step`; `close_llm_clients()` — the `StepTeardown` the four LLM-calling workers hand to the same call, releasing the loop-bound OpenAI-compatible client pool before their `asyncio.run()` loop closes (see [worker patterns](/pipeline/worker-patterns.md)) |
 | `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |
-| `prompts/_templates.py` | The five template constants |
+| `prompts/_templates.py` | The seven template constants |
 | `__init__.py` | Public API — service functions, embedding types, and DTOs |
 
 ## Prompt templates (`ai/prompts/`)
@@ -38,7 +38,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 returns a plain message list, so nothing downstream could otherwise tell which template
 produced it. Rendering is a **free function** `render(template, context) ->
 list[Message]` — it substitutes variables via `str.format_map(context)` and returns
-`[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Six template constants
+`[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Seven template constants
 cover every use case:
 
 | Constant | Output format | User template variables |
@@ -49,11 +49,17 @@ cover every use case:
 | `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
 | `ENTITY_EXTRACTION` | JSON (`EntityResult` schema) | `{raw_text}`, `{case_number}` |
 | `DOCUMENT_SUMMARIZATION` | Plain Swedish text | `{raw_text}` |
+| `TEXT_TO_SQL` | Plain text (tool loop, no JSON schema) | `{question}`, `{schema}` |
 
-`QUERY_EXPANSION`'s cap on variant count lives in the user template, not the system
-prompt: `render()` only formats the user template with `context`, so a `{max_variants}`
-placeholder in the system prompt would reach the model verbatim instead of being
-substituted.
+`QUERY_EXPANSION`'s cap on variant count and `TEXT_TO_SQL`'s schema block both live in the
+user template, not the system prompt, for the same reason: `render()` only formats the
+user template with `context`, so a `{max_variants}` or `{schema}` placeholder in the system
+prompt would reach the model verbatim instead of being substituted.
+
+`TEXT_TO_SQL` is rendered directly by [`agents.run_sql_agent`](/packages/agents.md) via
+`render()`, not through a function in `ai/services.py` — the agent owns its own tool loop
+(`llm_core.tool_loop`) rather than a single `generate`/`generate_structured` call, so there
+is no service-layer wrapper for it to go through.
 
 All JSON-outputting templates embed the exact field schema in their system prompt, and
 all prompts instruct the model to work in Swedish.
@@ -131,8 +137,8 @@ and sometimes a different provider — per task, so the assignment lives in
 `llm_config.yaml` under `roles:`. See
 [the decision record](/decisions/llm-model-selection.md) for why.
 
-`LLMRole` (a `StrEnum`: `STRUCTURED`, `SUMMARIZE`, `CHAT`) is the closed set code asks
-for. **The role set has two halves that must agree** — adding a task needs both a new
+`LLMRole` (a `StrEnum`: `STRUCTURED`, `SUMMARIZE`, `CHAT`, `SQL`) is the closed set code
+asks for. **The role set has two halves that must agree** — adding a task needs both a new
 `LLMRole` member here and a matching entry under `roles:` in the YAML; the enum is what
 turns a misspelled role into a type error instead of a runtime `UnknownLLMRoleError`.
 
@@ -141,6 +147,7 @@ turns a misspelled role into a type error instead of a runtime `UnknownLLMRoleEr
 | `LLMRole.STRUCTURED` | `decompose_query`, `extract_metadata`, `extract_entities`, `retriever._rerank` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
 | `LLMRole.SUMMARIZE` | `summarize_document` | `mistralai/Mistral-Medium-3.5-128B` |
 | `LLMRole.CHAT` | `synthesize_answer` | `zai-org/GLM-5.2` |
+| `LLMRole.SQL` | [`agents.run_sql_agent`](/packages/agents.md) | `mistralai/Mistral-Medium-3.5-128B` |
 
 `create_llm_provider(role: LLMRole, document=None)` is the single function every
 composition root calls — there is no per-role delegate. Requesting a role the YAML does

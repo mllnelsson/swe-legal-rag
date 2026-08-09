@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import agents
 import ai
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from api.routes.concepts import router as concepts_router
 from api.routes.documents import router as documents_router
 from api.routes.keywords import router as keywords_router
 from api.routes.search import router as search_router
+from api.routes.sql import router as sql_router
 from shared.config import StorageSettings
 
 load_dotenv()
@@ -23,7 +25,14 @@ load_dotenv()
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Storage first, then tracing, then anything that makes an API call — the
+    # First, because it is pure file and metadata work and costs nothing to
+    # fail. Fatal by design: semantic_model.yaml supplies the SQL agent's table
+    # allow-list and its grounding policy, not merely its prose, so there is no
+    # reduced mode worth serving. Also warms the cache, so no request pays the
+    # file read. See /reference/semantic-model.md.
+    agents.check_semantic_model()
+
+    # Storage next, then tracing, then anything that makes an API call — the
     # dimension probe below is a real billed embedding and should be recorded
     # like any other.
     app.state.storage = shared.create_storage_backend(StorageSettings())
@@ -41,6 +50,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.embedding_provider = embedding_provider
     app.state.structured_llm_provider = create_llm_provider(LLMRole.STRUCTURED)
     app.state.chat_llm_provider = create_llm_provider(LLMRole.CHAT)
+    app.state.sql_llm_provider = create_llm_provider(LLMRole.SQL)
     yield
 
 
@@ -60,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(documents_router)
     app.include_router(concepts_router)
     app.include_router(keywords_router)
+    app.include_router(sql_router)
     app.include_router(chat_router)
 
     @app.get("/healthz")

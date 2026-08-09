@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-09T00:00:00Z
 ---
 
 # Local Development Environment
@@ -172,6 +172,13 @@ itself, so the extension needs no separate step — `docker/init.sql`'s `CREATE 
 is belt-and-braces. Its `CREATE DATABASE overklagan_test` is not: on the Compose path
 that is where the test database comes from. Verify with `psql -d overklagan -c '\dx'`,
 which must list `vector | 0.8.5`.
+
+**Run `uv run python scripts/check_semantic_model.py` after any migration that touches a
+table the [SQL agent](/packages/agents.md) exposes.** It validates
+[`semantic_model.yaml`](/reference/semantic-model.md) against the ORM the migration just
+changed — a column added without a description, or a description left behind by a
+dropped column, is the same failure `api/main.py`'s startup check would hit, found here
+in a second instead of at deploy.
 
 ## Optional Docker Compose Services
 

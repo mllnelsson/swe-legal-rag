@@ -3,7 +3,7 @@ type: Concept
 title: Backend Packages Overview
 description: The uv workspace layout, package dependency graph, and the layered Model→Repo→Service→Endpoint architecture.
 tags: [backend, packages, workspace, architecture]
-timestamp: 2026-08-05T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # Backend Packages Overview
@@ -25,6 +25,7 @@ packages/
   shared/            — SQLAlchemy models, Pydantic DTOs, repo layer, DB config, common utils
   llm-core/          — standalone, project-agnostic LLM abstraction
   ai/                — project-specific LLM logic: prompts, domain DTOs, decomposition, synthesis, embeddings
+  agents/            — stateless LLM-tool-loop agents; today, the text-to-SQL agent behind POST /api/sql
   api/               — FastAPI app, endpoints, retrieval service layer
   worker-crawl/  worker-download/  worker-parse/  worker-metadata/
   worker-extract/  worker-chunk/  worker-embed/
@@ -61,13 +62,15 @@ markers; hyphenated directory names map to underscore Python names (`worker-craw
 ```
 shared          ← depended on by everything
 llm-core        ← standalone; depends only on pydantic, pydantic-settings, google-genai, openai
-ai              ← depends on shared + llm-core; depended on by api + relevant workers
-api             ← depends on shared, ai
+ai              ← depends on shared + llm-core; depended on by api, agents + relevant workers
+agents          ← depends on shared + ai + llm-core; depended on by api
+api             ← depends on shared, ai, agents
 worker-*        ← depends on shared, some depend on ai
 ```
 
 The [ai package](/packages/ai.md) is consumed by [api](/packages/api.md) (decomposition,
-synthesis), [worker-metadata](/pipeline/metadata.md) (LLM fallback),
+synthesis), [agents](/packages/agents.md) (the `TEXT_TO_SQL` prompt and provider role
+behind the SQL agent), [worker-metadata](/pipeline/metadata.md) (LLM fallback),
 [worker-extract](/pipeline/extract.md) (entities & references),
 [worker-chunk](/pipeline/chunk.md) (summaries), and [worker-embed](/pipeline/embed.md)
 (embeddings).

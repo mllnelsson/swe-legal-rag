@@ -58,6 +58,15 @@ roles:
   chat:
     model: zai-org/GLM-5.2
 
+  # Text-to-SQL over the corpus. Low volume, needs reliable tool-calling across
+  # several turns, and writes no prose — so it does not need the chat model. The
+  # hard part of this task is not SQL syntax but grounding a Swedish predicate in
+  # the messy free-text values the columns actually hold, and that is enforced in
+  # code rather than left to the model (see /decisions/sql-agent.md), which is
+  # what makes a mid-tier model defensible here.
+  sql:
+    model: mistralai/Mistral-Medium-3.5-128B
+
 embedding:
   # A name from `providers` above, or the literal "local" to run
   # sentence-transformers in-process (no API key, no network).

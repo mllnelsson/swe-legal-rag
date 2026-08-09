@@ -29,6 +29,10 @@ COPY alembic.ini ./
 # Which model and provider each task uses. Read at startup by every process
 # that makes LLM or embedding calls, so a missing copy fails the container.
 COPY llm_config.yaml ./
+# What the SQL agent is told the database holds — its table allow-list and
+# grounding policy, not just prose. The API validates it against the ORM at
+# startup, so a missing copy fails the container there rather than at first use.
+COPY semantic_model.yaml ./
 COPY alembic/ ./alembic/
 COPY scripts/ ./scripts/
 
