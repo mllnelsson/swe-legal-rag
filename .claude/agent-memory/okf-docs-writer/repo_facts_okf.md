@@ -250,3 +250,35 @@ conclude "nothing changed."
   `api/sql-agent.md` ("## Exercising it without the API") and `packages/agents.md`
   (one sentence after the Tests paragraph), both linking to the playbook subsection
   rather than restating what the script does.
+
+## `LOCAL_STORAGE_PATH` default change: `./storage` → `./data` (2026-08-09)
+- A config-default change to the storage root is a **wide literal-path fan-out**, not a
+  single-file edit, because the old value got hard-coded into shell examples across the
+  bundle: `observability.md` (three `cat data/pdfs/llm-traces/…` commands, plus a whole
+  paragraph excusing the old layout as "odd-looking, but harmless" — deleted outright
+  once the excuse no longer applies, not reworded), `playbooks/local-dev.md` (the `.env`
+  block, the container env-override table, and the container prose), `playbooks/
+  live-testing.md` (the `.env` block, the "download to" step description, `ls`/`cat`/
+  `rm -rf` commands, and a troubleshooting row), and `reference/llm-pricing.md` (three
+  more `cat` examples). Grep the literal old path across the whole bundle
+  (`grep -rln "data/pdfs" documentation/`) rather than trusting a pre-supplied line-number
+  list — line numbers drift and are explicitly "a checklist, not gospel."
+- When a `rm -rf <old-root>/*`-style reset command relies on the fact that two logical
+  keyspaces (PDFs, traces) used to nest under one literal directory, check whether they
+  are *still* nested after the path change before doing a find-and-replace on the
+  command. Here they became siblings directly under the new root (which also gained two
+  unrelated siblings, `data/store/` and `data/agent-runs/`, from other scripts) — the old
+  single `rm -rf ./data/pdfs/*` had to become `rm -rf ./data/documents/* ./data/llm-traces/*`
+  to keep meaning "clear PDFs and traces" without touching the unrelated siblings; a naive
+  substitution of the path segment alone would have silently stopped wiping traces while
+  the prose beneath it kept claiming it still did.
+- `packages/shared.md`'s Storage section didn't quote the old literal path anywhere, but
+  it also never stated the "root, not a PDF directory" framing that motivated the change
+  — added one clarifying sentence there (linking to `LLM_TRACE_KEY_PREFIX` as the second
+  keyspace) even though nothing was factually wrong before, because a reader who came
+  here specifically to understand `LOCAL_STORAGE_PATH` would otherwise miss the reasoning
+  recorded everywhere else.
+- `reference/llm-pricing.md`'s three `cat data/pdfs/llm-traces/…` examples got the literal
+  path fixed but **no** timestamp bump — the meaning of the doc didn't change, only an
+  example command's literal string, which the skill's "cosmetic edits don't bump
+  timestamp" rule covers even though the change came from a real code default change.

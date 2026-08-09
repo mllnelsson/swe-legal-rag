@@ -111,18 +111,18 @@ however the analysis is being done:
 
 ```bash
 # every call's model and tokens, for one day
-cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+cat data/llm-traces/2026-07-30/*.jsonl \
   | jq -r '[.context.source, .model, .usage.input_tokens,
             .usage.output_tokens] | @tsv'
 
 # tokens by model, the input to any cost calculation
-cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+cat data/llm-traces/2026-07-30/*.jsonl \
   | jq -s 'group_by(.model) | map({model: .[0].model, calls: length,
            input: (map(.usage.input_tokens // 0) | add),
            output: (map(.usage.output_tokens // 0) | add)})'
 
 # one chat question, end to end
-cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+cat data/llm-traces/2026-07-30/*.jsonl \
   | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
       | [.context.source, .model, .usage.input_tokens,
          .usage.output_tokens] | @tsv'

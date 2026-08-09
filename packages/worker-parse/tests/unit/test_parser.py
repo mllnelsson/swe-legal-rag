@@ -44,7 +44,7 @@ class TestRejoinHyphenatedWords:
     """pypdfium2 marks a line-break hyphen with U+FFFE and drops the newline.
 
     Every input below is transcribed from
-    data/pdfs/documents/d5448279-86e9-4db5-ae25-019c404def1b/original.pdf.
+    data/documents/d5448279-86e9-4db5-ae25-019c404def1b/original.pdf.
     """
 
     def test_typographic_hyphen_is_dropped(self) -> None:

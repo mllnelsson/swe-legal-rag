@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to file storage — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-09T00:00:00Z
+timestamp: 2026-08-09T12:00:00Z
 ---
 
 # LLM Observability
@@ -120,7 +120,7 @@ that `usage: null` means "not reported".
 
 ```bash
 # tokens by model for one day, the input to any cost calculation
-cat data/pdfs/llm-traces/2026-07-30/*.jsonl \
+cat data/llm-traces/2026-07-30/*.jsonl \
   | jq -s 'group_by(.model) | map({model: .[0].model, calls: length,
            input: (map(.usage.input_tokens // 0) | add),
            output: (map(.usage.output_tokens // 0) | add)})'
@@ -278,10 +278,10 @@ Three consequences worth knowing:
 | `LLM_TRACE_BATCH_SECONDS` | `5.0` | How long a partial batch waits before being written. Also the loss window on a hard kill. |
 | `LLM_STREAM_USAGE` | `true` | Ask the provider for token usage on streams. Switchable because a host that rejects the parameter fails the whole call, and streaming is the user-facing chat path. |
 
-With `STORAGE_BACKEND=local` and the repo's `LOCAL_STORAGE_PATH=./data/pdfs`,
-traces land under `data/pdfs/llm-traces/` alongside the PDF tree. Odd-looking,
-but harmless: re-rooting the storage path would break PDF key resolution for
-already-downloaded documents.
+With `STORAGE_BACKEND=local` and the repo's default `LOCAL_STORAGE_PATH=./data`,
+traces land under `data/llm-traces/`, alongside `data/documents/` — the two
+keyspaces the storage root holds, per [shared](/packages/shared.md)'s
+`document_pdf_key`/`LLM_TRACE_KEY_PREFIX` contract.
 
 ## What did this question cost
 
@@ -289,7 +289,7 @@ Find the interaction id in the API log (`Chat interaction <uuid> for session
 …`), then pull every call it caused:
 
 ```bash
-cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+cat data/llm-traces/$(date -u +%F)/*.jsonl \
   | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
       | [.context.source, .model, .usage.input_tokens,
          .usage.output_tokens] | @tsv'

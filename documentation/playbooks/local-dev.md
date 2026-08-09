@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-09T00:00:00Z
+timestamp: 2026-08-09T12:00:00Z
 ---
 
 # Local Development Environment
@@ -226,9 +226,12 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/overklagan
 # TEST_DATABASE_URL=…/overklagan_test   # integration tests only; defaults to
                                         # DATABASE_URL's name + "_test"
 
-# Storage — "local" uses filesystem, "gcs" uses GCS client
+# Storage — "local" uses filesystem, "gcs" uses GCS client. The path is the
+# storage root every stored key hangs off (PDFs under documents/, LLM traces
+# under llm-traces/), not a PDF-specific directory — and ./data is what
+# .gitignore covers.
 STORAGE_BACKEND=local
-LOCAL_STORAGE_PATH=./data/pdfs
+LOCAL_STORAGE_PATH=./data
 GCS_BUCKET=                     # required when STORAGE_BACKEND=gcs
 
 # Queue — "sync" for in-process, "pubsub" for GCP Pub/Sub
@@ -262,6 +265,12 @@ LLM_STREAM_USAGE=true
 MINIO_ENDPOINT=http://localhost:9000
 REDIS_URL=redis://localhost:6379
 ```
+
+An `.env` still setting `LOCAL_STORAGE_PATH=./data/pdfs` (the old default) keeps working
+unchanged, since the env var always wins over the code default; anyone dropping that line
+to pick up the new `./data` default just needs
+`mv data/pdfs/* data/ && rmdir data/pdfs` to bring already-downloaded PDFs and traces up
+one level to match.
 
 ## Worker Environment Variables
 
@@ -416,13 +425,12 @@ because the host values are wrong inside a container:
 | Variable | Host value | Container value | Why |
 |---|---|---|---|
 | `DATABASE_URL` | `…@localhost:5432/…` | `…@db:5432/…` | `localhost` in a container is the container |
-| `LOCAL_STORAGE_PATH` | `./data/pdfs` | `/data/pdfs` | Relative to CWD otherwise; must be absolute and match the mount |
+| `LOCAL_STORAGE_PATH` | `./data` | `/data` | Relative to CWD otherwise; must be absolute and match the mount |
 
 `./data:/data` is a single bind mount carrying both the PDF tree and the trace stream.
-`LOCAL_STORAGE_PATH` is set to the same `pdfs` subdirectory the host uses, so storage
-keys resolve to the same files either way — a PDF downloaded on the host is readable by
-a container run, and traces from host, `pipeline` and `api` all land under
-`data/pdfs/llm-traces/{date}/`.
+`LOCAL_STORAGE_PATH` is set to the mount itself, so storage keys resolve to the same
+files either way — a PDF downloaded on the host is readable by a container run, and
+traces from host, `pipeline` and `api` all land under `data/llm-traces/{date}/`.
 
 Traces need nothing special from the mount. `./data` is a *directory* bind mount, and the
 recorder writes one **new** `.jsonl` object per flushed batch rather than appending to a

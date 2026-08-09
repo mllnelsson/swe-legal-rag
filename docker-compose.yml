@@ -35,10 +35,10 @@ services:
     environment:
       # `localhost` inside a container is the container itself.
       DATABASE_URL: postgresql://postgres:postgres@db:5432/overklagan
-      # Absolute, and under the mount. Pointed at the host's own ./data/pdfs so
-      # a PDF downloaded on the host and one downloaded in the container
-      # resolve to the same file — storage keys are relative to this path.
-      LOCAL_STORAGE_PATH: /data/pdfs
+      # Absolute, and the mount itself. Pointed at the host's own ./data so a
+      # PDF downloaded on the host and one downloaded in the container resolve
+      # to the same file — storage keys are relative to this path.
+      LOCAL_STORAGE_PATH: /data
     volumes:
       - ./data:/data
 
@@ -54,7 +54,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/overklagan
-      LOCAL_STORAGE_PATH: /data/pdfs
+      LOCAL_STORAGE_PATH: /data
     volumes:
       - ./data:/data
 

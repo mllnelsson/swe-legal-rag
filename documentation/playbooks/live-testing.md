@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-09T00:00:00Z
+timestamp: 2026-08-09T12:00:00Z
 ---
 
 # Live Testing Guide
@@ -39,7 +39,7 @@ BERGET_API_KEY=<your-key>
 # Defaults are fine for local dev
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/overklagan
 STORAGE_BACKEND=local
-LOCAL_STORAGE_PATH=./data/pdfs
+LOCAL_STORAGE_PATH=./data
 QUEUE_BACKEND=sync
 EMBEDDING_DIMENSION=1024
 LLM_TRACE_ENABLED=true
@@ -122,7 +122,7 @@ SELECT step, status, count(*) FROM tasks GROUP BY 1, 2 ORDER BY 1, 2;
 
 This will:
 1. Query the OData API for the current year's decisions
-2. Download new PDFs to `./data/pdfs/`
+2. Download new PDFs to `./data/documents/`
 3. Parse each PDF to extract raw text
 4. Extract metadata (rule-based, with LLM fallback)
 5. Extract entities and references, chunk, and embed
@@ -418,7 +418,7 @@ SELECT document_id, step, status, error_message FROM tasks ORDER BY created_at D
 ### 2. Check downloaded PDFs
 
 ```bash
-ls -la ./data/pdfs/
+ls -la ./data/documents/
 ```
 
 ### 3. Watch logs
@@ -437,10 +437,10 @@ With `LLM_TRACE_ENABLED=true`, every LLM and hosted-embedding call lands in a da
 directory of batched JSONL objects. After a pipeline run:
 
 ```bash
-ls data/pdfs/llm-traces/$(date -u +%F)/
-cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl | wc -l
+ls data/llm-traces/$(date -u +%F)/
+cat data/llm-traces/$(date -u +%F)/*.jsonl | wc -l
 
-cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+cat data/llm-traces/$(date -u +%F)/*.jsonl \
   | jq -r '[.operation, .context.source, .model,
             .usage.total_tokens, .success] | @tsv' | head
 ```
@@ -458,7 +458,7 @@ To cost a single chat question, start the API, send one message, and note the
 `Chat interaction <uuid> for session …` line in the API log:
 
 ```bash
-cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+cat data/llm-traces/$(date -u +%F)/*.jsonl \
   | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
       | [.context.source, .model, .usage.input_tokens,
          .usage.output_tokens] | @tsv'
@@ -482,12 +482,13 @@ psql postgresql://postgres:postgres@localhost:5432/overklagan -c "DROP SCHEMA pu
 # Re-apply migrations
 uv run alembic upgrade head
 
-# Clear downloaded PDFs
-rm -rf ./data/pdfs/*
+# Clear downloaded PDFs and traces — both sit directly under the storage root
+rm -rf ./data/documents/* ./data/llm-traces/*
 ```
 
-> This also wipes `data/pdfs/llm-traces/`, since traces share the storage root. Copy
-> that directory first if the cost history from the run matters — nothing else holds it.
+> Copy `data/llm-traces/` first if the cost history from the run matters — nothing else
+> holds it. `data/store/` (`run_step.py --store fs`) and `data/agent-runs/`
+> (`run_agent.py`) are separate and untouched by this.
 
 ## Re-embedding after an embedding-config change
 
@@ -556,4 +557,4 @@ See the [testing strategy](/testing.md) for the full unit/integration split.
 | `Integration tests would run against the development database` | `TEST_DATABASE_URL` names the same database as `DATABASE_URL` | Unset it to use the derived `_test` default, or point it elsewhere. Nothing was truncated |
 | `berget_api_key is required` (or `gemini_api_key is required`) | LLM/embedding provider key not set | Add `BERGET_API_KEY` (default provider) — or `GEMINI_API_KEY` if `LLM_PROVIDER=gemini` — to `.env` |
 | Crawl finds 0 new documents | All URLs already in DB | Reset state (see above) or use a different source URL |
-| Permission denied writing PDFs | `LOCAL_STORAGE_PATH` dir missing | `mkdir -p ./data/pdfs` |
+| Permission denied writing PDFs | `LOCAL_STORAGE_PATH` dir missing | `mkdir -p ./data` |

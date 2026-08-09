@@ -1,6 +1,6 @@
 """Segmentation tests.
 
-The two multi-part fixtures are transcribed from the real PDFs in `data/pdfs/`:
+The two multi-part fixtures are transcribed from the real PDFs in `data/documents/`:
 a six-page decision whose Bilaga A is the stift's own beslut, and a two-page one
 whose Bilaga A is a stiftsstyrelse protocol. Both use CRLF, as the parsed PDFs do.
 """

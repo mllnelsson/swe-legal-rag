@@ -2,6 +2,21 @@
 
 ## 2026-08-09
 
+* **Update**: [LLM Observability](/observability.md), [local dev](/playbooks/local-dev.md),
+  [live testing](/playbooks/live-testing.md), [LLM pricing](/reference/llm-pricing.md) and
+  [shared package](/packages/shared.md) — `LOCAL_STORAGE_PATH`'s default moves from
+  `./storage` (never matching `.env.example`, and outside `.gitignore`) to `./data`,
+  matching the shipped `.env.example` and `docker-compose.yml`. PDFs move from
+  `data/pdfs/documents/` to `data/documents/`, and traces from `data/pdfs/llm-traces/` to
+  `data/llm-traces/` — two keyspaces directly under the storage root rather than nested
+  under a leftover `pdfs/` directory from when a PDF was the only thing stored.
+  Observability's apology for traces landing "alongside the PDF tree" is removed as
+  obsolete rather than reworded. `shared.md` now states explicitly that
+  `LOCAL_STORAGE_PATH` is the root every key hangs off, not a PDF directory. Local dev
+  carries the one-line migration for an existing `data/pdfs/` layout
+  (`mv data/pdfs/* data/ && rmdir data/pdfs`); an `.env` still setting the old path keeps
+  working unchanged since the env var always wins over the default.
+
 * **Update**: [Live Testing Guide](/playbooks/live-testing.md) — documents
   `scripts/run_agent.py`, the LLM-side counterpart to `scripts/run_step.py`: batches an
   AI task (`sql` or `summarize`) over a file of inputs, one per line, recording every
