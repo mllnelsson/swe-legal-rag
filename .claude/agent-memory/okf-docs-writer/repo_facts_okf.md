@@ -222,3 +222,31 @@ conclude "nothing changed."
   `GROUP BY` ``) — the double-space left behind by stripped `...` makes the resulting slug
   ambiguous to predict by hand; reworded to plain prose instead (`a JOIN no longer drags
   GROUP BY into the predicate`) rather than risk a stale anchor.
+
+## `scripts/run_agent.py` mapping (LLM batch runner, 2026-08-09)
+- A new top-level script that is the *LLM-side counterpart* of an already-documented
+  ingestion-side script (`run_step.py` ↔ `run_agent.py`) does NOT get its own concept
+  file. It gets a new numbered "Option" subsection in the same playbook that already
+  documents its sibling (`playbooks/live-testing.md`, "Option C: Per-step runner" →
+  added "Option D: LLM task runner") — matching how `scripts/check_semantic_model.py`
+  was folded into `reference/semantic-model.md` as "## The dev script" rather than
+  spun out on its own. The pattern in this repo is: a standalone operational script is
+  documented as a subsection of the concept/playbook it exercises, not as its own file.
+- A script that wires `install_file_tracing()` + `trace_context` correctly *from its
+  first commit* (unlike `run_step.py`, which was fixed later and got a "used to be a
+  hole in this invariant" callout) needs only an additive edit to
+  `observability.md`'s correlation-key table and outer-attribution sentence — no
+  "used to be broken" narrative, because there was no prior broken state to record.
+- `ok` (call completed) vs. an agent's own `answered`/refusal field (call succeeded but
+  had no answer) is a distinction worth calling out explicitly wherever a batch/harness
+  doc describes recording results for an agent that already has documented "never
+  raises, returns an unanswered state" semantics (`api/sql-agent.md`'s "Never 500s") —
+  the harness doc should link to that existing semantics section rather than
+  re-explain why the agent refuses, only that the harness's `ok` and the agent's
+  `answered` are orthogonal.
+- Two thin pointer edits (one sentence + a link) belong in both the API-endpoint doc
+  and the package doc when a new script lets a reader exercise an existing, fully
+  documented agent/endpoint in bulk outside pytest and outside the API — added to
+  `api/sql-agent.md` ("## Exercising it without the API") and `packages/agents.md`
+  (one sentence after the Tests paragraph), both linking to the playbook subsection
+  rather than restating what the script does.

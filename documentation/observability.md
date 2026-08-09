@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to file storage — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-09T00:00:00Z
 ---
 
 # LLM Observability
@@ -192,6 +192,7 @@ discarded.
 | `interaction_id`, `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
 | `document_id`, `task_id` | Each worker, via the `MessageScope` `ai.worker_trace_scope(name)` supplies to `shared.worker.subscribe_step`, entered around `asyncio.run` inside its `handle_message` |
 | `document_id`, `task_id` | `scripts/run_step.py`, around the step dispatch in `_run_step` |
+| `run_id`, `case` | `scripts/run_agent.py`, around each input in `run_cases` — the join back from a batch run's JSONL record to the trace(s) it produced |
 | `source` | The innermost code that knows what the call is |
 | `prompt` | `ai/services.py`, from the template's name |
 
@@ -207,9 +208,12 @@ innermost wins.
 caller sets `expand: true`. Its absence from a search's trace is therefore
 meaningful: it says the result was reproducible without a model.
 
-The outer attribution set by a worker or by the manual runner is its own name —
-`worker-chunk`, `worker-embed`, `worker-extract`, `worker-metadata`, or
-`scripts.run_step` — which the inner `ai.*` source then overrides for the call itself.
+The outer attribution set by a worker or by a manual runner is its own name —
+`worker-chunk`, `worker-embed`, `worker-extract`, `worker-metadata`, `scripts.run_step`,
+or `scripts.run_agent` — which the inner `ai.*`/`agents.*` source then overrides for the
+call itself. `run_agent.py`'s `run_id`/`case`, unlike its `source`, are never overridden
+by anything further in: they are this script's own keys, and they survive onto every
+trace record a case produces regardless of how many calls the task inside it makes.
 
 **The manual runner used to be a hole in this invariant.**
 [`scripts/run_step.py`](/playbooks/live-testing.md) never called

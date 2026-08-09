@@ -4,7 +4,7 @@ title: SQL Agent Endpoint (POST /api/sql)
 description: The POST /api/sql text-to-SQL contract — a Swedish question in, the generated read-only query and its rows out, never an interpreted answer — plus the caller's obligation to surface the query and the never-500s refusal semantics.
 resource: POST /api/sql
 tags: [api, sql, agent, text-to-sql, llm]
-timestamp: 2026-08-09T00:00:00Z
+timestamp: 2026-08-09T12:00:00Z
 ---
 
 # SQL Agent Endpoint (`POST /api/sql`)
@@ -114,3 +114,11 @@ per call).
 Traced with `source="agents.sql"`, `prompt="TEXT_TO_SQL"`. `llm_core.tool_loop` already
 emits one trace record per iteration, so no additional wiring happens at this route — see
 [LLM Observability](/observability.md).
+
+## Exercising it without the API
+
+`uv run python scripts/run_agent.py sql questions.txt` runs `run_sql_agent` over a whole
+file of questions, one per line, without starting the API — see
+[the LLM task runner](/playbooks/live-testing.md#option-d-llm-task-runner-scriptsrun_agentpy).
+Useful for comparing two prompt or `semantic_model.yaml` versions against the same
+question set.

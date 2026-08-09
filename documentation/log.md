@@ -2,6 +2,18 @@
 
 ## 2026-08-09
 
+* **Update**: [Live Testing Guide](/playbooks/live-testing.md) — documents
+  `scripts/run_agent.py`, the LLM-side counterpart to `scripts/run_step.py`: batches an
+  AI task (`sql` or `summarize`) over a file of inputs, one per line, recording every
+  result — including failures — as a JSONL line, with `ok` and `answered` kept
+  deliberately distinct and an `LLM_PROVIDER=none` recipe for smoke-testing the harness
+  with no key.
+* **Update**: [LLM Observability](/observability.md) — the correlation-key table and the
+  outer-attribution list now cover `scripts/run_agent.py`'s `run_id`/`case` context,
+  which is the join from a batch run's JSONL record back to the trace(s) it produced.
+* **Update**: [SQL Agent Endpoint](/api/sql-agent.md), [agents package](/packages/agents.md)
+  — both point at `scripts/run_agent.py` as the way to run `run_sql_agent` over many
+  questions without booting the API.
 * **Creation**: [semantic_model.yaml reference](/reference/semantic-model.md) — the SQL
   agent's semantic model moved out of hand-written Python dicts and frozensets in
   `agents/sql/_schema.py` into a checked-in, ORM-validated YAML file: file format (the

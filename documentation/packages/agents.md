@@ -4,7 +4,7 @@ title: agents Package
 description: The stateless LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — today, the text-to-SQL agent behind POST /api/sql — package structure, and how the semantic-model/schema/guard/sandbox/tools modules compose into run_sql_agent.
 resource: packages/agents
 tags: [package, agents, sql, tool-loop, llm]
-timestamp: 2026-08-09T00:00:00Z
+timestamp: 2026-08-09T12:00:00Z
 ---
 
 # agents Package (`packages/agents/`)
@@ -105,3 +105,8 @@ loop against a scripted `LLMProvider` (no live model call).
 real Postgres can prove: that a write is refused by the transaction itself, not just by the
 static guard, and that a failed statement leaves the session usable for the request that
 follows. See [testing strategy](/testing.md).
+
+Running `run_sql_agent` over many real questions at once, against a real provider and
+outside pytest, is what
+[`scripts/run_agent.py`](/playbooks/live-testing.md#option-d-llm-task-runner-scriptsrun_agentpy)
+is for.
