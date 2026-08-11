@@ -3,6 +3,7 @@ name = "church-legal-db"
 version = "0.1.0"
 description = "Church legal document database"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 
 [tool.uv.workspace]
