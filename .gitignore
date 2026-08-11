@@ -230,3 +230,6 @@ logs/
 
 # Mac
 .DS_Store
+
+# ATM (disabled for this repo)
+.atm_project_id
