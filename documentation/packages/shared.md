@@ -4,7 +4,7 @@ title: shared Package
 description: The single source of truth for data and database access — models, DTOs, enums, errors, the task envelope, config, logging setup, and the storage/queue infrastructure abstractions.
 resource: packages/shared
 tags: [package, shared, models, dtos, infrastructure]
-timestamp: 2026-08-05T12:00:00Z
+timestamp: 2026-08-09T12:00:00Z
 ---
 
 # shared Package (`packages/shared/`)
@@ -155,16 +155,21 @@ backend from env vars — making local ↔ GCP a config change (see
 [GCP layout](/reference/gcp-layout.md)).
 
 **Storage** — `StorageBackend` Protocol: `store`, `retrieve`, `exists`, `delete`,
-`get_url`. `LocalStorageBackend` (under `LOCAL_STORAGE_PATH`) and `GCSStorageBackend`
-(wraps `google-cloud-storage`, needs `GCS_BUCKET`). `create_storage_backend(settings)`
-lazy-imports GCS libs. Optional dep: `uv add 'shared[gcs]'`.
+`get_url`. `LocalStorageBackend` (under `LOCAL_STORAGE_PATH`, default `./data`) and
+`GCSStorageBackend` (wraps `google-cloud-storage`, needs `GCS_BUCKET`).
+`create_storage_backend(settings)` lazy-imports GCS libs. Optional dep:
+`uv add 'shared[gcs]'`.
 
+`LOCAL_STORAGE_PATH` is the storage **root** every stored key hangs off, not a
+PDF-specific directory — every key, whatever it prefixes, is joined onto this path.
 `shared/storage/keys.py` provides `document_pdf_key(document_id) -> str` —
 `documents/{id}/original.pdf`. It replaces the same literal template that used to be
 duplicated in the [download](/pipeline/download.md) and [parse](/pipeline/parse.md)
 workers and in `api/services/answerer.py`; all three, plus the new [PDF
 endpoint](/api/document-pdf.md), now call the one helper, since the layout is a contract
-shared across packages rather than any one caller's detail.
+shared across packages rather than any one caller's detail. The other keyspace under the
+same root is `LLM_TRACE_KEY_PREFIX` (`llm-traces`, default), written by the trace
+recorder — see [observability](/observability.md).
 
 ### Why it is only a blob store
 

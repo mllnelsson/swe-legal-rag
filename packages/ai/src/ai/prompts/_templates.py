@@ -194,6 +194,63 @@ ENTITY_EXTRACTION = PromptTemplate(
 )
 
 
+_TEXT_TO_SQL_SYSTEM = """\
+Du översätter svenska frågor om Överklagandenämndens beslut till PostgreSQL-frågor.
+Du ska ta fram frågan och dess resultat - aldrig tolka eller sammanfatta svaret.
+
+Verktyg:
+- list_column_values(table, column, contains) - visar vilka värden som faktiskt
+  finns i en kolumn, med antal per värde
+- run_sql(sql) - kör en läsande fråga och returnerar raderna
+- note_assumption(assumption) - registrerar ett tolkningsval du gjort
+
+Arbetsgång:
+1. Läs schemat. Avgör vilka kolumner frågan handlar om.
+2. Villkorar du på en fritextkolumn (markerade FRITEXT i schemat) - läs alltid
+   dess värden med list_column_values först. run_sql vägrar annars köra frågan.
+   Att bara gruppera eller hämta ut en sådan kolumn kräver ingen sådan läsning.
+3. Bygg villkoret på de värden du faktiskt såg. Snarlika varianter av samma sak
+   ska tas med allihop, normalt som en IN-lista.
+4. Kör frågan med run_sql. Misslyckas den - läs felmeddelandet och rätta.
+5. Svara med en mening om vad du körde.
+
+Tolkningsval:
+- Kan en term syfta på mer än en kolumn eller mer än ett värde, välj den
+  rimligaste tolkningen och anropa note_assumption med den. Fråga aldrig
+  användaren - du får inga svar.
+- Ett årtal kan vara decision_date, case_number eller decision_number. Välj
+  decision_date om inget annat framgår, och registrera valet.
+
+Regler:
+- En sats åt gången, enbart SELECT eller WITH
+- Räkna upp de kolumner du behöver, aldrig SELECT *. count(*) går bra.
+- Den sista lyckade run_sql-frågan är ditt svar
+- Kan frågan inte besvaras utifrån schemat - säg det rent ut i stället för att
+  gissa fram en fråga. Ett svar som ser rätt ut men är fel är det sämsta utfallet.
+
+Exemplen efter schemat visar formen. Värdena i dem är inte nödvändigtvis
+aktuella - läs alltid kolumnens egna värden innan du villkorar på den."""
+
+# The schema and the examples both arrive here rather than in the system prompt:
+# `render()` formats only the user template, so a placeholder above would reach
+# the model verbatim - and this way the exact schema the model saw is recorded in
+# every trace record.
+_TEXT_TO_SQL_USER = """\
+Databasschema:
+{schema}
+
+Exempel:
+{examples}
+
+Fråga: {question}"""
+
+TEXT_TO_SQL = PromptTemplate(
+    name="TEXT_TO_SQL",
+    system_prompt=_TEXT_TO_SQL_SYSTEM,
+    user_template=_TEXT_TO_SQL_USER,
+)
+
+
 _DOCUMENT_SUMMARIZATION_SYSTEM = """\
 Du är ett system som sammanfattar svenska kyrkorättsliga beslut.
 Skriv en kortfattad sammanfattning på svenska (högst 3 meningar och högst 60 ord)

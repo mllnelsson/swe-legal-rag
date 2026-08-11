@@ -1,0 +1,21 @@
+[project]
+name = "agents"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "shared",
+    "ai",
+    # Imported directly for `tool_loop`, `ToolDefinition` and the loop's error
+    # types, which reach past `ai`. Declared rather than left to resolve through
+    # it — same reasoning as `api`.
+    "llm-core",
+]
+
+[tool.uv.sources]
+shared = { workspace = true }
+ai = { workspace = true }
+llm-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"

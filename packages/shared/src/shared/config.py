@@ -45,7 +45,11 @@ class StorageSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
     storage_backend: StorageBackendType = StorageBackendType.LOCAL
-    local_storage_path: Path = Path("./storage")
+    # The storage root, not a PDF directory: keys carry their own prefix
+    # (`documents/…`, `llm-traces/…`). `./data` because that is what .gitignore
+    # covers — a default outside it writes crawled PDFs and whole prompts into
+    # a directory git will offer to commit.
+    local_storage_path: Path = Path("./data")
     gcs_bucket: str | None = None
 
     @model_validator(mode="after")

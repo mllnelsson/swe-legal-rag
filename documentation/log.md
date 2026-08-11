@@ -1,7 +1,81 @@
 # Documentation Update Log
 
+## 2026-08-09
+
+* **Update**: [LLM Observability](/observability.md), [local dev](/playbooks/local-dev.md),
+  [live testing](/playbooks/live-testing.md), [LLM pricing](/reference/llm-pricing.md) and
+  [shared package](/packages/shared.md) — `LOCAL_STORAGE_PATH`'s default moves from
+  `./storage` (never matching `.env.example`, and outside `.gitignore`) to `./data`,
+  matching the shipped `.env.example` and `docker-compose.yml`. PDFs move from
+  `data/pdfs/documents/` to `data/documents/`, and traces from `data/pdfs/llm-traces/` to
+  `data/llm-traces/` — two keyspaces directly under the storage root rather than nested
+  under a leftover `pdfs/` directory from when a PDF was the only thing stored.
+  Observability's apology for traces landing "alongside the PDF tree" is removed as
+  obsolete rather than reworded. `shared.md` now states explicitly that
+  `LOCAL_STORAGE_PATH` is the root every key hangs off, not a PDF directory. Local dev
+  carries the one-line migration for an existing `data/pdfs/` layout
+  (`mv data/pdfs/* data/ && rmdir data/pdfs`); an `.env` still setting the old path keeps
+  working unchanged since the env var always wins over the default.
+
+* **Update**: [Live Testing Guide](/playbooks/live-testing.md) — documents
+  `scripts/run_agent.py`, the LLM-side counterpart to `scripts/run_step.py`: batches an
+  AI task (`sql` or `summarize`) over a file of inputs, one per line, recording every
+  result — including failures — as a JSONL line, with `ok` and `answered` kept
+  deliberately distinct and an `LLM_PROVIDER=none` recipe for smoke-testing the harness
+  with no key.
+* **Update**: [LLM Observability](/observability.md) — the correlation-key table and the
+  outer-attribution list now cover `scripts/run_agent.py`'s `run_id`/`case` context,
+  which is the join from a batch run's JSONL record back to the trace(s) it produced.
+* **Update**: [SQL Agent Endpoint](/api/sql-agent.md), [agents package](/packages/agents.md)
+  — both point at `scripts/run_agent.py` as the way to run `run_sql_agent` over many
+  questions without booting the API.
+* **Creation**: [semantic_model.yaml reference](/reference/semantic-model.md) — the SQL
+  agent's semantic model moved out of hand-written Python dicts and frozensets in
+  `agents/sql/_schema.py` into a checked-in, ORM-validated YAML file: file format (the
+  bare-string/mapping column shorthand, the `free_text`/`selectable` flags, the worked
+  `examples` block), the two-way check against `shared.models.Base.metadata`, the
+  `_NEVER_EXPOSED` floor, and the "how to add a column" walkthrough.
+* **Update**: [agents package](/packages/agents.md) — new `sql/_semantic_model.py`
+  loader module, `sql/_schema.py`'s changed role (a pure renderer, no longer a source of
+  prose), the three new `SemanticModel*` errors replacing `SchemaNotesIncompleteError`,
+  and the `document` parameter threaded through the guard/tools/agent functions.
+* **Update**: [SQL Agent Endpoint](/api/sql-agent.md) — the `TEXT_TO_SQL` prompt now
+  carries a worked-examples block alongside the schema, and the agent's knowledge of the
+  corpus is sourced from `semantic_model.yaml` rather than hand-typed prose.
+* **Update**: [forced grounding decision](/decisions/sql-agent.md) — records why the
+  semantic model's ORM-agreement check moved from a unit-test assertion to a fatal API
+  startup check, and the `find_predicate_columns` fix that scans predicate segments
+  instead of "everything after the first WHERE" so a `JOIN ... ON` no longer forces
+  grounding on a column a query only groups by.
+* **Update**: [local dev environment](/playbooks/local-dev.md) — run
+  `uv run python scripts/check_semantic_model.py` after any migration touching a table
+  the SQL agent exposes.
+
 ## 2026-08-08
 
+* **Creation**: [agents package](/packages/agents.md), [SQL Agent Endpoint (POST
+  /api/sql)](/api/sql-agent.md), [forced grounding decision](/decisions/sql-agent.md) — a
+  new text-to-SQL agent converts a Swedish free-text question to a read-only SQL query via
+  an LLM tool loop and returns the query and its rows, never an interpreted answer. A
+  predicate over a free-text column (`documents.decision_outcome`, `documents.category`,
+  `entities.name`) is refused by the tool executor until its values have actually been
+  read with `list_column_values`, so a mid-tier model (Mistral Medium) cannot silently
+  miscount against near-duplicate or compound values. Read-only Postgres transaction plus
+  a static SQL guard; no dedicated database role.
+* **Update**: [architecture overview](/architecture.md) — the SQL agent is now the third
+  way to query the corpus, alongside deterministic search and the deprecated chat agent.
+* **Update**: [backend packages overview](/packages/overview.md) — repo tree and
+  dependency graph gain `agents` (depends on `shared` + `ai` + `llm-core`; depended on by
+  `api`).
+* **Update**: [ai package](/packages/ai.md) — the new `TEXT_TO_SQL` prompt template
+  (rendered directly by `agents.run_sql_agent`, not through an `ai/services.py` function)
+  and the new `LLMRole.SQL` role, on `mistralai/Mistral-Medium-3.5-128B`.
+* **Update**: [llm_config.yaml reference](/reference/llm-config.md) — the new `sql:` role
+  entry and its `LLM_MODEL_SQL` override variable.
+* **Update**: [per-task LLM model selection](/decisions/llm-model-selection.md) — now four
+  roles, not three; added the `sql` row.
+* **Update**: [testing strategy](/testing.md) — added the `agents` package's integration
+  suite (real read-only sandbox, not just the static guard) to the per-module examples.
 * **Update**: [crawl worker](/pipeline/crawl.md), [crawl source](/reference/crawl-source.md),
   [documents](/data-model/documents.md), [data model design notes](/data-model/design-notes.md),
   [indexes](/data-model/indexes.md), [repository layer](/data-model/repositories.md) — crawl

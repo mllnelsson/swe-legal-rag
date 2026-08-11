@@ -6,6 +6,7 @@ from ai.prompts._templates import (
     METADATA_EXTRACTION,
     QUERY_DECOMPOSITION,
     QUERY_EXPANSION,
+    TEXT_TO_SQL,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "METADATA_EXTRACTION",
     "ENTITY_EXTRACTION",
     "DOCUMENT_SUMMARIZATION",
+    "TEXT_TO_SQL",
 ]

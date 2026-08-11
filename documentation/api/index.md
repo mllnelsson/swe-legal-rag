@@ -25,3 +25,7 @@
 
 * [Keywords Endpoint (GET /api/keywords)](keywords.md) - The GET /api/keywords contract — browsing the nämnd's own Sökord subject classification, most-used first, with the document count each keyword carries.
 * [Keyword Documents Endpoint (GET /api/keywords/{id}/documents)](keyword-documents.md) - The GET /api/keywords/{id}/documents contract — every decision classified under a given Sökord keyword, the reverse traversal hop from a keyword back to the decisions that declare it.
+
+## SQL agent
+
+* [SQL Agent Endpoint (POST /api/sql)](sql-agent.md) - The POST /api/sql text-to-SQL contract — a Swedish question in, the generated read-only query and its rows out, never an interpreted answer — plus the caller's obligation to surface the query and the never-500s refusal semantics.

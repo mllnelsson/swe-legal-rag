@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-09T12:00:00Z
 ---
 
 # Live Testing Guide
@@ -39,7 +39,7 @@ BERGET_API_KEY=<your-key>
 # Defaults are fine for local dev
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/overklagan
 STORAGE_BACKEND=local
-LOCAL_STORAGE_PATH=./data/pdfs
+LOCAL_STORAGE_PATH=./data
 QUEUE_BACKEND=sync
 EMBEDDING_DIMENSION=1024
 LLM_TRACE_ENABLED=true
@@ -122,7 +122,7 @@ SELECT step, status, count(*) FROM tasks GROUP BY 1, 2 ORDER BY 1, 2;
 
 This will:
 1. Query the OData API for the current year's decisions
-2. Download new PDFs to `./data/pdfs/`
+2. Download new PDFs to `./data/documents/`
 3. Parse each PDF to extract raw text
 4. Extract metadata (rule-based, with LLM fallback)
 5. Extract entities and references, chunk, and embed
@@ -292,6 +292,99 @@ chunk is where a no-LLM run stops. This works for the workers too
 start without a key. See [running with no LLM](/reference/llm-config.md) for what each
 step does and how to disable a single role instead of all of them.
 
+### Option D: LLM task runner (`scripts/run_agent.py`)
+
+The LLM-side counterpart to `scripts/run_step.py` above: `run_step.py` batches the
+ingestion pipeline one document at a time, this batches an LLM task one input at a time.
+An input file holds one input per line; the lines run in sequence; each input's output is
+appended to a JSONL file as it completes, so a run killed part-way keeps what it had.
+Change a prompt, re-run the same file, and the two runs are directly comparable.
+
+```bash
+uv run python scripts/run_agent.py sql       questions.txt
+uv run python scripts/run_agent.py summarize decisions.txt
+uv run python scripts/run_agent.py sql       questions.txt --limit 3    # cheap smoke run
+uv run python scripts/run_agent.py sql       questions.txt --out data/runs/before.jsonl
+```
+
+Two tasks today: `sql` (the [SQL agent](/api/sql-agent.md)) and `summarize`
+(worker-chunk's summariser). Both sit behind a small registry, so a third task already
+implemented in `ai.services` (`expand_query`, `decompose_query`, `extract_metadata`) is
+one preparer function away, not a rewrite.
+
+**What a line means is the task's own business.** `sql` takes one question per line;
+`summarize` takes one *path* to a decision text file per line — a whole decision body
+cannot be a line of a text file. Each task states its own answer at registration, and
+`--help` renders it. Blank lines and `#` comments are skipped, so a curated question set
+can carry section headings; the record still keeps the file's original line number
+(`source_line`), because case 7 is rarely line 7.
+
+**A failing case is recorded, not aborted.** A case that raises is caught, logged with
+its error, and the run moves on to the next input — that is the whole point of a batch
+runner. `Exception`, not `BaseException`, so Ctrl-C still stops the run outright. Exit
+code is 1 if any case failed, 0 otherwise — the same convention as
+`scripts/check_semantic_model.py`.
+
+**`ok` is not `answered`.** `ok` means the call completed. The SQL agent never raises for
+a question it cannot answer — it comes back `answered: false` with a reason (see
+[the endpoint's never-500s semantics](/api/sql-agent.md#never-500s)) — so a record can
+perfectly well be `ok: true` with `output.answered: false`. Reading that as a crash is
+the one mistake this format invites.
+
+**The prompt and the token counts are not duplicated into the record.** Every case runs
+inside its own `trace_context(run_id=..., case=...)`, so the full prompt, response and
+usage for any line are one grep away in the trace stream by `context.run_id` and
+`context.case` — see
+[the correlation table](/observability.md#correlation--the-wiring-invariant). This is
+why the JSONL record itself stays small.
+
+The `sql` task calls `agents.check_semantic_model()` once, before running a single case
+— the same check the API makes fatal at startup, paid here before the first billed call
+rather than after twenty. The `summarize` task measures against
+`shared.segmentation.split_document(...).body`, exactly what worker-chunk summarises —
+the pipeline never summarises the appendices, so feeding the whole file would tune a
+prompt input production never sends. It reports `summary_tokens` (counted with the same
+`ai.create_embedding_ruler()` tokenizer worker-chunk uses) against
+`worker_chunk.budget.SUMMARY_RESERVE_TOKENS`; `within_reserve: false` means worker-chunk
+would truncate this summary — the signal to watch when iterating on the summarisation
+prompt.
+
+The database is whatever `DATABASE_URL` says, like the rest of the app — no override
+flag. `summarize` never opens it.
+
+**Output:** one JSONL file per run, `data/agent-runs/<task>-<run_id>.jsonl` by default
+(`data/` is gitignored, same as `run_step.py --store fs`'s output; `--out` names it
+explicitly). Every record carries `run_id` and `task`, so a line is self-describing with
+no separate manifest to read:
+
+```json
+{"schema_version": 1, "run_id": "20260809T142530Z", "task": "sql",
+ "index": 1, "source_line": 4, "input": "Hur många överklaganden avslogs 2026?",
+ "started_at": "2026-08-09T14:25:31Z", "latency_ms": 8123,
+ "ok": true, "error": null,
+ "output": {"answered": true, "sql": "SELECT …", "rows": [[12]], "…": "…"}}
+```
+
+For `summarize`, `input` holds the file *path*, not the decision text — the text stays
+in the file it came from — and `output` carries `summary`, `summary_tokens`,
+`reserve_tokens`, `within_reserve`, `input_chars`, `body_chars`.
+
+**Smoke-testing the harness itself, with no key and no billed call:**
+
+```bash
+LLM_PROVIDER=none uv run python scripts/run_agent.py sql questions.txt
+```
+
+Every input records `ok: false` with `error.type: "LLMDisabledError"`, one line per
+input, exit code 1 — the loop, the per-case error capture, the flushing and the exit code
+all exercised offline.
+
+**Not in scope.** No scoring — no expected answers, no pass/fail, no diffing between
+runs; the record is what makes those possible later, this script only records it. No
+concurrency — inputs run strictly in sequence. No cost computed, for the same reason
+[observability](/observability.md) never computes one: apply a rate to `usage` in the
+matching trace records instead.
+
 ## Running the API Server
 
 ```bash
@@ -325,7 +418,7 @@ SELECT document_id, step, status, error_message FROM tasks ORDER BY created_at D
 ### 2. Check downloaded PDFs
 
 ```bash
-ls -la ./data/pdfs/
+ls -la ./data/documents/
 ```
 
 ### 3. Watch logs
@@ -344,10 +437,10 @@ With `LLM_TRACE_ENABLED=true`, every LLM and hosted-embedding call lands in a da
 directory of batched JSONL objects. After a pipeline run:
 
 ```bash
-ls data/pdfs/llm-traces/$(date -u +%F)/
-cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl | wc -l
+ls data/llm-traces/$(date -u +%F)/
+cat data/llm-traces/$(date -u +%F)/*.jsonl | wc -l
 
-cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+cat data/llm-traces/$(date -u +%F)/*.jsonl \
   | jq -r '[.operation, .context.source, .model,
             .usage.total_tokens, .success] | @tsv' | head
 ```
@@ -365,7 +458,7 @@ To cost a single chat question, start the API, send one message, and note the
 `Chat interaction <uuid> for session …` line in the API log:
 
 ```bash
-cat data/pdfs/llm-traces/$(date -u +%F)/*.jsonl \
+cat data/llm-traces/$(date -u +%F)/*.jsonl \
   | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
       | [.context.source, .model, .usage.input_tokens,
          .usage.output_tokens] | @tsv'
@@ -389,12 +482,13 @@ psql postgresql://postgres:postgres@localhost:5432/overklagan -c "DROP SCHEMA pu
 # Re-apply migrations
 uv run alembic upgrade head
 
-# Clear downloaded PDFs
-rm -rf ./data/pdfs/*
+# Clear downloaded PDFs and traces — both sit directly under the storage root
+rm -rf ./data/documents/* ./data/llm-traces/*
 ```
 
-> This also wipes `data/pdfs/llm-traces/`, since traces share the storage root. Copy
-> that directory first if the cost history from the run matters — nothing else holds it.
+> Copy `data/llm-traces/` first if the cost history from the run matters — nothing else
+> holds it. `data/store/` (`run_step.py --store fs`) and `data/agent-runs/`
+> (`run_agent.py`) are separate and untouched by this.
 
 ## Re-embedding after an embedding-config change
 
@@ -463,4 +557,4 @@ See the [testing strategy](/testing.md) for the full unit/integration split.
 | `Integration tests would run against the development database` | `TEST_DATABASE_URL` names the same database as `DATABASE_URL` | Unset it to use the derived `_test` default, or point it elsewhere. Nothing was truncated |
 | `berget_api_key is required` (or `gemini_api_key is required`) | LLM/embedding provider key not set | Add `BERGET_API_KEY` (default provider) — or `GEMINI_API_KEY` if `LLM_PROVIDER=gemini` — to `.env` |
 | Crawl finds 0 new documents | All URLs already in DB | Reset state (see above) or use a different source URL |
-| Permission denied writing PDFs | `LOCAL_STORAGE_PATH` dir missing | `mkdir -p ./data/pdfs` |
+| Permission denied writing PDFs | `LOCAL_STORAGE_PATH` dir missing | `mkdir -p ./data` |

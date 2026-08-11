@@ -1,0 +1,196 @@
+# The semantic model of the corpus: what the text-to-SQL agent is told about the
+# database it queries.
+#
+# This file carries the half of the schema description that a machine cannot
+# derive — what a column *means*, which columns hold free-text prose, which are
+# too large to return, and which tables exist at all. The other half (types,
+# nullability, foreign keys) is read from `shared.models.Base.metadata` at render
+# time and must never be written here; it would only drift.
+#
+# Every table named below is a table the agent may read. Omission is how a table
+# is kept unreachable, and `sessions`, `tasks` and `alembic_version` are refused
+# outright by the loader even if named — see `_NEVER_EXPOSED` in
+# `agents/sql/_semantic_model.py`.
+#
+# Validated against the ORM in both directions on API startup and by
+# `uv run python scripts/check_semantic_model.py`: a table that no longer exists,
+# a column with no entry, and an entry naming no column are each a startup
+# failure. See /reference/semantic-model.md.
+#
+# Notes are Swedish because the prompt they land in is, and the model reads both
+# together. Do not write the words FRITEXT or EJ VALBAR into a note — both markers
+# are rendered from the flags below, and typing them by hand is how the flag and
+# the prose come to disagree.
+
+version: 1
+
+tables:
+  documents:
+    description: >
+      Ett beslut från Överklagandenämnden per rad. Detta är korpusens navtabell.
+    columns:
+      # A bare string is the note. A mapping adds flags to it.
+      id: Primärnyckel.
+      source_url: URL till beslutet hos Svenska kyrkan.
+      source_document_id: Id i Svenska kyrkans OData-listning.
+      source_headline: Rubriken som listningen angav.
+      source_decision_number: >
+        Beslutsnumret som rubriken angav. Använd `decision_number` i stället —
+        den här kolumnen finns för avdubblering vid inhämtning.
+      source_published_at: När listningen publicerade beslutet.
+      gcs_uri: Var PDF:en ligger lagrad.
+      raw_text:
+        note: Hela beslutets text.
+        selectable: false
+      summary: >
+        LLM-genererad sammanfattning på högst 60 ord. Fritext — filtrera aldrig
+        på den.
+      case_number: >
+        Ärendenummer på formen 'YYYY-NNNN', t.ex. '2026-0021'. NULL för äldre
+        beslut, så COUNT över den här kolumnen underskattar. Årtalet i
+        ärendenumret är det år ärendet inleddes.
+      decision_number: >
+        Beslutsnummer på formen 'N/YYYY', t.ex. '25/2026'. Ett annat
+        identifierarrum än `case_number`; beslut citerar varandra med båda.
+        Alltid ifylld.
+      decision_date: >
+        Datum för nämndens beslut. Alltid ifylld, och den pålitligaste källan
+        när frågan gäller ett år.
+      decision_outcome:
+        note: >
+          Den ordagranna slutklämmen ur beslutet, inte en kategori. Värdena är
+          hela meningar, t.ex. 'Överklagandenämnden avslår överklagandet.' men
+          också 'Överklagandenämnden avslår A:s begäran om att få höra ett vittne
+          i ärendet.' (ett avslaget vittnesyrkande, INTE ett avslaget
+          överklagande) och sammansatta '1. ... avslår ... 2. ... avvisar ...'.
+          En enkel LIKE '%avslår%' räknar därför fel åt båda håll.
+        free_text: true
+      category:
+        note: >
+          Ämnesrubrik, inte en kontrollerad vokabulär. Snarlika värden förekommer
+          sida vid sida ('Utlämnande av handling' och 'Utlämnande av
+          handlingar').
+        free_text: true
+      created_at: När raden skapades. Metadata, inte sakuppgift.
+      updated_at: När raden ändrades. Metadata, inte sakuppgift.
+
+  chunks:
+    description: >
+      Textstycken ur beslutens PDF:er, underlaget för semantisk sökning. Använd
+      endast för att söka i löpande text — antalet stycken per beslut varierar
+      och säger ingenting om ärendet.
+    columns:
+      id: Primärnyckel.
+      document_id: Beslutet stycket kommer ur.
+      chunk_index: Styckets ordning inom beslutet.
+      chunk_text: Styckets text, ordagrant.
+      contextual_text: Stycket med beslutets sammanfattning före.
+      section: >
+        'body' eller 'appendix'. 'appendix' är det ÖVERKLAGADE beslutet, alltså
+        underinstansens ord — inte nämndens. Filtrera på section = 'body' om
+        frågan gäller nämndens eget ställningstagande.
+      appendix_label: Bilagans beteckning, t.ex. 'Bilaga A'.
+      embedding:
+        note: Vektor för semantisk sökning.
+        selectable: false
+      tsv:
+        note: Lexemindex för fritextsökning.
+        selectable: false
+      created_at: När raden skapades. Metadata, inte sakuppgift.
+
+  entities:
+    description: >
+      Begrepp, roller, församlingar, författningar och sökord som förekommer i
+      besluten. Se kolumnen `type`.
+    columns:
+      id: Primärnyckel.
+      name:
+        note: >
+          Entitetens namn i gemener. Snarlika varianter samexisterar
+          ('utlämnande', 'utlämnande av handling', 'utlämnande av handlingar').
+        free_text: true
+      type: >
+        'keyword', 'legal_concept', 'role', 'parish' eller 'regulation'.
+        'keyword' är nämndens EGNA sökord från beslutets 'Sökord:'-rad och är
+        därmed den enda kategoriseringen korpusen själv går i god för — föredra
+        den framför `documents.category` när frågan gäller ämne. Övriga typer är
+        utvunna ur texten av en språkmodell.
+      created_at: När raden skapades. Metadata, inte sakuppgift.
+
+  document_entities:
+    description: Kopplingstabell mellan beslut och entiteter.
+    columns:
+      document_id: Beslutet.
+      entity_id: Entiteten.
+      relevance: >
+        'primary' (central i beslutet) eller 'mentioned' (nämns i förbigående).
+
+  document_references:
+    description: >
+      Beslut som hänvisar till andra beslut i korpusen, upplöst till id:n.
+    columns:
+      source_document_id: Beslutet som hänvisar.
+      target_document_id: Beslutet som hänvisas till.
+      reference_context: Meningen hänvisningen står i.
+
+  unresolved_references:
+    description: >
+      Hänvisningar till ärendenummer som inte finns i korpusen. Ett beslut som
+      citeras här har alltså INTE hämtats in.
+    columns:
+      id: Primärnyckel.
+      source_document_id: Beslutet som hänvisar.
+      target_case_number: Ärendenumret som citerades men som saknas i korpusen.
+      reference_context: Meningen hänvisningen står i.
+      created_at: När raden skapades. Metadata, inte sakuppgift.
+
+# Worked queries shown to the agent. Each one is pushed through the SQL guard on
+# startup, and each must declare in `grounding` every free-text column it
+# filters on — the same rule `run_sql` enforces on the agent. An example that
+# broke either check would be teaching the model to write a query the tools
+# refuse to run.
+#
+# The values in these queries are illustrative, not current. The prompt says so
+# explicitly; if it did not, a stale literal here would quietly become the
+# vocabulary the model trusts instead of the one it looks up.
+examples:
+  - question: Hur många överklaganden om utlämnande av handling avslogs 2026?
+    grounding:
+      - [documents, decision_outcome]
+      - [documents, category]
+    sql: |
+      SELECT count(*) AS antal
+      FROM documents
+      WHERE decision_outcome ILIKE '%avslår överklagandet%'
+        AND category IN ('Utlämnande av handling', 'Utlämnande av handlingar')
+        AND extract(year FROM decision_date) = 2026
+    note: >
+      Båda fritextkolumnerna lästes med list_column_values först. Villkoret på
+      decision_outcome träffar bara den lydelse som avser själva överklagandet,
+      inte avslagna yrkanden i övrigt. Snarlika kategorivärden tas med allihop.
+
+  - question: Vilka är de vanligaste sökorden i besluten?
+    grounding: []
+    sql: |
+      SELECT e.name AS sokord, count(DISTINCT de.document_id) AS antal
+      FROM entities AS e
+      JOIN document_entities AS de ON de.entity_id = e.id
+      WHERE e.type = 'keyword'
+      GROUP BY e.name
+      ORDER BY antal DESC
+      LIMIT 20
+    note: >
+      Sökorden är nämndens egna och därmed pålitligare än documents.category.
+      entities.name grupperas här, den villkoras inte — därför behövs ingen
+      grundning.
+
+  - question: Hur fördelar sig besluten över åren?
+    grounding: []
+    sql: |
+      SELECT extract(year FROM decision_date) AS ar, count(*) AS antal
+      FROM documents
+      GROUP BY ar
+      ORDER BY ar
+    note: >
+      decision_date väljs framför case_number: ärendenumret är NULL för äldre
+      beslut och dess årtal avser när ärendet inleddes, inte när det avgjordes.

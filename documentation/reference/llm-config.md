@@ -4,7 +4,7 @@ title: llm_config.yaml — LLM and Embedding Configuration
 description: The single source of truth for which model and provider each LLM role and the embedder use — file format, precedence rules against environment variables, and the full env-var registry.
 resource: llm_config.yaml
 tags: [llm, config, yaml, provider, embedding, precedence]
-timestamp: 2026-08-02T00:00:00Z
+timestamp: 2026-08-08T00:00:00Z
 ---
 
 # llm_config.yaml — LLM and Embedding Configuration
@@ -52,6 +52,8 @@ roles:
     # temperature: 0.2
     # max_tokens: 4096
     # stream_usage: false
+  sql:
+    model: mistralai/Mistral-Medium-3.5-128B
 
 embedding:
   provider: berget            # a name from `providers`, or the literal "local"
@@ -220,7 +222,7 @@ See [live testing](/playbooks/live-testing.md) for the commands.
 |---|---|---|
 | `LLM_CONFIG_PATH` | Global | Points at a config file directly, skipping the walk-up-from-cwd discovery. A missing file at this path is fatal. |
 | `LLM_PROVIDER` | Every role | Overrides every role's provider **kind** (`openai_compatible`, `gemini` or `none` — a `ProviderKind` value, not a `providers:` name), flattening them onto one host. Logs a warning when it masks a role's own `provider:`. `LLM_PROVIDER=none` is the process-wide LLM off switch — see [running with no LLM](#running-with-no-llm). |
-| `LLM_MODEL_<ROLE>` | One role | Overrides that role's `model`. Exists for free for any role declared in the YAML — `LLM_MODEL_STRUCTURED`, `LLM_MODEL_SUMMARIZE`, `LLM_MODEL_CHAT` today. |
+| `LLM_MODEL_<ROLE>` | One role | Overrides that role's `model`. Exists for free for any role declared in the YAML — `LLM_MODEL_STRUCTURED`, `LLM_MODEL_SUMMARIZE`, `LLM_MODEL_CHAT`, `LLM_MODEL_SQL` today. |
 | `LLM_MODEL` | — | Deliberately ignored by role resolution. Pre-dates roles. |
 | `LLM_TEMPERATURE` | Every role | Overrides `temperature` for whichever role is being resolved. |
 | `LLM_MAX_TOKENS` | Every role | Overrides `max_tokens`. |
