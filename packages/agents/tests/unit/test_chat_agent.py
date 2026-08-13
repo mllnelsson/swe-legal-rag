@@ -643,3 +643,59 @@ class TestCorrelation:
         ]
         assert orchestration
         assert {r.context["prompt"] for r in orchestration} == {"CHAT_ORCHESTRATION"}
+
+    async def test_two_readings_in_one_turn_are_distinguishable(self) -> None:
+        """A turn may read several decisions; each is its own sub-agent run.
+
+        Sharing the orchestrator's `agent_run_id` would leave two readings
+        identical in every correlation key they carry.
+        """
+        reader = ScriptedProvider(
+            Message(role=Role.assistant, content="Första läsningen."),
+            Message(role=Role.assistant, content="Andra läsningen."),
+        )
+        provider = ScriptedProvider(
+            _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+            _tool_call(
+                ChatTool.READ_DECISION,
+                call_id="call-2",
+                document_id="d1",
+                question="Vad beslutade nämnden?",
+            ),
+            _tool_call(
+                ChatTool.READ_DECISION,
+                call_id="call-3",
+                document_id="d1",
+                question="Vilka skäl angavs?",
+            ),
+            _tool_call(ChatTool.ANSWER, call_id="call-4", chunk_ids=["c1"]),
+        )
+
+        await _collect(
+            run_chat_agent(
+                ChatAgentRequest(question="Vad beslutade nämnden?"),
+                FakeToolset(),
+                llm_provider=provider,
+                reader_provider=reader,
+                settings=_settings(),
+            )
+        )
+
+        readings = [
+            r for r in self.records if r.context["source"] == "agents.chat.read"
+        ]
+        assert len(readings) == 2
+        assert len({r.context["agent_run_id"] for r in readings}) == 2
+
+    async def test_a_reading_does_not_take_the_orchestrators_run_id(self) -> None:
+        await self._run_a_turn()
+
+        by_source = {
+            source: {
+                r.context["agent_run_id"]
+                for r in self.records
+                if r.context["source"] == source
+            }
+            for source in ("agents.chat", "agents.chat.read")
+        }
+        assert by_source["agents.chat"].isdisjoint(by_source["agents.chat.read"])

@@ -51,9 +51,10 @@ Both agents open their correlation scope the same way, and neither mints an
 trace context and mints only when there is none. That is what lets `run_sql_agent`,
 reached as the conversational agent's `query_corpus` tool, keep its spend inside the
 turn that asked for it, while the same function reached from `POST /api/sql` — with no
-caller to inherit from — still opens an interaction of its own. Each also opens an
-`ai.agent_run_scope()`, which always mints, so two `query_corpus` calls in one turn stay
-distinguishable. See [LLM Observability](/observability.md).
+caller to inherit from — still opens an interaction of its own. Every sub-agent
+invocation also opens an `ai.agent_run_scope()`, which always mints — both agents and
+each `read_decision_text` reading — so repeated calls to the same sub-agent within one
+turn stay distinguishable. See [LLM Observability](/observability.md).
 
 Every function above the `_semantic_model.py` layer takes an optional `document`
 parameter and falls back to the cached, process-wide one — this is what lets a test
@@ -162,7 +163,8 @@ maintain.
 `TestCorrelation`, in both `test_agent.py` and `test_chat_agent.py`, installs a
 recording `TraceRecorder` and pins the correlation contract against the real agent
 functions rather than a stub: that a nested run inherits its caller's `interaction_id`,
-that a standalone run mints one, that each invocation gets its own `agent_run_id`, and
+that a standalone run mints one, that each sub-agent invocation — including each of two
+readings in one turn — gets its own `agent_run_id`, and
 that orchestration records name their prompt. Costing a question is a sum over one key,
 so a test that lets two ids into one turn is the one that lets the cost figure be wrong.
 

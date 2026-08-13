@@ -191,11 +191,12 @@ is its own billed call — plus `agents.chat.read` for the reader,
 one key: `run_chat_agent` opens an `interaction_scope` that **inherits** the id
 the API already put in the trace context rather than minting its own, so
 `query_corpus` — itself another `interaction_scope` — joins the same turn
-instead of starting a separate one. Each of the two sub-agent invocations also
-opens its own `agent_run_scope`, which always mints, so two `query_corpus`
-calls inside one turn are still distinguishable even though every other
-correlation key they carry is identical. See [LLM
-Observability](/observability.md).
+instead of starting a separate one. Every sub-agent invocation also opens its own
+`agent_run_scope`, which always mints — the counting agent, and each individual
+reading. A turn can make several `query_corpus` calls and read up to
+`chat_agent_max_documents_read` decisions, and those are identical in every other
+correlation key they carry, so this is the only thing that tells them apart. See
+[LLM Observability](/observability.md).
 
 ## Exercising it without the API
 

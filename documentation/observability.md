@@ -192,7 +192,7 @@ discarded.
 | Key | Set by |
 |---|---|
 | `interaction_id` | `ai.interaction_scope()` (`packages/ai/src/ai/_tracing_scope.py`) — an explicit id wins; failing that, one already in the trace context is **inherited**; failing that, one is **minted**. Opened around the whole request by `api/routes/chat.py` and `api/routes/sql.py` (the id resolved from the `X-Interaction-Id` request header — see below) and by `api/routes/search.py` (source `api.search`, no header, always mints), and opened again by `agents.chat.run_chat_agent` / `agents.sql.run_sql_agent` themselves — which is what lets `query_corpus` join the turn that called it instead of starting one of its own |
-| `agent_run_id` | `ai.agent_run_scope()`, same module — **always mints**, never inherits. Opened once per invocation of `run_chat_agent` and `run_sql_agent`, so two `query_corpus` calls inside one turn, which otherwise share every key, still carry distinct `agent_run_id`s |
+| `agent_run_id` | `ai.agent_run_scope()`, same module — **always mints**, never inherits. Opened once per sub-agent invocation: `run_chat_agent`, `run_sql_agent`, and each `read_decision_text` reading. A turn may make several `query_corpus` calls and read up to `chat_agent_max_documents_read` decisions, and those otherwise share every key they carry; this is what keeps them apart |
 | `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
 | `document_id`, `task_id` | Each worker, via the `MessageScope` `ai.worker_trace_scope(name)` supplies to `shared.worker.subscribe_step`, entered around `asyncio.run` inside its `handle_message` |
 | `document_id`, `task_id` | `scripts/run_step.py`, around the step dispatch in `_run_step` |

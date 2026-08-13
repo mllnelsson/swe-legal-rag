@@ -13,7 +13,7 @@ uninteresting.
 
 from __future__ import annotations
 
-from ai import trace_context
+from ai import agent_run_scope
 from ai.prompts import DECISION_READING, render
 from llm_core import LLMProvider, generate
 from shared.enums import ChunkSection
@@ -68,6 +68,11 @@ async def read_decision_text(
             "decision_text": format_decision_text(decision),
         },
     )
-    with trace_context(source=_SOURCE, prompt=DECISION_READING.name):
+    # One reading is one sub-agent invocation, the same as one `query_corpus`
+    # call, so it gets its own `agent_run_id`. A turn may read up to
+    # `chat_agent_max_documents_read` decisions; without this they would share
+    # the orchestrator's id and every other key, leaving them indistinguishable
+    # from one another in the trace stream.
+    with agent_run_scope(source=_SOURCE, prompt=DECISION_READING.name):
         response = await generate(messages, provider=provider)
     return response.message.content
