@@ -143,6 +143,98 @@ async def test_tool_loop_multi_iteration() -> None:
     assert result.iterations == 3
 
 
+async def test_tool_loop_terminal_tool_ends_the_run() -> None:
+    tc_search = ToolCall(id="tc-1", name="search", arguments={"q": "test"})
+    tc_answer = ToolCall(id="tc-2", name="answer", arguments={"picks": [1, 2]})
+    # A third turn is scripted to prove the loop never asks for one.
+    unreachable = _make_response("should never be requested")
+
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[
+            _make_response("", tool_calls=(tc_search,)),
+            _make_response("", tool_calls=(tc_answer,)),
+            unreachable,
+        ]
+    )
+
+    async def search(q: str) -> str:
+        return f"results for {q}"
+
+    async def answer(picks: list[int]) -> str:
+        return "recorded"
+
+    tools = [
+        ToolDefinition(name="search", description="Search", parameters={}),
+        ToolDefinition(name="answer", description="Finish", parameters={}),
+    ]
+
+    result = await tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"search": search, "answer": answer},
+        provider=mock_provider,
+        terminal_tools={"answer"},
+    )
+
+    assert mock_provider.generate.await_count == 2
+    assert result.iterations == 2
+    # The assistant message carrying the terminal call is what comes back, so
+    # the caller can read the arguments it was made for.
+    assert result.message.tool_calls == (tc_answer,)
+    assert result.history[-1].tool_name == "answer"
+
+
+async def test_tool_loop_terminal_tool_executes_before_returning() -> None:
+    tc = ToolCall(id="tc-1", name="answer", arguments={"picks": [7]})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        return_value=_make_response("", tool_calls=(tc,))
+    )
+
+    recorded: list[list[int]] = []
+
+    async def answer(picks: list[int]) -> str:
+        recorded.append(picks)
+        return "recorded"
+
+    tools = [ToolDefinition(name="answer", description="Finish", parameters={})]
+
+    result = await tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"answer": answer},
+        provider=mock_provider,
+        terminal_tools={"answer"},
+    )
+
+    assert recorded == [[7]]
+    assert result.iterations == 1
+
+
+async def test_tool_loop_without_terminal_tools_is_unchanged() -> None:
+    tc = ToolCall(id="tc-1", name="answer", arguments={})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[_make_response("", tool_calls=(tc,)), _make_response("Done")]
+    )
+
+    async def answer() -> str:
+        return "ok"
+
+    tools = [ToolDefinition(name="answer", description="Finish", parameters={})]
+
+    result = await tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"answer": answer},
+        provider=mock_provider,
+    )
+
+    assert result.message.content == "Done"
+    assert result.iterations == 2
+
+
 async def test_tool_loop_max_iterations_raises() -> None:
     tc = ToolCall(id="tc-1", name="loop", arguments={})
     looping_response = _make_response("", tool_calls=(tc,))

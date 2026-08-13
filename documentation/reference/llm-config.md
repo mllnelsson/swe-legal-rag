@@ -4,7 +4,7 @@ title: llm_config.yaml — LLM and Embedding Configuration
 description: The single source of truth for which model and provider each LLM role and the embedder use — file format, precedence rules against environment variables, and the full env-var registry.
 resource: llm_config.yaml
 tags: [llm, config, yaml, provider, embedding, precedence]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # llm_config.yaml — LLM and Embedding Configuration
@@ -52,6 +52,8 @@ roles:
     # temperature: 0.2
     # max_tokens: 4096
     # stream_usage: false
+  read:
+    model: mistralai/Mistral-Medium-3.5-128B
   sql:
     model: mistralai/Mistral-Medium-3.5-128B
 
@@ -70,6 +72,20 @@ embedding:
 | `providers` | Named hosts. `kind` is a `llm_core.ProviderKind` — `openai_compatible`, `gemini` or `none` — the client implementation dispatched on. `api_key_env` names the environment variable holding that host's key, and is **required for every kind except `none`**, which has no host to send one to. `openai_compatible` also requires `base_url`: there is no built-in default, and a host missing either raises `llm_core.MissingCredentialError` at construction. |
 | `defaults` | Inherited by every role that omits the field: `provider`, `temperature`, `max_tokens`, `stream_usage`. |
 | `roles` | One entry per task. `model` is required; `provider`/`temperature`/`max_tokens`/`stream_usage` are optional per-role overrides of `defaults`. |
+
+Five roles are declared today:
+
+| Role | Used by | Why that model |
+|---|---|---|
+| `structured` | Query expansion, metadata and entity extraction | Runs at ingestion scale, so it wants to be cheap |
+| `summarize` | [worker-chunk](/pipeline/chunk.md)'s document summary | Sees whole documents, so it wants context length |
+| `chat` | The [conversational agent's](/retrieval/chat-agent.md) tool loop and its streamed answer | The user-facing prose and the planning behind it, so it can afford to be the strongest here |
+| `read` | The conversational agent's document-reading sub-agent | Sees one whole decision per call — up to ~165,000 characters — so, like `summarize`, it wants context length more than it wants to be cheap |
+| `sql` | The [text-to-SQL agent](/api/sql-agent.md), reached directly and as the agent's counting tool | Needs reliable tool-calling across several turns, but writes no prose |
+
+A role has two halves that must agree: an `LLMRole` member in
+`ai/providers/roles.py` and an entry under `roles:` here. Adding a task means adding
+both.
 | `embedding` | The embedder's `provider` (a `providers` name, or the literal `"local"` for in-process `sentence-transformers`), `model`, `dimension`, and the retrieval `query_prefix`/`passage_prefix` pair. Naming a provider whose `kind` has no embeddings client (`gemini` and `none`) raises `ai.errors.UnsupportedEmbeddingBackendError` at resolution time, naming the offending key. |
 
 Every document model uses `extra="forbid"` — a typo'd or unrecognized key fails to
@@ -222,7 +238,7 @@ See [live testing](/playbooks/live-testing.md) for the commands.
 |---|---|---|
 | `LLM_CONFIG_PATH` | Global | Points at a config file directly, skipping the walk-up-from-cwd discovery. A missing file at this path is fatal. |
 | `LLM_PROVIDER` | Every role | Overrides every role's provider **kind** (`openai_compatible`, `gemini` or `none` — a `ProviderKind` value, not a `providers:` name), flattening them onto one host. Logs a warning when it masks a role's own `provider:`. `LLM_PROVIDER=none` is the process-wide LLM off switch — see [running with no LLM](#running-with-no-llm). |
-| `LLM_MODEL_<ROLE>` | One role | Overrides that role's `model`. Exists for free for any role declared in the YAML — `LLM_MODEL_STRUCTURED`, `LLM_MODEL_SUMMARIZE`, `LLM_MODEL_CHAT`, `LLM_MODEL_SQL` today. |
+| `LLM_MODEL_<ROLE>` | One role | Overrides that role's `model`. Exists for free for any role declared in the YAML — `LLM_MODEL_STRUCTURED`, `LLM_MODEL_SUMMARIZE`, `LLM_MODEL_CHAT`, `LLM_MODEL_READ`, `LLM_MODEL_SQL` today. |
 | `LLM_MODEL` | — | Deliberately ignored by role resolution. Pre-dates roles. |
 | `LLM_TEMPERATURE` | Every role | Overrides `temperature` for whichever role is being resolved. |
 | `LLM_MAX_TOKENS` | Every role | Overrides `max_tokens`. |
@@ -245,7 +261,7 @@ checked-in default and is the most common source of confusion with this system.
 asymmetric embedding model's retrieval convention (e5's `"query: "` /
 `"passage: "`). Both are read from the same file by
 [`ai.get_embedding_prefixes()`](/packages/ai.md), so the query side (used by the
-[retrieval agent](/retrieval/agent.md)) and the passage side (used by
+[retrieval agent](/retrieval/chat-agent.md)) and the passage side (used by
 [worker-embed](/pipeline/embed.md)) cannot drift apart the way they once did. Set
 both to `""` for a model that does not use prefixes (bge-m3, jina).
 

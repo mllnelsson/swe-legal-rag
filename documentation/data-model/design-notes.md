@@ -90,7 +90,7 @@ worker](/pipeline/crawl.md#deduplication-and-idempotency).
 The [entities](/data-model/entities.md),
 [document_entities](/data-model/document-entities.md), and
 [document_references](/data-model/document-references.md) tables capture GraphRAG
-concepts without a graph database. The [agent](/retrieval/agent.md) uses these for
+concepts without a graph database. The [agent](/retrieval/chat-agent.md) uses these for
 entity-based pre-filtering (e.g. "find all documents where entity X is primary → semantic
 search within that set") and relationship traversal ("what other decisions cite this
 one?"). Standard SQL joins replace graph queries at this scale — see the rationale in the

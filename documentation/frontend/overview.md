@@ -3,7 +3,7 @@ type: Concept
 title: Frontend
 description: The React SPA at frontend/ — a filtered, browsable, traversable interface over the deterministic retrieval API only. No chat, no SSE, no LLM call from the browser; chat is a deferred phase.
 tags: [frontend, ui, search, react, spa]
-timestamp: 2026-08-07T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # Frontend
@@ -128,7 +128,7 @@ npm run dev                                            # :5173, in frontend/
 `:5173` is already the API's default CORS origin, and Vite proxies `/api` to
 `:8000`. Embeddings run locally (`embedding.provider: local`), so search
 costs time rather than money, but the API still constructs the `structured`/
-`chat` LLM roles at startup and needs either `BERGET_API_KEY` or
+`chat`/`read`/`sql` LLM roles at startup and needs either `BERGET_API_KEY` or
 `LLM_PROVIDER=none` to start. `EMBEDDING_DIMENSION` must agree with
 `llm_config.yaml`.
 
@@ -137,11 +137,18 @@ costs time rather than money, but the API still constructs the `structured`/
 Not in this version: saved matters or bookmarks, a marketing site, auth, and a
 mobile layout.
 
-Chat is a **deferred phase, not a rejected one**. The [PRD](/prd.md) still
-specifies a chat interface (S3), a synthesized answer citing case numbers (S6)
-and conversational follow-ups (S8); that work is planned once the search
-functionality here is settled. This frontend is an interim deliverable against
-that spec, which is why the PRD has not been amended to match it.
+Chat is a **deferred phase, not a rejected one** — and the deferral is now only on
+this side. The backend serves it: [`POST /api/chat`](/api/chat-endpoint.md) is live and
+no longer deprecated, backed by the [conversational agent](/retrieval/chat-agent.md). The
+[PRD](/prd.md) still specifies a chat interface (S3), a synthesized answer citing case
+numbers (S6) and conversational follow-ups (S8); what remains is a UI for the stream.
+
+Two things about that contract were shaped for a client that does not exist yet, so
+building one should not require changing it. Progress events carry a **`label` key from
+a closed enum, never a sentence** — the client holds the Swedish strings and maps them,
+which is why no translation lives in the backend. And SSE clients dispatch by event
+name, so a first implementation may listen only for `token`/`sources`/`done` and add the
+progress UI later without a contract change.
 
 ## Deployment
 

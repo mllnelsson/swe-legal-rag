@@ -120,11 +120,21 @@ async def tool_loop(
     provider: LLMProvider | None = None,
     config: LLMConfig | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    terminal_tools: set[str] | None = None,
     on_tool_call: ToolCallCallback | None = None,
     on_tool_result: ToolResultCallback | None = None,
 ) -> ToolLoopResult:
+    """Drive the model until it stops calling tools, or calls a terminal one.
+
+    `terminal_tools` names tools whose call ends the run. Without it a loop ends
+    only when the model happens to stop calling tools, which leaves termination
+    incidental and the final message throwaway prose. Naming a terminal tool
+    makes the ending deliberate and the handoff machine-readable: the tool's
+    arguments are the result the caller wanted.
+    """
     p = _resolve_provider(provider, config)
     history = list(messages)
+    terminal = terminal_tools or set()
 
     for iteration in range(1, max_iterations + 1):
         # One record per iteration: every pass through the loop is its own
@@ -172,5 +182,18 @@ async def tool_loop(
 
             if on_tool_result is not None:
                 await on_tool_result(tc, result, history)
+
+            if tc.name in terminal:
+                # The assistant message is returned rather than the tool result
+                # because it carries the terminal call's arguments, which are
+                # what the caller came for. Any later call in the same turn is
+                # left unexecuted — the model has said it is done — so `history`
+                # can end on an assistant message with an unanswered tool call
+                # and is not safe to resume a provider round-trip with.
+                return ToolLoopResult(
+                    message=response.message,
+                    history=history,
+                    iterations=iteration,
+                )
 
     raise MaxIterationsError(f"Tool loop exceeded {max_iterations} iterations")

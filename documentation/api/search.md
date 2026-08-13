@@ -4,7 +4,7 @@ title: Search Endpoint (POST /api/search)
 description: The POST /api/search hybrid search contract — free-text query plus explicit filters, document-grouped hits with full chunk text, per-arm ranks and similarity scores, and a diagnostics block that makes ranking auditable.
 resource: POST /api/search
 tags: [api, search, rest, hybrid-search, relevance]
-timestamp: 2026-08-06T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # Search Endpoint (`POST /api/search`)
@@ -149,11 +149,14 @@ how the default was calibrated and why it is model-specific.
 ## Filter semantics: no fallback
 
 A `filter` that matches no documents returns an **empty result**, not a wider unfiltered
-search — `diagnostics.candidate_document_count: 0` explains why. This is the opposite of
-the [chat retriever](/retrieval/agent.md), which falls back to an unfiltered search when
-its filter yields nothing, and it is deliberate: chat prefers an answer from a wider net
-over no answer, but a search tool that silently ignored "nothing older than 2024" and
-answered with 2019 decisions would be lying to its caller.
+search — `diagnostics.candidate_document_count: 0` explains why. A search tool that
+silently ignored "nothing older than 2024" and answered with 2019 decisions would be
+lying to its caller.
+
+The [conversational agent](/retrieval/chat-agent.md) searches through this same endpoint's
+service, so it inherits that. It is also why the agent may not filter on a free-text
+column until it has read that column's values: an empty result from a guessed `category`
+is indistinguishable, to the model, from a corpus that says nothing on the subject.
 
 ## Appendix scoping
 

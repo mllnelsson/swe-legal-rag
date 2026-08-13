@@ -31,3 +31,36 @@ class SqlAgentSettings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_sql_agent_settings() -> SqlAgentSettings:
     return SqlAgentSettings()
+
+
+class ChatAgentSettings(BaseSettings):
+    """Bounds on the conversational agent's tool loop."""
+
+    model_config = SettingsConfigDict(env_prefix="")
+
+    # Iterations the orchestrator may take before giving up. Sized for the
+    # intended shape — ground the vocabulary, search, maybe count, maybe read a
+    # decision, then answer — with room for one repair.
+    chat_agent_max_iterations: int = 8
+    # Decisions the agent may have read in full in one run. Each is a separate
+    # sub-agent call over a whole document, so this is the run's cost ceiling
+    # more than its context ceiling: the extracts come back small either way.
+    chat_agent_max_documents_read: int = 5
+    # Passages the answer may be built from. Every one is read verbatim by the
+    # synthesis step, and a citation list longer than this stops being a
+    # citation list.
+    chat_agent_max_chunks_cited: int = 12
+    # Decisions one search returns. The agent reads their passages, so this
+    # trades recall against how much lands in its context per call.
+    chat_agent_search_limit: int = 8
+    # Passages per decision a search returns. Measured against the real corpus,
+    # the deterministic default of 3 puts ~33k characters of verbatim text into
+    # one tool result — which the loop then re-sends on every later iteration.
+    # Two is enough to judge a decision's relevance; the whole text is a
+    # `read_decision` away, and that goes to a sub-agent rather than here.
+    chat_agent_chunks_per_decision: int = 2
+
+
+@lru_cache(maxsize=1)
+def get_chat_agent_settings() -> ChatAgentSettings:
+    return ChatAgentSettings()

@@ -1,32 +1,39 @@
 ---
 type: Package
 title: api Package
-description: The FastAPI application, the chat retrieval service layer, and the deterministic search/browse/traversal REST API — query planner, retriever, answerer, session service, search/document/concept services, and their routes.
+description: The FastAPI application and the deterministic search/browse/traversal REST API — search/document/concept/keyword services, the session service, the chat toolset the conversational agent is driven through, and their routes.
 resource: packages/api
 tags: [package, api, fastapi, retrieval, sse, search, rest]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # api Package (`packages/api/`)
 
-Hosts the FastAPI application, the chat retrieval-pipeline service layer, and the
-deterministic search/browse/traversal REST API. Depends on `shared` (repositories, DTOs,
-storage) and [ai](/packages/ai.md) (decompose, synthesize, embed, expand); it also
-declares `llm-core` directly in `pyproject.toml`, since `retriever.py` imports it for its
-rerank call rather than reaching it transitively through `ai`. The end-to-end chat
-retrieval flow is described in the [retrieval agent](/retrieval/agent.md), and the
-deterministic search algorithm in [deterministic search](/retrieval/deterministic-search.md);
-this concept covers the package's structure and the HTTP layer for both.
+Hosts the FastAPI application and the deterministic search/browse/traversal REST API.
+Depends on `shared` (repositories, DTOs, storage), [ai](/packages/ai.md) (synthesize,
+embed, expand), [agents](/packages/agents.md) (both agents) and `llm-core` (provider
+types, declared directly rather than reached transitively through `ai`).
+
+The retrieval algorithm is described in [deterministic
+search](/retrieval/deterministic-search.md) and the agent that drives it in [the
+conversational agent](/retrieval/chat-agent.md); this concept covers the package's
+structure and its HTTP layer.
+
+**No agent loop lives here.** Both agents are in `agents`; this package supplies the
+tools one of them runs on and the SSE framing both reach a client through.
 
 ## Config (`api/config.py`)
 
-`RetrievalSettings` — `RETRIEVAL_TOP_K` (8), `RETRIEVAL_SEARCH_LIMIT` (20),
-`RETRIEVAL_RERANK_ENABLED` (False — default off for [NFR1 <5s](/prd.md)).
-`SessionSettings` — `SESSION_MAX_HISTORY_TURNS` (10). `AppSettings` — `API_CORS_ORIGINS`
-(`["http://localhost:5173"]`, the Vite dev default). `SearchSettings` — bounds for the
-search API, deliberately separate from `RetrievalSettings` so the two paths tune without
-disturbing each other; see [deterministic search](/retrieval/deterministic-search.md#settings)
-for the full table of defaults. Each exposes an `@lru_cache` singleton getter.
+`SessionSettings` — `SESSION_MAX_HISTORY_TURNS` (10). `AppSettings` —
+`API_CORS_ORIGINS` (`["http://localhost:5173"]`, the Vite dev default).
+`SearchSettings` — bounds for the search API, and therefore also the bounds the
+[conversational agent](/retrieval/chat-agent.md) searches under, since its search tool
+wraps the same path; see [deterministic
+search](/retrieval/deterministic-search.md#settings) for the full table of defaults.
+Each exposes an `@lru_cache` singleton getter.
+
+The agent's own bounds — iterations, reading budget, citation cap — are
+`ChatAgentSettings` in [agents](/packages/agents.md), next to the loop they govern.
 
 ## Shared HTTP infrastructure
 
@@ -39,44 +46,31 @@ for the full table of defaults. Each exposes an `@lru_cache` singleton getter.
   `offset`) every list-returning endpoint uses, and `clamp_limit(requested, *, default,
   maximum)`, which keeps a caller-supplied page size inside what the server will serve.
 
-## Chat service layer (`api/services/`) — the deprecated agent surface
+## The chat surface (`api/services/`)
 
-`POST /api/chat` and the four services behind it are the package's LLM-driven,
-stateful, streaming half — the agent, not the deterministic tool set the rest of this
-package is. Each carries a `# DEPRECATED —` marker comment and the route is decorated
-`deprecated=True`, per [the chat endpoint](/api/chat-endpoint.md). Nothing here
-changed behaviourally; the marker is an ownership signal that this surface is slated
-to move to a future `agent` package.
+Two modules, and neither is an agent — the loop lives in
+[agents](/packages/agents.md).
 
-**The extraction set is clean:** no retrieval endpoint or service imports any of the
-four chat services, and `routes/chat.py` is their only importer, so the chat surface
-can be lifted out wholesale. What moves with it: the four services below, the
-`RetrievalSettings` and `SessionSettings` classes in `api/config.py`,
-`ai.decompose_query` and `ai.synthesize` in the [ai package](/packages/ai.md), and the
-[`sessions`](/data-model/sessions.md) table. `ai.expand_query` does **not** move —
-query expansion belongs to search; see [query expansion](/retrieval/query-expansion.md).
+- **`chat_toolset.py`** — `ApiChatToolset` / `build_chat_toolset(session, *,
+  embedding_provider, search_settings, sql_llm_provider)`. Satisfies the `ChatToolset`
+  Protocol by mapping the agent's five capabilities onto `search_service`,
+  `document_service`, `keyword_service`, `concept_service` and `agents.run_sql_agent`,
+  and converting their results into the agent's own shapes. This is the only place the
+  two halves meet, and it sits on the `api` side of the edge so the dependency stays
+  `api → agents`. A class rather than a module of functions because the Protocol wants
+  an object carrying its per-request dependencies.
 
-- **`query_planner.py`** — `plan_query(question, history, *, llm_provider=None) ->
-  QueryPlan`. Calls `ai.decompose_query()` and maps `DecomposeResult` onto
-  `DocumentFilter` (`DateFilter.start/end` → `date_from/date_to`; `categories[0]` →
-  `category`; `entity_refs` → `entity_names`). The `ai`→`shared` mapping lives here only.
-- **`retriever.py`** — `retrieve(plan, session, *, embedding_provider, settings) ->
-  list[RetrievedChunk]`. Pre-filter (via `shared.search.is_empty_filter`) → embed
-  (`"query: "` prefix) → hybrid search (`asyncio.gather(vector, text)`) → RRF fusion →
-  optional `_rerank()` → metadata hydration. The e5 `"query: "`/`"passage: "` prefixes
-  are symmetric and must stay consistent with the [embed worker](/pipeline/embed.md).
-- **`answerer.py`** — typed SSE events `TokenEvent`/`SourcesEvent`/`DoneEvent`
-  (`AnswerEvent` union). `answer_query(...)` calls `plan_query()` → `retrieve()` →
-  `ai.synthesize_answer()`, yields token events (also accumulated for persistence, never
-  buffering the stream), a deduplicated `SourcesEvent` (one `SourceReference` per
-  document, first-seen chunk wins, `excerpt` first 200 chars, `pdf_url` from
-  `storage.get_url(shared.storage.keys.document_pdf_key(document_id))`), then
-  `DoneEvent`; persists the turn via `session_service.append_turn()` afterwards.
+  Two fields it takes care to carry: `vector_similarity` on every chunk and the search
+  diagnostics, because the fused `score` is rank-derived and cannot tell the agent
+  whether the corpus actually addresses a question — see [the similarity
+  floor](/retrieval/deterministic-search.md#the-similarity-floor).
 - **`session_service.py`** — module-level functions:
   `get_or_create_session(session_id, session)` (None or stale id → fresh session, no
   error), `append_turn(...)` (appends user + assistant entries, updates `last_active_at`,
   no-op on missing id), `history_for_llm(session, max_turns)` (returns the last
   `max_turns * 2` entries, preserving complete pairs; full history stays in the DB).
+  Only the question and the answer are persisted — never the evidence a turn gathered,
+  which would otherwise be re-sent on the next turn.
 
 ## Search/browse/traversal service layer (`api/services/`)
 
@@ -108,29 +102,34 @@ search](/retrieval/deterministic-search.md) for why.
 
 ## FastAPI app (`api/main.py`)
 
-`create_app() -> FastAPI`. The lifespan handler sets `app.state.embedding_provider` and
-`app.state.storage` at startup (and runs `ai.verify_embedding_dimension` — see
-[embedding dimension](/decisions/embedding-dimension.md)); CORS is configured from
-`AppSettings.api_cors_origins`. Routes: the search, documents, concepts and keywords
-routers are registered ahead of the chat router, plus `GET /healthz`.
+`create_app() -> FastAPI`. The lifespan handler sets `app.state.storage` and
+`app.state.embedding_provider` at startup (and runs `ai.verify_embedding_dimension` — see
+[embedding dimension](/decisions/embedding-dimension.md)), then constructs one provider
+per [role](/reference/llm-config.md): `structured`, `chat`, `read` and `sql`. The chat
+agent uses two of them — `chat` drives its loop and writes the answer, `read` is the
+sub-agent it hands a whole decision to. CORS is configured from
+`AppSettings.api_cors_origins`. Routes: the search, documents, concepts, keywords and
+sql routers are registered ahead of the chat router, plus `GET /healthz`.
 
-## Chat route (`api/routes/chat.py`) — deprecated
+## Chat route (`api/routes/chat.py`)
 
-Implements the [chat endpoint](/api/chat-endpoint.md) contract; `@router.post("/api/chat",
-deprecated=True)` marks it as such in the OpenAPI schema and Swagger UI.
+Implements the [chat endpoint](/api/chat-endpoint.md) contract. A thin adapter, like
+every other route here: it owns the session, the SSE framing and the turn persistence,
+and nothing about how the answer is reached.
 
 | Symbol | Kind | Purpose |
 |---|---|---|
 | `ChatRequest` | Pydantic model | `session_id: UUID \| None`, `message: str` (1–4000 chars) |
 | `_format_sse(event, data)` | pure function | Produces an `event: …\ndata: …\n\n` frame |
-| `chat_endpoint` | route handler | Orchestrates session + `answer_query()` + SSE streaming; dispatches events via `match`/`case` over `AnswerEvent` |
+| `_pdf_url(document_id)` | pure function | The [PDF endpoint's](/api/document-pdf.md) path, added to each source |
+| `chat_endpoint` | route handler | Session + toolset + `run_chat_agent()` + SSE; dispatches via `match`/`case` over `AgentEvent` |
 
 Request flow: validate `ChatRequest` (422 on empty/long/bad `session_id`) →
-`get_or_create_session` → `history_for_llm` → `answer_query` (async generator) →
-`_format_sse` each event → `StreamingResponse` (`text/event-stream`, headers
-`Cache-Control: no-cache`, `X-Accel-Buffering: no`); the `done` frame carries the
-`session_id`. The DB session comes from `api/dependencies.get_db`, shared with every
-other router.
+`build_chat_toolset` → `get_or_create_session` → `history_for_llm` → `run_chat_agent`
+(async generator) → `_format_sse` each event → `StreamingResponse`
+(`text/event-stream`, headers `Cache-Control: no-cache`, `X-Accel-Buffering: no`); the
+`done` frame carries the `session_id`, and the turn is persisted after it. The DB
+session comes from `api/dependencies.get_db`, shared with every other router.
 
 ## Search, document, concept and keyword routes (`api/routes/`)
 
@@ -142,10 +141,12 @@ directly or raises `HTTPException`. Full wire contracts are documented per endpo
 ## API server design decisions
 
 - **Error event instead of mid-stream HTTP error (chat only):** once a
-  `StreamingResponse` starts, headers are sent, so a synthesis failure emits `event:
-  error` (generic safe message) and stops; `done` is absent and the failed turn is not
-  persisted. The search/documents/concepts routes are plain request/response, so they use
-  ordinary HTTP status codes throughout.
+  `StreamingResponse` starts, headers are sent, so a failure emits `event: error`
+  (generic safe message) and stops; `done` is absent and the failed turn is not
+  persisted. The agent emits its own `ErrorEvent` for failures it handles, and the route
+  catches anything that escapes — either way the client sees one terminal frame. The
+  search/documents/concepts routes are plain request/response, so they use ordinary HTTP
+  status codes throughout.
 - **No `errors.py` in this package.** Search/document/concept services return `None` for
   a missing row; routes raise `HTTPException(404)` at the boundary. Nothing here throws a
   domain error worth its own hierarchy.

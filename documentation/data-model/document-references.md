@@ -22,7 +22,7 @@ Composite PK on `(source_document_id, target_document_id)`. `target_document_id`
 non-nullable FK; citations whose target is not yet in the corpus are held in
 [unresolved_references](/data-model/unresolved-references.md) until the target is
 ingested. Populated by the [extract worker](/pipeline/extract.md); used by the
-[retrieval agent](/retrieval/agent.md) for relationship traversal ("what other decisions
+[retrieval agent](/retrieval/chat-agent.md) for relationship traversal ("what other decisions
 cite this one?").
 
 Citations are matched in **two identifier spaces** — `documents.case_number`

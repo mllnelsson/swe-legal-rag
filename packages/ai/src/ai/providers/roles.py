@@ -37,6 +37,7 @@ class LLMRole(StrEnum):
     SUMMARIZE = auto()
     CHAT = auto()
     SQL = auto()
+    READ = auto()
 
 
 def create_llm_provider(

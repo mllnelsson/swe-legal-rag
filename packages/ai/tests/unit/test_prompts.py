@@ -6,6 +6,8 @@ import pytest
 
 from ai.prompts import (
     ANSWER_SYNTHESIS,
+    CHAT_ORCHESTRATION,
+    DECISION_READING,
     DOCUMENT_SUMMARIZATION,
     ENTITY_EXTRACTION,
     METADATA_EXTRACTION,
@@ -33,6 +35,22 @@ _CHUNKS = (
     "Ärende 2023/456: Överklagande avslogs. Kyrkoherden överklagade utan framgång.\n"
     "Ärende 2022/100: Anställning beviljades. Beslutet överklagades inte."
 )
+_READINGS = "[Mål 2023/456] Nämnden avslog överklagandet med hänvisning till kap. 34."
+_TABULAR = (
+    "Fråga: SELECT count(*) FROM documents WHERE decision_outcome ILIKE '%avslag%'\n"
+    "Rader: 1\nantal\n12"
+)
+_NOTES = "Mål 2023/456 bär avgörandet. Antalet kommer från tabelldatan, inte utdragen."
+_TODAY = "2026-08-13"
+
+# The evidence bundle every ANSWER_SYNTHESIS render needs. Spread into a context
+# so a new placeholder fails one dict here rather than every call site.
+_EVIDENCE = {
+    "chunks": _CHUNKS,
+    "readings": _READINGS,
+    "tabular": _TABULAR,
+    "notes": _NOTES,
+}
 
 
 def _has_placeholder(text: str) -> bool:
@@ -48,8 +66,24 @@ _ALL_TEMPLATES = [
         ANSWER_SYNTHESIS,
         {
             "question": _QUESTION,
-            "chunks": _CHUNKS,
             "conversation_history": _CONVERSATION,
+            **_EVIDENCE,
+        },
+    ),
+    (
+        CHAT_ORCHESTRATION,
+        {
+            "question": _QUESTION,
+            "today": _TODAY,
+            "conversation_history": _CONVERSATION,
+        },
+    ),
+    (
+        DECISION_READING,
+        {
+            "question": _QUESTION,
+            "case_number": _CASE_NUMBER,
+            "decision_text": _LEGAL_TEXT,
         },
     ),
     (METADATA_EXTRACTION, {"raw_text": _LEGAL_TEXT}),
@@ -103,8 +137,8 @@ class TestAnswerSynthesis:
             ANSWER_SYNTHESIS,
             {
                 "question": _QUESTION,
-                "chunks": _CHUNKS,
                 "conversation_history": _CONVERSATION,
+                **_EVIDENCE,
             },
         )
         assert not _has_placeholder(messages[1].content)
@@ -117,9 +151,108 @@ class TestAnswerSynthesis:
     def test_empty_conversation_history(self):
         messages = render(
             ANSWER_SYNTHESIS,
-            {"question": _QUESTION, "chunks": _CHUNKS, "conversation_history": ""},
+            {"question": _QUESTION, "conversation_history": "", **_EVIDENCE},
         )
         assert not _has_placeholder(messages[1].content)
+
+    def test_every_evidence_section_reaches_the_user_message(self):
+        messages = render(
+            ANSWER_SYNTHESIS,
+            {
+                "question": _QUESTION,
+                "conversation_history": _CONVERSATION,
+                **_EVIDENCE,
+            },
+        )
+        user = messages[1].content
+        for section in _EVIDENCE.values():
+            assert section in user
+
+    def test_counts_are_confined_to_tabular_evidence(self):
+        """The rule that stops the model counting a relevance-ranked sample.
+
+        Search hits are a slice of the corpus, so a total derived from them is
+        wrong in a way that reads as authoritative.
+        """
+        system = ANSWER_SYNTHESIS.system_prompt.lower()
+        assert "tabelldata" in system
+        assert "räkna aldrig utdragen" in system
+
+    def test_appendix_rule_survives_the_evidence_bundle(self):
+        system = ANSWER_SYNTHESIS.system_prompt.lower()
+        assert "bilaga" in system
+        assert "överklagade beslutet" in system
+
+
+class TestChatOrchestration:
+    def test_no_unrendered_placeholders_in_user_message(self):
+        messages = render(
+            CHAT_ORCHESTRATION,
+            {
+                "question": _QUESTION,
+                "today": _TODAY,
+                "conversation_history": _CONVERSATION,
+            },
+        )
+        assert not _has_placeholder(messages[1].content)
+
+    def test_every_tool_is_named(self):
+        """A tool the prompt never mentions is one the model will not reach for."""
+        system = CHAT_ORCHESTRATION.system_prompt
+        for tool in (
+            "list_vocabulary",
+            "search_decisions",
+            "read_decision",
+            "inspect_decision",
+            "query_corpus",
+            "answer",
+        ):
+            assert tool in system
+
+    def test_states_the_grounding_and_counting_rules(self):
+        system = CHAT_ORCHESTRATION.system_prompt
+        assert "list_vocabulary first" in system
+        assert "Never count search hits yourself" in system
+
+    def test_written_in_english(self):
+        """Deliberate, and the one prompt here that is.
+
+        This model plans and calls tools; it never writes a word the user reads.
+        """
+        system = CHAT_ORCHESTRATION.system_prompt
+        assert "You research questions" in system
+        assert "Du är" not in system
+
+
+class TestDecisionReading:
+    def test_no_unrendered_placeholders_in_user_message(self):
+        messages = render(
+            DECISION_READING,
+            {
+                "question": _QUESTION,
+                "case_number": _CASE_NUMBER,
+                "decision_text": _LEGAL_TEXT,
+            },
+        )
+        assert not _has_placeholder(messages[1].content)
+
+    def test_decision_text_reaches_the_user_message(self):
+        messages = render(
+            DECISION_READING,
+            {
+                "question": _QUESTION,
+                "case_number": _CASE_NUMBER,
+                "decision_text": _LEGAL_TEXT,
+            },
+        )
+        assert _LEGAL_TEXT in messages[1].content
+        assert _CASE_NUMBER in messages[1].content
+
+    def test_carries_the_appendix_rule(self):
+        """The reader sees whole documents, appendices included."""
+        system = DECISION_READING.system_prompt.lower()
+        assert "bilaga" in system
+        assert "överklagade beslutet" in system
 
 
 class TestMetadataExtraction:

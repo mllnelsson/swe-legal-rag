@@ -112,16 +112,16 @@ list[tuple[UUID, float]]` — a pure, stateless reciprocal rank fusion (`Σ 1/(k
 rank_i)`) that keeps the fused score and takes arbitrarily many rankings, and
 `rrf_fuse(rankings, k=DEFAULT_RRF_K) -> list[UUID]`, a thin wrapper dropping the score.
 `DEFAULT_RRF_K = 60` is the named damping constant both use by default. Consumed by the
-[retrieval agent](/retrieval/agent.md) (`rrf_fuse`) and [deterministic
+[retrieval agent](/retrieval/chat-agent.md) (`rrf_fuse`) and [deterministic
 search](/retrieval/deterministic-search.md) (`rrf_fuse_scored`, which is what lets an
 unbounded number of query-expansion variants fuse through the same call as the two
 search arms).
 
 `shared/search/filters.py` provides `is_empty_filter(document_filter: DocumentFilter) ->
 bool`, derived via `model_dump(exclude_defaults=True)` rather than enumerating fields by
-hand, so a `DocumentFilter` field added later cannot silently go unconsidered. Both the
-chat retriever and the search service call it; it replaced a hand-enumerated
-`retriever._filter_is_empty`.
+hand, so a `DocumentFilter` field added later cannot silently go unconsidered. The
+search service calls it to decide whether a candidate-narrowing query is worth making at
+all.
 
 ## `db.py`
 

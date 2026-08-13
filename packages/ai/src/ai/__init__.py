@@ -3,6 +3,7 @@ from llm_core import trace_context
 from ai._observability import LLMTraceConfig, install_file_tracing
 from ai.dtos import (
     ChunkContext,
+    DecisionReading,
     DateFilter,
     DecomposeRequest,
     DecomposeResult,
@@ -20,6 +21,7 @@ from ai.dtos import (
     SummarizeRequest,
     SummarizeResult,
     SynthesizeRequest,
+    TabularEvidence,
 )
 from ai.embedding import (
     EmbeddingConfig,
@@ -118,7 +120,9 @@ __all__ = [
     "DecomposeRequest",
     "DecomposeResult",
     "ChunkContext",
+    "DecisionReading",
     "SynthesizeRequest",
+    "TabularEvidence",
     "SourceCitation",
     "MetadataRequest",
     "MetadataResult",

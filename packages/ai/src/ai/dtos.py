@@ -61,12 +61,50 @@ class ChunkContext(BaseModel):
     appendix_label: str | None = None
 
 
+class DecisionReading(BaseModel):
+    """What a reading sub-agent got out of one whole decision.
+
+    The extract, never the decision. A full decision runs to ~10k characters on
+    average and 165k at worst; the point of reading it in a sub-agent is that
+    only this comes back.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    case_number: str
+    extract: str
+
+
+class TabularEvidence(BaseModel):
+    """A counting or aggregating answer, with the query that produced it.
+
+    `sql` travels with the rows because a count reads as authoritative and
+    carries no excerpt to check it against — the obligation the SQL agent places
+    on every caller.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    sql: str
+    columns: list[str]
+    rows: list[list[str | int | float | bool | None]]
+    row_count: int
+    truncated: bool = False
+    assumptions: list[str] = []
+
+
 class SynthesizeRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     question: str
     chunks: list[ChunkContext]
     conversation_history: list[dict] = []
+    # The rest of the evidence an agent gathered. Empty on the passage-only
+    # path, which is what the deterministic search surface produces.
+    readings: list[DecisionReading] = []
+    tabular: TabularEvidence | None = None
+    # The agent's own terse handoff — why these passages, what to be careful of.
+    notes: str = ""
 
 
 class SourceCitation(BaseModel):

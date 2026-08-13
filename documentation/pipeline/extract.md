@@ -18,7 +18,7 @@ keywords and cross-references, stores them in
 [document_references](/data-model/document-references.md), and
 [unresolved_references](/data-model/unresolved-references.md), and enqueues chunk tasks.
 This populates the graph-in-Postgres layer used by the
-[retrieval agent](/retrieval/agent.md).
+[retrieval agent](/retrieval/chat-agent.md).
 
 ## Module layout
 

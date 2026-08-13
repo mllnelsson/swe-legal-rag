@@ -9,18 +9,6 @@ class AppSettings(BaseSettings):
     api_cors_origins: list[str] = ["http://localhost:5173"]
 
 
-class RetrievalSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="")
-
-    retrieval_top_k: int = 8
-    retrieval_search_limit: int = 20
-    retrieval_rerank_enabled: bool = False
-    # Appendices hold the appealed decision, so they are out of the primary search
-    # by default. Set true to search the whole corpus regardless of what the query
-    # planner decides; retrieval also widens on its own when body-only finds nothing.
-    retrieval_include_appendices: bool = False
-
-
 class SessionSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
@@ -30,9 +18,10 @@ class SessionSettings(BaseSettings):
 class SearchSettings(BaseSettings):
     """Bounds for the deterministic search API.
 
-    Separate from ``RetrievalSettings``, which tunes the chat retrieval path: the
-    two answer different questions and should be tunable without disturbing each
-    other.
+    Also the bounds the conversational agent searches under: its
+    `search_decisions` tool is a wrapper over this same path, so the two cannot
+    drift apart. Agent-loop bounds — iterations, reading budget, citation cap —
+    live in `agents.ChatAgentSettings` instead, next to the agent they govern.
     """
 
     model_config = SettingsConfigDict(env_prefix="")
@@ -63,11 +52,6 @@ class SearchSettings(BaseSettings):
     # environment; the default here is what `.env` ships with. The calibration
     # behind it lives in /retrieval/deterministic-search.md#the-similarity-floor.
     search_min_vector_similarity: float = 0.78
-
-
-@lru_cache(maxsize=1)
-def get_retrieval_settings() -> RetrievalSettings:
-    return RetrievalSettings()
 
 
 @lru_cache(maxsize=1)

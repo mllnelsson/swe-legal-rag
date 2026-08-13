@@ -21,7 +21,7 @@ Junction table. Maps [entities](/data-model/entities.md) to
 Composite PK on `(document_id, entity_id)`. `relevance` values come from the
 `EntityRelevance` `StrEnum` in `shared.enums` (see
 [design notes](/data-model/design-notes.md)). Populated by the
-[extract worker](/pipeline/extract.md); used by the [retrieval agent](/retrieval/agent.md)
+[extract worker](/pipeline/extract.md); used by the [retrieval agent](/retrieval/chat-agent.md)
 for entity-based pre-filtering, by [`/api/documents/{id}`](/api/document-detail.md) to
 list a document's concepts, and by
 [`/api/concepts/{id}/documents`](/api/concept-documents.md) — the first caller to filter

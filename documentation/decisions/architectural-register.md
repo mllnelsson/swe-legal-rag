@@ -24,7 +24,7 @@ window](/decisions/embedding-window.md); the mandatory crawl
 - **Contextual chunking over naive chunking** — a document summary is prepended to every
   chunk before embedding. See [chunk worker](/pipeline/chunk.md).
 - **Hybrid search (vector + BM25) over pure vector** — legal text benefits heavily from
-  keyword matching. See [retrieval agent](/retrieval/agent.md).
+  keyword matching. See [retrieval agent](/retrieval/chat-agent.md).
 - **Agent-driven filtering over user-driven** — the LLM extracts structure from natural
   language rather than exposing manual filters in V1.
 - **Appendices are labelled, not dropped** — a decision PDF contains the decision it

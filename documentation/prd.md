@@ -3,7 +3,7 @@ type: Spec
 title: Product Requirements
 description: Product requirements for a Swedish-language semantic search and chat tool over Överklagandenämnden legal decisions.
 tags: [product, requirements, scope]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # Product Requirements
@@ -29,7 +29,7 @@ professionals.
   category/topic) from each document during ingestion.
 - **S3:** System exposes a chat interface. User asks questions in natural Swedish. No
   manual filters in V1.
-- **S4:** On query, an [agent](/retrieval/agent.md) decomposes the user's question —
+- **S4:** On query, an [agent](/retrieval/chat-agent.md) decomposes the user's question —
   extracting implicit structured filters (date, topic, decision type) and semantic
   intent.
 - **S5:** Agent applies extracted filters to narrow the corpus, then performs semantic
@@ -41,7 +41,15 @@ professionals.
 
 ## Non-Functional Requirements
 
-- **NFR1:** Query response time < 5s including synthesis
+- **NFR1a:** Deterministic search (`POST /api/search`) responds in **< 5s**. This is the
+  latency-sensitive path and the frontend's only backend — a search box that takes
+  longer is a broken search box.
+- **NFR1b:** A [conversational agent](/retrieval/chat-agent.md) turn completes in
+  **< 1 min**, first token well before that. It is a considered answer the user waits
+  for, not an interaction, and the endpoint makes the wait legible with [progress
+  events](/api/chat-endpoint.md) rather than trying to remove it. The budget is a
+  ceiling on the whole turn: exceeding it means the loop is thrashing, and the levers
+  are `chat_agent_max_iterations` and the two search knobs rather than a faster model.
 - **NFR2:** Monthly cost under ~$30 at idle
 - **NFR3:** Handles ~1000 docs, designed to scale to ~5000
 - **NFR4:** Swedish language support end-to-end

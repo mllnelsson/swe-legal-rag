@@ -83,7 +83,7 @@ rationale; this is the principle's second instance in this codebase, after
 It comes from `embedding.passage_prefix` in
 [`llm_config.yaml`](/reference/llm-config.md), read by `ai.get_embedding_prefixes()` in
 `__main__.py` and threaded in — the same call the
-[retrieval agent](/retrieval/agent.md) uses for the query half, so the two cannot drift
+[retrieval agent](/retrieval/chat-agent.md) uses for the query half, so the two cannot drift
 apart.
 
 **The parameter has no default, deliberately.** e5 is trained with `"query: "` on one

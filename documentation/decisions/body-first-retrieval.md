@@ -13,7 +13,7 @@ timestamp: 2026-07-26T00:00:00Z
 [chunks](/data-model/chunks.md) carries a `section` marker distinguishing the nämnd's own
 text from the appealed decision (see
 [appendices are labelled, not dropped](/decisions/appendix-segmentation.md)). This
-decision covers how the [retrieval agent](/retrieval/agent.md) uses it.
+decision covers how the [retrieval agent](/retrieval/chat-agent.md) uses it.
 
 ## Decision
 
@@ -21,8 +21,9 @@ decision covers how the [retrieval agent](/retrieval/agent.md) uses it.
 
 * `chunk_repo.vector_search` / `text_search` take `sections: Sequence[ChunkSection] | None`
   (`None` = no restriction).
-* `RetrievalSettings.retrieval_include_appendices` (default `false`) is the deployment
-  default; `DecomposeResult.include_appendices` lets the query planner widen per query.
+* `SearchQuery.include_appendices` (default `false`) is the per-request switch, set by
+  a search caller or by the [agent](/retrieval/chat-agent.md) when the question is about
+  what the lower instance decided.
 * If body-only retrieval returns nothing, retrieval retries unrestricted and logs it.
 
 ## Why one index

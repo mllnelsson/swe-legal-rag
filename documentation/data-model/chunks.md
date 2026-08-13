@@ -39,4 +39,4 @@ them, since chunking is DELETE+INSERT. `tsv` is a `GENERATED ALWAYS ... STORED` 
 insert time — see [design notes](/data-model/design-notes.md). Chunks are produced by
 the [chunk worker](/pipeline/chunk.md) and vectors written by the
 [embed worker](/pipeline/embed.md). Retrieval over this table is described in the
-[retrieval agent](/retrieval/agent.md).
+[retrieval agent](/retrieval/chat-agent.md).

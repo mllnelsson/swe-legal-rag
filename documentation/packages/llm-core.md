@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -85,7 +85,23 @@ lives in the [ai package](/packages/ai.md).
   pipeline step then does is tabulated there.
 - **`_service.py`** — the higher-level API: `generate()`, `generate_structured()`,
   `generate_stream()`, `tool_loop()` with optional callbacks. All four emit one trace
-  record per billed provider round-trip. `generate_structured[T: BaseModel]` is generic
+  record per billed provider round-trip. Note the asymmetry that shapes every agent
+  built on this: **`generate_stream` takes no `tools`**, so there is no streaming
+  tool-call path — an agent that streams gathers with `tool_loop` and then makes one
+  streaming call (see [the conversational agent](/retrieval/chat-agent.md)).
+
+  `tool_loop` takes an optional `terminal_tools: set[str]`. Naming a tool there means
+  the loop executes it and returns rather than looping again. Without it a run ends
+  only when the model happens to stop calling tools, which makes termination incidental
+  and the final assistant message throwaway prose; with it the ending is deliberate and
+  the *arguments* of the terminal call are the result. `ToolLoopResult.message` is then
+  the assistant message carrying that call. Any later call in the same turn is left
+  unexecuted, so the returned `history` can end on an assistant message with an
+  unanswered tool call and is not safe to resume a provider round-trip with.
+
+  `on_tool_call` / `on_tool_result` are awaited inside the loop, so a caller that needs
+  to *yield* per step — an SSE generator, say — runs `tool_loop` as a task and has the
+  callbacks push to a queue it drains. `generate_structured[T: BaseModel]` is generic
   in its `response_model`, so callers get the model they asked for and need no cast,
   `assert isinstance`, or `type: ignore` to narrow it.
 

@@ -257,7 +257,7 @@ Everything downstream reads a different slice, and each has a reason:
   from `trailer` alone, via `parse_keywords`.
 * **[chunk](/pipeline/chunk.md)** — body and each appendix chunked separately and
   labelled; the trailer is not chunked at all.
-* **[retrieval](/retrieval/agent.md)** — searches `body` chunks by default, per the
+* **[retrieval](/retrieval/chat-agent.md)** — searches `body` chunks by default, per the
   [body-first retrieval decision](/decisions/body-first-retrieval.md).
 
 The failure this prevents is concrete. In the corpus sample

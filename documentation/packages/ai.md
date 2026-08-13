@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -38,14 +38,16 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 returns a plain message list, so nothing downstream could otherwise tell which template
 produced it. Rendering is a **free function** `render(template, context) ->
 list[Message]` — it substitutes variables via `str.format_map(context)` and returns
-`[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Seven template constants
+`[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Nine template constants
 cover every use case:
 
 | Constant | Output format | User template variables |
 |---|---|---|
 | `QUERY_DECOMPOSITION` | JSON (`DecomposeResult` schema) | `{question}`, `{conversation_history}` |
 | `QUERY_EXPANSION` | JSON (`QueryExpansionResult` schema) | `{question}`, `{max_variants}` |
-| `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{conversation_history}` |
+| `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{readings}`, `{tabular}`, `{notes}`, `{conversation_history}` |
+| `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — **the one English prompt here** | `{question}`, `{today}`, `{conversation_history}` |
+| `DECISION_READING` | Plain Swedish text | `{question}`, `{case_number}`, `{decision_text}` |
 | `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
 | `ENTITY_EXTRACTION` | JSON (`EntityResult` schema) | `{raw_text}`, `{case_number}` |
 | `DOCUMENT_SUMMARIZATION` | Plain Swedish text | `{raw_text}` |
@@ -68,23 +70,35 @@ all prompts instruct the model to work in Swedish.
 
 | Function | LLM call |
 |---|---|
-| `decompose_query(question, conversation_history=None, *, provider=None) -> DecomposeResult` | `generate_structured` |
+| `decompose_query(question, conversation_history=None, *, provider=None) -> DecomposeResult` — **no production caller**, see below | `generate_structured` |
 | `expand_query(question, *, max_variants, provider=None) -> QueryExpansionResult` | `generate_structured` |
 | `extract_metadata(raw_text, *, provider=None) -> MetadataResult` | `generate_structured` |
 | `extract_entities(raw_text, case_number=None, *, provider=None) -> EntityResult` | `generate_structured` |
 | `summarize_document(raw_text, *, provider=None) -> SummarizeResult` | `generate` |
 | `synthesize_answer(request, *, provider=None) -> AsyncIterator[str]` | `generate_stream` |
 
-`synthesize_answer` is an async generator (SSE critical path): it formats chunks with
-`[Mål {case_number}]` prefixes, renders `ANSWER_SYNTHESIS`, and yields tokens without
-buffering.
+`synthesize_answer` is an async generator (SSE critical path): it renders
+`ANSWER_SYNTHESIS` and yields tokens without buffering. Its request carries an evidence
+bundle, not just passages — `chunks`, `readings` (what a document reader found),
+`tabular` (a SQL result with the query that produced it) and `notes` — and each section
+renders as `(inget)` when empty, so an absent count reads as "not established" rather
+than "not mentioned". Passages are prefixed `[Mål {case_number}]`, and an appendix
+passage additionally names itself as the appealed decision, because the model would
+otherwise present the lower instance's words as the nämnd's own.
+
+`CHAT_ORCHESTRATION` is written in English, alone among the prompts here. That model
+plans and calls tools and never writes a word the user reads: it reads Swedish input and
+Swedish tool results, and the Swedish prose is `ANSWER_SYNTHESIS`'s job.
 
 `expand_query` is stateless by design — no conversation history, no filters, no
-rewritten "best" query, unlike `decompose_query`. It answers only "what else could this
-question have been called," which is what keeps it a search-tool concern rather than a
-chat planner's; see [query expansion](/retrieval/query-expansion.md) for the full
-rationale and how its output is consumed by [deterministic
-search](/retrieval/deterministic-search.md).
+rewritten "best" query. It answers only "what else could this question have been
+called," which is what keeps it a search-tool concern; see [query
+expansion](/retrieval/query-expansion.md) for the full rationale.
+
+`decompose_query` / `DecomposeResult` / `QUERY_DECOMPOSITION` have **no production
+caller** since the [conversational agent](/retrieval/chat-agent.md) replaced the chat
+pipeline that used them — the agent infers filters by calling tools instead. They are
+still exported and tested; removing them is a decision nobody has taken yet.
 
 ## Domain DTOs (`ai/dtos.py`)
 
@@ -95,7 +109,7 @@ removed or renamed.
 |---|---|---|
 | Query decomposition | `DecomposeRequest` | `DecomposeResult` (with `DateFilter`) |
 | Query expansion | `QueryExpansionRequest` (`question`, `max_variants`) | `QueryExpansionResult` (`variants: list[str]` — alternative phrasings only, deliberately no filters and no rewritten "best" query) |
-| Answer synthesis | `SynthesizeRequest` (with `ChunkContext`) | streaming `str` tokens; `SourceCitation` for UI |
+| Answer synthesis | `SynthesizeRequest` (with `ChunkContext`, `DecisionReading`, `TabularEvidence`) | streaming `str` tokens; `SourceCitation` for UI |
 | Metadata extraction | `MetadataRequest` | `MetadataResult` |
 | Entity & reference extraction | `EntityRequest` | `EntityResult` (with `ExtractedEntity`, `ExtractedReference`) |
 | Summarization | `SummarizeRequest` | `SummarizeResult` |
@@ -144,9 +158,10 @@ turns a misspelled role into a type error instead of a runtime `UnknownLLMRoleEr
 
 | Role | Used by | Default (Berget model) |
 |---|---|---|
-| `LLMRole.STRUCTURED` | `decompose_query`, `extract_metadata`, `extract_entities`, `retriever._rerank` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
+| `LLMRole.STRUCTURED` | `expand_query`, `extract_metadata`, `extract_entities` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
 | `LLMRole.SUMMARIZE` | `summarize_document` | `mistralai/Mistral-Medium-3.5-128B` |
-| `LLMRole.CHAT` | `synthesize_answer` | `zai-org/GLM-5.2` |
+| `LLMRole.CHAT` | `synthesize_answer`, and the [conversational agent's](/retrieval/chat-agent.md) tool loop | `zai-org/GLM-5.2` |
+| `LLMRole.READ` | The conversational agent's document-reading sub-agent | `mistralai/Mistral-Medium-3.5-128B` |
 | `LLMRole.SQL` | [`agents.run_sql_agent`](/packages/agents.md) | `mistralai/Mistral-Medium-3.5-128B` |
 
 `create_llm_provider(role: LLMRole, document=None)` is the single function every
@@ -202,7 +217,7 @@ See [embedding dimension](/decisions/embedding-dimension.md).
 
 `get_embedding_prefixes()` returns the `(query, passage)` pair for the configured model.
 Both sides come from one place so they cannot drift apart; the query half is used by the
-[retrieval agent](/retrieval/agent.md) and the passage half by
+[retrieval agent](/retrieval/chat-agent.md) and the passage half by
 [worker-embed](/pipeline/embed.md).
 
 - **`OpenAiCompatibleEmbeddingProvider`** (`embedding.provider: berget` in

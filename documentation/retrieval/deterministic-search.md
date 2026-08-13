@@ -1,18 +1,18 @@
 ---
 type: Concept
 title: Deterministic Search
-description: The LLM-free hybrid search path behind POST /api/search — filter narrowing with no fallback, parallel vector/text arms under a similarity floor and fused by RRF, appendix widening, and document-level ranking that never fetches metadata for documents it will not return.
+description: The LLM-free hybrid search path behind POST /api/search and the agent's search tool — filter narrowing with no fallback, parallel vector/text arms under a similarity floor and fused by RRF, appendix widening, and document-level ranking that never fetches metadata for documents it will not return.
 tags: [retrieval, search, rrf, hybrid-search, rest, relevance]
-timestamp: 2026-08-06T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # Deterministic Search
 
 The retrieval path behind [`POST /api/search`](/api/search.md), implemented in
-`api/services/search_service.py`. It sits alongside the [query/retrieval
-agent](/retrieval/agent.md) rather than replacing it: chat needs a synthesized answer
-from a wide net, search needs an auditable, repeatable result set. No LLM sits in this
-path by default — the one unavoidable model call is the query embedding; [query
+`api/services/search_service.py`. It is both the frontend's search backend and the
+[conversational agent's](/retrieval/chat-agent.md) `search_decisions` tool — the agent
+does not have a retrieval path of its own, which is what stops the two drifting
+apart. No LLM sits in this path by default — the one unavoidable model call is the query embedding; [query
 expansion](/retrieval/query-expansion.md) is opt-in and, when used, only adds rankings
 to the same fusion. Given the same inputs, this returns the same results, which is what
 lets it double as a tool an agent or MCP adapter calls directly.
@@ -46,11 +46,14 @@ wrapper.
    `search_repo.find_candidate_documents(limit=search_candidate_limit)`. If it returns
    zero candidates, the search stops immediately with an empty result and
    `diagnostics.candidate_document_count: 0` — **no widening to an unfiltered
-   search.** This is the deliberate opposite of the [chat
-   retriever](/retrieval/agent.md), which falls back to an unfiltered search when its
-   filter yields nothing: an answer from a wider net beats no answer for chat, but a
-   search tool asked for "nothing older than 2024" must not silently answer with 2019
-   decisions.
+   search.** A search tool asked for "nothing older than 2024" must not silently
+   answer with 2019 decisions.
+
+   The [conversational agent](/retrieval/chat-agent.md) searches through this same
+   function, so it inherits that behaviour — which is exactly why it may not filter
+   on a free-text column until it has read that column's values. Without the
+   grounding precondition, a guessed `category` would come back empty and read as
+   "the corpus says nothing about this".
 3. **Embed queries.** The query-side prefix from `ai.get_embedding_prefixes()` is
    applied. Only the original query is embedded for the vector arm unless
    `search_expand_vector_arm` is `true` (default `false`) — see [query
@@ -64,8 +67,8 @@ wrapper.
    `tsv @@ tsquery` is already a match test rather than a nearest-neighbour scan.
 5. **Appendix widening.** If body-only arms return no chunks at all, the arms rerun once
    with no section restriction — under the same floor — and
-   `diagnostics.widened_to_appendices` is set. This mirrors the agent's own
-   widen-on-empty behavior, and for the same reason: every chunk still carries its own
+   `diagnostics.widened_to_appendices` is set. Widening on empty is safe where widening
+   on an excluding filter is not, because every chunk still carries its own
    `section`/`appendix_label`, so a caller can tell whose words a widened hit is quoting.
    The widened pass can also come back empty, which is the honest answer to a question
    the corpus does not address.
@@ -159,8 +162,9 @@ which a truncated excerpt or a single best-chunk view would hide.
 
 ## Settings
 
-`SearchSettings` (`api/config.py`), separate from `RetrievalSettings` so the two paths
-tune independently:
+`SearchSettings` (`api/config.py`). These bound both `POST /api/search` and the
+[agent's](/retrieval/chat-agent.md) search tool; the agent's own loop budgets are
+separate, in `ChatAgentSettings`:
 
 | Setting | Default | Meaning |
 |---|---|---|

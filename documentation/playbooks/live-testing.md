@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-09T12:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -302,19 +302,30 @@ Change a prompt, re-run the same file, and the two runs are directly comparable.
 
 ```bash
 uv run python scripts/run_agent.py sql       questions.txt
+uv run python scripts/run_agent.py chat      questions.txt
 uv run python scripts/run_agent.py summarize decisions.txt
 uv run python scripts/run_agent.py sql       questions.txt --limit 3    # cheap smoke run
 uv run python scripts/run_agent.py sql       questions.txt --out data/runs/before.jsonl
 ```
 
-Two tasks today: `sql` (the [SQL agent](/api/sql-agent.md)) and `summarize`
-(worker-chunk's summariser). Both sit behind a small registry, so a third task already
-implemented in `ai.services` (`expand_query`, `decompose_query`, `extract_metadata`) is
-one preparer function away, not a rewrite.
+Three tasks today: `sql` (the [SQL agent](/api/sql-agent.md)), `chat` (the
+[conversational agent](/retrieval/chat-agent.md)) and `summarize` (worker-chunk's
+summariser). All sit behind a small registry, so a fourth task already implemented in
+`ai.services` (`expand_query`, `extract_metadata`) is one preparer function away, not a
+rewrite.
 
-**What a line means is the task's own business.** `sql` takes one question per line;
-`summarize` takes one *path* to a decision text file per line — a whole decision body
-cannot be a line of a text file. Each task states its own answer at registration, and
+`chat` runs the whole agent — the tool loop, both sub-agents and the streamed synthesis
+— and records the answer, the sources, any SQL it ran, **and the tool trail** (`steps`:
+the tool and progress label of every call it made). The trail is there because most of
+what goes wrong in an agent run shows up in which tools it reached for rather than in
+the prose: a run that never called `list_vocabulary` and then filtered on a category, or
+one that answered a counting question without `query_corpus`, is visible at a glance.
+It is also the most expensive task here by a wide margin — one line is a full agent run,
+so `--limit 3` first.
+
+**What a line means is the task's own business.** `sql` and `chat` take one question per
+line; `summarize` takes one *path* to a decision text file per line — a whole decision
+body cannot be a line of a text file. Each task states its own answer at registration, and
 `--help` renders it. Blank lines and `#` comments are skipped, so a curated question set
 can carry section headings; the record still keeps the file's original line number
 (`source_line`), because case 7 is rarely line 7.
@@ -464,7 +475,8 @@ cat data/llm-traces/$(date -u +%F)/*.jsonl \
          .usage.output_tokens] | @tsv'
 ```
 
-Expect at least four calls — `ai.decompose_query`, `ai.embed`, `ai.synthesize_answer`,
+Expect one call per tool-loop iteration under `agents.chat`, plus `ai.embed`,
+`ai.synthesize_answer`,
 plus `api.retriever.rerank` when reranking is on.
 
 Closing the browser tab mid-answer should still leave an `ai.synthesize_answer` record,

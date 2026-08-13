@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to file storage — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-09T12:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # LLM Observability
@@ -59,20 +59,21 @@ disappears — adding a field does not break a reader and does not bump it.
   "id": "3f9a1c2d4e5b6789a0b1c2d3e4f56789",
   "started_at": "2026-07-27T10:15:33.123456Z",
   "latency_ms": 812,
-  "operation": "generate_structured",
+  "operation": "tool_loop",
   "provider": "berget",
-  "model": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+  "model": "zai-org/GLM-5.2",
   "success": true,
   "error": null,
   "messages": [
     {"role": "system", "content": "…", "tool_calls": [],
      "tool_call_id": null, "tool_name": null}
   ],
-  "response_text": "{\"filters\": …}",
-  "response_tool_calls": [],
+  "response_text": "",
+  "response_tool_calls": [{"id": "…", "name": "search_decisions",
+                           "arguments": {"query": "…"}}],
   "usage": {"input_tokens": 1234, "output_tokens": 88, "total_tokens": 1322},
-  "context": {"source": "ai.decompose_query", "prompt": "QUERY_DECOMPOSITION",
-              "interaction_id": "…", "session_id": "…"}
+  "context": {"source": "agents.chat", "prompt": "CHAT_ORCHESTRATION",
+              "interaction_id": "…", "session_id": "…", "tool_loop_iteration": 2}
 }
 ```
 
@@ -190,6 +191,7 @@ discarded.
 | Key | Set by |
 |---|---|
 | `interaction_id`, `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
+| `interaction_id` | `agents.chat.run_chat_agent`, for a run not started by the API |
 | `document_id`, `task_id` | Each worker, via the `MessageScope` `ai.worker_trace_scope(name)` supplies to `shared.worker.subscribe_step`, entered around `asyncio.run` inside its `handle_message` |
 | `document_id`, `task_id` | `scripts/run_step.py`, around the step dispatch in `_run_step` |
 | `run_id`, `case` | `scripts/run_agent.py`, around each input in `run_cases` — the join back from a batch run's JSONL record to the trace(s) it produced |
@@ -197,11 +199,18 @@ discarded.
 | `prompt` | `ai/services.py`, from the template's name |
 
 `source` says **what the call is**, not who asked for it — *who* is
-`interaction_id` or `document_id`. Values: `ai.decompose_query`,
-`ai.expand_query`, `ai.extract_metadata`, `ai.extract_entities`,
-`ai.summarize_document`, `ai.synthesize_answer`, `ai.embed`,
-`api.retriever.rerank`. Contexts nest and merge; on a key collision the
-innermost wins.
+`interaction_id` or `document_id`. Values: `ai.expand_query`,
+`ai.extract_metadata`, `ai.extract_entities`, `ai.summarize_document`,
+`ai.synthesize_answer`, `ai.embed`, `agents.sql`, `agents.chat`,
+`agents.chat.read`. Contexts nest and merge; on a key collision the innermost
+wins.
+
+`agents.chat` appears **once per tool-loop iteration**, because each is its own
+billed call — a five-step run produces five records under that source, plus one
+`ai.synthesize_answer` for the streamed answer, plus `agents.sql` and
+`agents.chat.read` for whichever sub-agents it reached for. `run_chat_agent`
+also sets its own `interaction_id`, so a run started outside the API — from
+[`scripts/run_agent.py`](/playbooks/live-testing.md) — is still correlated.
 
 `ai.expand_query` is the only source that appears on the otherwise LLM-free
 [deterministic search](/retrieval/deterministic-search.md) path, and only when a
@@ -228,8 +237,8 @@ not in the table above, it is a hole of the same kind.
 **In the API, the context is entered inside the SSE generator, not around the
 route handler.** Starlette drives that generator *after* `chat_endpoint` has
 returned, so a context entered around the handler body would have exited before
-the first token. Entered inside, it spans decomposition, embedding, reranking
-and the streaming synthesis alike.
+the first token. Entered inside, it spans every iteration of the agent's tool
+loop, both sub-agents, the embedding and the streaming synthesis alike.
 
 **In the workers, the context wraps `asyncio.run`, not the coroutine.**
 `asyncio.Runner` copies the current context when it builds the loop, so an outer
@@ -295,10 +304,16 @@ cat data/llm-traces/$(date -u +%F)/*.jsonl \
          .usage.output_tokens] | @tsv'
 ```
 
-Expect at least four rows — `ai.decompose_query`, `ai.embed`,
-`ai.synthesize_answer`, plus `api.retriever.rerank` when reranking is on.
-Summing the token columns and applying the rates from
+Expect one row per tool-loop iteration under `agents.chat`, one `ai.embed` per
+search, one `ai.synthesize_answer`, and — depending on which tools the agent
+reached for — `agents.sql` (itself one row per SQL-loop iteration) and
+`agents.chat.read`. Summing the token columns and applying the rates from
 [LLM pricing](/reference/llm-pricing.md) is what the question cost.
+
+A chat question is therefore materially more expensive than the single
+question-and-answer pair the old pipeline made, and the trace stream is where
+that shows up. See [the conversational agent](/retrieval/chat-agent.md) for the
+settings that bound it.
 
 The same shape answers the per-document ingestion question against
 `.context.document_id`, and dropping the `select` answers it for a whole day.

@@ -1,12 +1,33 @@
 """Agent loops over the corpus.
 
 An *agent* here is an LLM driving a tool loop toward an answer, as opposed to the
-deterministic retrieval tool set in `api`. Each one is a stateless function: no
-sessions, no user interaction, no streaming — so it can be called as a tool by
-something else, including a future conversational agent.
+deterministic retrieval tool set in `api`. Each one is a function over its
+inputs rather than a service that reaches into a database itself, which is what
+lets one be called as a tool by another.
+
+Two live here, and they differ in shape:
+
+- `run_sql_agent` is stateless and one-shot — a question in, a query and its
+  rows out. It is the counting tool the conversational agent calls.
+- `run_chat_agent` streams, and is driven from a conversation. It still takes no
+  database of its own: `ChatToolset` is injected by `api`, which is what keeps
+  the dependency running `api -> agents` rather than closing a cycle.
 """
 
-from agents.config import SqlAgentSettings, get_sql_agent_settings
+from agents.chat import (
+    AgentEvent,
+    ChatAgentRequest,
+    ChatTool,
+    ChatToolset,
+    ProgressLabel,
+    run_chat_agent,
+)
+from agents.config import (
+    ChatAgentSettings,
+    SqlAgentSettings,
+    get_chat_agent_settings,
+    get_sql_agent_settings,
+)
 from agents.errors import (
     AgentError,
     SemanticModelIncompleteError,
@@ -31,6 +52,15 @@ from agents.sql import (
 )
 
 __all__ = [
+    # The conversational agent: a question in, a stream of progress and
+    # prose out. Takes its tools as an injected `ChatToolset`, which is what
+    # keeps `api -> agents` and not the other way.
+    "run_chat_agent",
+    "ChatAgentRequest",
+    "ChatToolset",
+    "AgentEvent",
+    "ChatTool",
+    "ProgressLabel",
     # The text-to-SQL agent: a question in, a query and its rows out. It never
     # interprets the rows — see /api/sql-agent.md on the caller's obligation to
     # surface the query alongside the answer.
@@ -53,6 +83,8 @@ __all__ = [
     # Configuration
     "SqlAgentSettings",
     "get_sql_agent_settings",
+    "ChatAgentSettings",
+    "get_chat_agent_settings",
     # Errors
     "AgentError",
     "SqlRejectedError",

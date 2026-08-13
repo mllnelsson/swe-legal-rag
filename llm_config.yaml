@@ -58,6 +58,14 @@ roles:
   chat:
     model: zai-org/GLM-5.2
 
+  # Reading one whole decision on the conversational agent's behalf. Sees a full
+  # document — median ~7k characters, p90 ~21k, worst case ~165k — so like
+  # `summarize` it wants context length. It is a sub-agent: the orchestrator
+  # hands it a document and a question and gets a focused extract back, which is
+  # what keeps whole decisions out of the orchestrator's own context.
+  read:
+    model: mistralai/Mistral-Medium-3.5-128B
+
   # Text-to-SQL over the corpus. Low volume, needs reliable tool-calling across
   # several turns, and writes no prose — so it does not need the chat model. The
   # hard part of this task is not SQL syntax but grounding a Swedish predicate in

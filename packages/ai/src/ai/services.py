@@ -16,12 +16,14 @@ from shared.enums import ChunkSection
 
 from ai.dtos import (
     ChunkContext,
+    DecisionReading,
     DecomposeResult,
     EntityResult,
     MetadataResult,
     QueryExpansionResult,
     SummarizeResult,
     SynthesizeRequest,
+    TabularEvidence,
 )
 from ai.prompts import (
     ANSWER_SYNTHESIS,
@@ -122,6 +124,12 @@ async def summarize_document(
     return SummarizeResult(summary=response.message.content)
 
 
+# Rendered where a section of the evidence bundle is empty. A visible marker
+# beats a blank: it tells the model the section exists and holds nothing, so an
+# absent count reads as "not established" rather than "not mentioned".
+_NOTHING = "(inget)"
+
+
 def _chunk_label(chunk: ChunkContext) -> str:
     """Tag each excerpt with whose words it holds.
 
@@ -135,17 +143,54 @@ def _chunk_label(chunk: ChunkContext) -> str:
     return f"Mål {chunk.case_number}"
 
 
+def _format_chunks(chunks: list[ChunkContext]) -> str:
+    if not chunks:
+        return _NOTHING
+    return "".join(f"[{_chunk_label(chunk)}] {chunk.chunk_text}\n" for chunk in chunks)
+
+
+def _format_readings(readings: list[DecisionReading]) -> str:
+    if not readings:
+        return _NOTHING
+    return "\n".join(
+        f"[Mål {reading.case_number}] {reading.extract}" for reading in readings
+    )
+
+
+def _format_tabular(tabular: TabularEvidence | None) -> str:
+    """The rows, and the query that produced them.
+
+    The query is rendered alongside because the model is told that counts may
+    only come from here — showing it what was actually asked is what makes that
+    instruction checkable rather than a matter of trust.
+    """
+    if tabular is None:
+        return _NOTHING
+
+    header = " | ".join(tabular.columns)
+    body = "\n".join(
+        " | ".join("" if value is None else str(value) for value in row)
+        for row in tabular.rows
+    )
+    parts = [f"Fråga: {tabular.sql}", f"Rader: {tabular.row_count}", header, body]
+    if tabular.truncated:
+        parts.append("(resultatet är avkortat)")
+    if tabular.assumptions:
+        parts.append("Tolkningsval: " + "; ".join(tabular.assumptions))
+    return "\n".join(parts)
+
+
 async def synthesize_answer(
     request: SynthesizeRequest,
     *,
     provider: LLMProvider | None = None,
 ) -> AsyncIterator[str]:
-    formatted_chunks = "".join(
-        f"[{_chunk_label(chunk)}] {chunk.chunk_text}\n" for chunk in request.chunks
-    )
     context = {
         "question": request.question,
-        "chunks": formatted_chunks,
+        "chunks": _format_chunks(request.chunks),
+        "readings": _format_readings(request.readings),
+        "tabular": _format_tabular(request.tabular),
+        "notes": request.notes or _NOTHING,
         "conversation_history": json.dumps(
             request.conversation_history or [], ensure_ascii=False
         ),

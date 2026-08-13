@@ -327,9 +327,7 @@ class TestDisabledProvider:
         assert document.providers["off"].api_key_env is None
         assert document.providers["off"].kind == ProviderKind.NONE
 
-    def test_every_other_kind_must_name_its_api_key_env(
-        self, tmp_path: Path
-    ) -> None:
+    def test_every_other_kind_must_name_its_api_key_env(self, tmp_path: Path) -> None:
         """Making the field optional must not let a real host omit its key by
         accident — that would resolve to `api_key=None` and fail much later."""
         document = {

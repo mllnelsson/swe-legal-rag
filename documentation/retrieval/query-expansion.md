@@ -3,7 +3,7 @@ type: Concept
 title: Query Expansion
 description: Opt-in, additive query expansion for the search API — ai.expand_query proposes alternate phrasings that add rankings to the same RRF fusion rather than replacing the original query, keeping search deterministic and replayable.
 tags: [retrieval, search, query-expansion, llm]
-timestamp: 2026-08-07T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # Query Expansion
@@ -53,21 +53,23 @@ expanding it by default would cost more than it gives.
   caller can replay an expanded search exactly by resending `effective_queries` as
   `queries` with `expand: false`.
 
-## Why not `plan_query` / `ai.decompose_query`
+## Why expansion is not planning
 
-The [chat query planner](/retrieval/agent.md) takes conversation history and returns
-filters, categories, and entity references — a chat planner, not an expander. Reusing it
-here was deliberately rejected: it answers a different question (what does this
-conversation imply about the query) and would reintroduce the filter-inference problem
-expansion avoids. Both `plan_query` and `ai.decompose_query` are untouched and remain
-chat-owned; `ai.expand_query` is stateless by design — no conversation history, no
-filters, no rewritten "best" query.
+Expansion answers one question — what else could this have been called — and nothing
+else. It never infers a filter, never rewrites the question into a "better" one, and
+never reads conversation history. That is what keeps a search replayable: the caller can
+pass `effective_queries` back with `expand: false` and get identical results.
+
+Inferring filters from a question is a different job with a different failure mode, and
+it belongs to the [conversational agent](/retrieval/chat-agent.md), which does it by
+calling tools and can be refused when it guesses a free-text value. Expansion has no
+such guard rail and should not need one.
 
 ## Failure handling
 
 An `ai.expand_query` failure is logged and swallowed; the search proceeds with the
-original query alone (`diagnostics.expanded: false`). This mirrors the chat retriever's
-`_rerank()` fail-open behavior — losing expansion costs recall, not the request.
+original query alone (`diagnostics.expanded: false`) — losing expansion costs recall,
+not the request.
 
 Configuration lives on `SearchSettings`: `search_max_query_variants` (default 3) caps
 how many variants are requested or accepted regardless of source. See [deterministic

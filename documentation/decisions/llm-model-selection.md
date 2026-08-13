@@ -24,7 +24,7 @@ they run at wildly different volumes.
 
 | Role | Used by | Volume | Wants |
 |---|---|---|---|
-| `structured` | [query decomposition](/retrieval/agent.md), [metadata](/pipeline/metadata.md) and [entity extraction](/pipeline/extract.md), rerank | Once per document at ingestion, plus once per query | Cheap, reliable JSON-schema output |
+| `structured` | [query decomposition](/retrieval/chat-agent.md), [metadata](/pipeline/metadata.md) and [entity extraction](/pipeline/extract.md), rerank | Once per document at ingestion, plus once per query | Cheap, reliable JSON-schema output |
 | `summarize` | [document summarisation](/pipeline/chunk.md) for contextual chunking | Once per ingested document, sees whole documents | Context length over price |
 | `chat` | [answer synthesis](/api/chat-endpoint.md) | A handful per day, streaming, user-facing | The strongest model here; it is not run at ingestion scale |
 | `sql` | [the SQL agent](/packages/agents.md) | Low volume, on demand | Reliable multi-turn tool-calling; not the hard part of text-to-SQL, so no need for the strongest model — see [the grounding decision](/decisions/sql-agent.md) |

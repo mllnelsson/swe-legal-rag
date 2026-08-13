@@ -6,7 +6,20 @@ from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from ai import SynthesizeRequest, decompose_query, synthesize_answer, trace_context
+from agents.chat import (
+    ChatTool,
+    DoneEvent,
+    ErrorEvent,
+    ProgressLabel,
+    SourceReference,
+    SourcesEvent,
+    SqlEvent,
+    TokenEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    ToolStatus,
+)
+from ai import SynthesizeRequest, synthesize_answer, trace_context
 from fastapi.testclient import TestClient
 from llm_core import (
     LLMResponse,
@@ -17,13 +30,15 @@ from llm_core import (
     set_trace_recorder,
 )
 from pydantic import BaseModel
+from shared.dtos.session import SessionRead
+from shared.enums import ChunkSection
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.main import create_app
 from api.dependencies import get_db
+from api.main import create_app
 from api.routes.chat import _format_sse
-from api.services.answerer import DoneEvent, SourcesEvent, TokenEvent
-from shared.dtos.session import SessionRead
+
+_DOCUMENT_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 class _RankStub(BaseModel):
@@ -47,6 +62,8 @@ def _make_client():
     app.state.embedding_provider = MagicMock()
     app.state.structured_llm_provider = MagicMock()
     app.state.chat_llm_provider = MagicMock()
+    app.state.read_llm_provider = MagicMock()
+    app.state.sql_llm_provider = MagicMock()
     app.state.storage = MagicMock()
 
     mock_db = AsyncMock(spec=AsyncSession)
@@ -56,6 +73,38 @@ def _make_client():
 
     app.dependency_overrides[get_db] = override_get_db
     return app, TestClient(app)
+
+
+def _parse_sse(text: str) -> list[dict]:
+    """Parse SSE stream text into list of {event, data} dicts."""
+    events = []
+    current: dict = {}
+    for line in text.split("\n"):
+        if line.startswith("event: "):
+            current["event"] = line[len("event: ") :]
+        elif line.startswith("data: "):
+            current["data"] = json.loads(line[len("data: ") :])
+        elif line == "" and current:
+            events.append(current)
+            current = {}
+    return events
+
+
+def _agent_emitting(*events):
+    async def _gen(*_args, **_kwargs):
+        for event in events:
+            yield event
+
+    return _gen
+
+
+def _source() -> SourceReference:
+    return SourceReference(
+        document_id=_DOCUMENT_ID,
+        case_number="12/2024",
+        excerpt="Nämnden avslår överklagandet.",
+        section=ChunkSection.BODY,
+    )
 
 
 class TestFormatSse:
@@ -97,21 +146,6 @@ class TestChatEndpointValidation:
         assert response.status_code == 422
 
 
-def _parse_sse(text: str) -> list[dict]:
-    """Parse SSE stream text into list of {event, data} dicts."""
-    events = []
-    current: dict = {}
-    for line in text.split("\n"):
-        if line.startswith("event: "):
-            current["event"] = line[len("event: ") :]
-        elif line.startswith("data: "):
-            current["data"] = json.loads(line[len("data: ") :])
-        elif line == "" and current:
-            events.append(current)
-            current = {}
-    return events
-
-
 class TestChatEndpointSseStream:
     def setup_method(self):
         self.chat_session = _make_session()
@@ -120,189 +154,213 @@ class TestChatEndpointSseStream:
     def teardown_method(self):
         self.app.dependency_overrides.clear()
 
-    def _fake_answer_query(self, tokens=("hello", " world"), sources=None):
-        sources = sources or []
-
-        async def _gen(*args, **kwargs):
-            for t in tokens:
-                yield TokenEvent(text=t)
-            yield SourcesEvent(sources=sources)
-            yield DoneEvent()
-
-        return _gen
-
-    def test_token_events_streamed(self):
+    def _post(self, agent, message="Vad gäller?"):
         with (
             patch(
                 "api.routes.chat.get_or_create_session", return_value=self.chat_session
             ),
-            patch(
-                "api.routes.chat.answer_query",
-                self._fake_answer_query(tokens=["Hej", " världen"]),
-            ),
+            patch("api.routes.chat.append_turn", new=AsyncMock()),
+            patch("api.routes.chat.run_chat_agent", agent),
         ):
-            response = self.client.post("/api/chat", json={"message": "test"})
+            return self.client.post("/api/chat", json={"message": message})
+
+    def test_progress_then_tokens_then_sources_then_done(self):
+        response = self._post(
+            _agent_emitting(
+                ToolCallEvent(
+                    id="tc-1",
+                    tool=ChatTool.SEARCH_DECISIONS,
+                    label=ProgressLabel.SEARCH_BROAD,
+                    detail={"has_filter": False},
+                ),
+                ToolResultEvent(
+                    id="tc-1",
+                    tool=ChatTool.SEARCH_DECISIONS,
+                    label=ProgressLabel.SEARCH_BROAD,
+                    detail={"decision_count": 7},
+                ),
+                TokenEvent(text="Hej"),
+                TokenEvent(text=" världen"),
+                SourcesEvent(sources=[_source()]),
+                DoneEvent(),
+            )
+        )
 
         assert response.status_code == 200
         events = _parse_sse(response.text)
-        token_events = [e for e in events if e["event"] == "token"]
-        assert len(token_events) == 2
-        assert token_events[0]["data"]["text"] == "Hej"
-        assert token_events[1]["data"]["text"] == " världen"
+        assert [e["event"] for e in events] == [
+            "tool_call",
+            "tool_result",
+            "token",
+            "token",
+            "sources",
+            "done",
+        ]
 
-    def test_sources_event_after_tokens(self):
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch("api.routes.chat.answer_query", self._fake_answer_query()),
-        ):
-            response = self.client.post("/api/chat", json={"message": "test"})
-
-        events = _parse_sse(response.text)
-        token_idxs = [i for i, e in enumerate(events) if e["event"] == "token"]
-        source_idxs = [i for i, e in enumerate(events) if e["event"] == "sources"]
-        assert source_idxs[0] > token_idxs[-1]
-
-    def test_done_event_last_with_session_id(self):
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch("api.routes.chat.answer_query", self._fake_answer_query()),
-        ):
-            response = self.client.post("/api/chat", json={"message": "test"})
-
-        events = _parse_sse(response.text)
-        done_events = [e for e in events if e["event"] == "done"]
-        assert len(done_events) == 1
-        assert done_events[0]["data"]["session_id"] == str(self.chat_session.id)
-        assert events[-1]["event"] == "done"
-
-    def test_null_session_id_creates_new_session(self):
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ) as mock_create,
-            patch("api.routes.chat.answer_query", self._fake_answer_query()),
-        ):
-            self.client.post("/api/chat", json={"message": "test", "session_id": None})
-
-        mock_create.assert_called_once()
-        call_args = mock_create.call_args
-        assert call_args.args[0] is None
-
-    def test_existing_session_id_passed_to_get_or_create(self):
-        existing_id = uuid.uuid4()
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ) as mock_create,
-            patch("api.routes.chat.answer_query", self._fake_answer_query()),
-        ):
-            self.client.post(
-                "/api/chat", json={"message": "test", "session_id": str(existing_id)}
+    def test_progress_events_carry_the_label_key_and_correlate_by_id(self):
+        response = self._post(
+            _agent_emitting(
+                ToolCallEvent(
+                    id="tc-1",
+                    tool=ChatTool.QUERY_CORPUS,
+                    label=ProgressLabel.SQL_QUERY,
+                ),
+                ToolResultEvent(
+                    id="tc-1",
+                    tool=ChatTool.QUERY_CORPUS,
+                    label=ProgressLabel.SQL_QUERY,
+                    status=ToolStatus.OK,
+                    detail={"row_count": 12},
+                ),
+                DoneEvent(),
             )
-
-        mock_create.assert_called_once()
-        assert mock_create.call_args.args[0] == existing_id
-
-    def test_response_content_type_is_event_stream(self):
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch("api.routes.chat.answer_query", self._fake_answer_query()),
-        ):
-            response = self.client.post("/api/chat", json={"message": "test"})
-
-        assert "text/event-stream" in response.headers["content-type"]
-
-    def test_no_cache_headers_set(self):
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch("api.routes.chat.answer_query", self._fake_answer_query()),
-        ):
-            response = self.client.post("/api/chat", json={"message": "test"})
-
-        assert response.headers.get("cache-control") == "no-cache"
-        assert response.headers.get("x-accel-buffering") == "no"
-
-
-class TestChatEndpointErrorHandling:
-    def setup_method(self):
-        self.chat_session = _make_session()
-        self.app, self.client = _make_client()
-
-    def teardown_method(self):
-        self.app.dependency_overrides.clear()
-
-    def test_mid_stream_error_emits_error_event(self):
-        async def _failing_answer_query(*args, **kwargs):
-            yield TokenEvent(text="partial")
-            raise RuntimeError("LLM provider failed")
-
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch("api.routes.chat.answer_query", _failing_answer_query),
-        ):
-            response = self.client.post("/api/chat", json={"message": "test"})
+        )
 
         events = _parse_sse(response.text)
-        error_events = [e for e in events if e["event"] == "error"]
-        assert len(error_events) == 1
-        assert "message" in error_events[0]["data"]
+        call, result = events[0]["data"], events[1]["data"]
+        assert call["label"] == "sql.query"
+        assert call["tool"] == "query_corpus"
+        assert call["id"] == result["id"]
+        assert result["status"] == "ok"
 
-    def test_no_done_after_mid_stream_error(self):
-        async def _failing_answer_query(*args, **kwargs):
-            yield TokenEvent(text="partial")
-            raise RuntimeError("failure")
+    def test_no_progress_event_carries_user_facing_prose(self):
+        """The API emits keys; the client owns the words."""
+        response = self._post(
+            _agent_emitting(
+                ToolCallEvent(
+                    id="tc-1",
+                    tool=ChatTool.SEARCH_DECISIONS,
+                    label=ProgressLabel.SEARCH_FILTERED,
+                    detail={"has_filter": True, "filter_fields": ["category"]},
+                ),
+                DoneEvent(),
+            )
+        )
 
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch("api.routes.chat.answer_query", _failing_answer_query),
-        ):
-            response = self.client.post("/api/chat", json={"message": "test"})
+        payload = _parse_sse(response.text)[0]["data"]
+        assert set(payload) == {"type", "id", "tool", "label", "detail"}
+        # Nothing in the frame is a sentence: every string is a key or an
+        # identifier, so a client cannot accidentally render one.
+        for value in payload["detail"].values():
+            assert not isinstance(value, str)
+
+    def test_sql_event_precedes_the_answer(self):
+        response = self._post(
+            _agent_emitting(
+                SqlEvent(
+                    answered=True,
+                    sql="SELECT count(*) FROM documents",
+                    columns=["antal"],
+                    rows=[[12]],
+                    row_count=1,
+                ),
+                TokenEvent(text="Tolv."),
+                DoneEvent(),
+            )
+        )
 
         events = _parse_sse(response.text)
-        done_events = [e for e in events if e["event"] == "done"]
-        assert len(done_events) == 0
+        names = [e["event"] for e in events]
+        assert names.index("sql") < names.index("token")
+        assert events[0]["data"]["sql"] == "SELECT count(*) FROM documents"
 
-    def test_error_message_is_safe_string(self):
-        async def _failing_answer_query(*args, **kwargs):
-            raise RuntimeError("Internal secret: password=1234")
-            yield  # make it an async generator
+    def test_sources_carry_a_pdf_url_and_the_appendix_label(self):
+        response = self._post(
+            _agent_emitting(
+                SourcesEvent(
+                    sources=[
+                        SourceReference(
+                            document_id=_DOCUMENT_ID,
+                            case_number="12/2024",
+                            excerpt="Stiftet beslutade...",
+                            section=ChunkSection.APPENDIX,
+                            appendix_label="Bilaga A",
+                        )
+                    ]
+                ),
+                DoneEvent(),
+            )
+        )
 
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch("api.routes.chat.answer_query", _failing_answer_query),
-        ):
-            response = self.client.post("/api/chat", json={"message": "test"})
+        source = _parse_sse(response.text)[0]["data"]["sources"][0]
+        assert source["pdf_url"] == f"/api/documents/{_DOCUMENT_ID}/pdf"
+        assert source["section"] == "appendix"
+        assert source["appendix_label"] == "Bilaga A"
+
+    def test_done_carries_the_session_id(self):
+        response = self._post(_agent_emitting(DoneEvent()))
+
+        done = _parse_sse(response.text)[-1]
+        assert done["event"] == "done"
+        assert done["data"]["session_id"] == str(self.chat_session.id)
+
+    def test_error_event_is_terminal_and_no_done_follows(self):
+        response = self._post(
+            _agent_emitting(
+                TokenEvent(text="Hej"),
+                ErrorEvent(message="Ett fel uppstod när frågan besvarades."),
+            )
+        )
 
         events = _parse_sse(response.text)
-        error_events = [e for e in events if e["event"] == "error"]
-        assert len(error_events) == 1
-        assert "password" not in error_events[0]["data"]["message"]
-        assert "1234" not in error_events[0]["data"]["message"]
+        assert [e["event"] for e in events] == ["token", "error"]
+        assert not any(e["event"] == "done" for e in events)
 
-    def test_pre_stream_error_does_not_emit_error_event(self):
-        """Validation errors before streaming → 422, not SSE error."""
+    def test_mid_stream_failure_emits_a_safe_error_event(self):
+        async def _failing(*_args, **_kwargs):
+            yield TokenEvent(text="Hej")
+            raise RuntimeError("provider exploded with secrets in the message")
+
+        response = self._post(_failing)
+
+        events = _parse_sse(response.text)
+        assert events[-1]["event"] == "error"
+        assert "secrets" not in events[-1]["data"]["message"]
+
+    def test_sse_headers(self):
+        response = self._post(_agent_emitting(DoneEvent()))
+
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["cache-control"] == "no-cache"
+        assert response.headers["x-accel-buffering"] == "no"
+
+    def test_completed_turn_is_persisted(self):
+        append = AsyncMock()
         with (
             patch(
                 "api.routes.chat.get_or_create_session", return_value=self.chat_session
             ),
+            patch("api.routes.chat.append_turn", append),
+            patch(
+                "api.routes.chat.run_chat_agent",
+                _agent_emitting(
+                    TokenEvent(text="Hej"), TokenEvent(text="!"), DoneEvent()
+                ),
+            ),
         ):
-            response = self.client.post("/api/chat", json={"message": ""})
+            self.client.post("/api/chat", json={"message": "Vad gäller?"})
 
-        assert response.status_code == 422
+        append.assert_awaited_once()
+        call = append.await_args
+        assert call is not None
+        assert call.args[1] == "Vad gäller?"
+        assert call.args[2] == "Hej!"
+
+    def test_failed_turn_is_not_persisted(self):
+        append = AsyncMock()
+        with (
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch("api.routes.chat.append_turn", append),
+            patch(
+                "api.routes.chat.run_chat_agent",
+                _agent_emitting(ErrorEvent(message="fel")),
+            ),
+        ):
+            self.client.post("/api/chat", json={"message": "Vad gäller?"})
+
+        append.assert_not_awaited()
 
 
 class TestChatTracing:
@@ -329,27 +387,22 @@ class TestChatTracing:
         set_trace_recorder(None)
         self.app.dependency_overrides.clear()
 
-    def _answer_query_making_real_calls(self):
-        """Stands in for the retrieval pipeline, making the calls it would make."""
+    def _agent_making_real_calls(self):
+        """Stands in for the agent, making the calls it would make."""
 
-        async def _gen(*args, **kwargs):
+        async def _gen(*_args, **_kwargs):
             structured = AsyncMock()
             structured.generate = AsyncMock(
                 return_value=LLMResponse(
                     message=Message(
-                        role=Role.assistant,
-                        content=(
-                            '{"categories": [], "entity_refs": [],'
-                            ' "semantic_query": "kyrka"}'
-                        ),
+                        role=Role.assistant, content='{"ranked_indices": []}'
                     )
                 )
             )
-            await decompose_query("Vad gäller?", provider=structured)
 
-            with trace_context(source="api.retriever.rerank"):
+            with trace_context(source="agents.chat"):
                 await generate_structured(
-                    [Message(role=Role.user, content="rank")],
+                    [Message(role=Role.user, content="plan")],
                     _RankStub,
                     provider=structured,
                 )
@@ -369,74 +422,30 @@ class TestChatTracing:
 
         return _gen
 
-    def test_every_call_shares_one_interaction_id(self):
+    def _post(self):
         with (
             patch(
                 "api.routes.chat.get_or_create_session", return_value=self.chat_session
             ),
-            patch(
-                "api.routes.chat.answer_query",
-                self._answer_query_making_real_calls(),
-            ),
+            patch("api.routes.chat.append_turn", new=AsyncMock()),
+            patch("api.routes.chat.run_chat_agent", self._agent_making_real_calls()),
         ):
-            response = self.client.post("/api/chat", json={"message": "Vad gäller?"})
+            return self.client.post("/api/chat", json={"message": "Vad gäller?"})
+
+    def test_every_call_shares_one_interaction_id(self):
+        response = self._post()
 
         assert response.status_code == 200
-        assert len(self.records) == 3
+        assert len(self.records) == 2
         assert len({r.context["interaction_id"] for r in self.records}) == 1
         assert {r.context["source"] for r in self.records} == {
-            "ai.decompose_query",
-            "api.retriever.rerank",
+            "agents.chat",
             "ai.synthesize_answer",
         }
 
     def test_records_carry_the_session_id(self):
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch(
-                "api.routes.chat.answer_query",
-                self._answer_query_making_real_calls(),
-            ),
-        ):
-            self.client.post("/api/chat", json={"message": "Vad gäller?"})
+        self._post()
 
         assert {r.context["session_id"] for r in self.records} == {
             str(self.chat_session.id)
         }
-
-    def test_streamed_answer_is_captured_whole(self):
-        """The streaming call outlives the handler; its record must still land."""
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch(
-                "api.routes.chat.answer_query",
-                self._answer_query_making_real_calls(),
-            ),
-        ):
-            self.client.post("/api/chat", json={"message": "Vad gäller?"})
-
-        synthesis = [
-            r for r in self.records if r.context["source"] == "ai.synthesize_answer"
-        ]
-        assert len(synthesis) == 1
-        assert synthesis[0].response_text == "Svar"
-        assert synthesis[0].success is True
-
-    def test_two_questions_get_two_interaction_ids(self):
-        with (
-            patch(
-                "api.routes.chat.get_or_create_session", return_value=self.chat_session
-            ),
-            patch(
-                "api.routes.chat.answer_query",
-                self._answer_query_making_real_calls(),
-            ),
-        ):
-            self.client.post("/api/chat", json={"message": "Första frågan"})
-            self.client.post("/api/chat", json={"message": "Andra frågan"})
-
-        assert len({r.context["interaction_id"] for r in self.records}) == 2

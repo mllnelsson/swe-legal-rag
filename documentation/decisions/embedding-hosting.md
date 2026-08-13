@@ -76,7 +76,7 @@ shipped config selects.
 
 ## Trade-offs
 
-- Adds a network hop on the query path, but the [NFR1 (<5s)](/prd.md) budget comfortably
+- Adds a network hop on the query path, but the [NFR1a (<5s on search)](/prd.md) budget comfortably
   covers one embedding call plus retrieval.
 - Adds an external dependency on Berget's uptime, in addition to the configured LLM
   provider.

@@ -1,21 +1,30 @@
 ---
 type: Package
 title: agents Package
-description: The stateless LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — today, the text-to-SQL agent behind POST /api/sql — package structure, and how the semantic-model/schema/guard/sandbox/tools modules compose into run_sql_agent.
+description: The LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — the text-to-SQL agent behind POST /api/sql and the conversational agent behind POST /api/chat — their module layout, and the injected-toolset seam that keeps the dependency running api to agents.
 resource: packages/agents
-tags: [package, agents, sql, tool-loop, llm]
-timestamp: 2026-08-09T12:00:00Z
+tags: [package, agents, sql, chat, tool-loop, llm]
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # agents Package (`packages/agents/`)
 
 An **agent** here means an LLM driving a tool loop toward an answer, as opposed to the
-deterministic retrieval tool set in [api](/packages/api.md). Each agent is a stateless
-function — no sessions, no user interaction, no streaming — so it can be called as a tool
-by something else, including a future conversational agent. Today there is one: the
-text-to-SQL agent behind [`POST /api/sql`](/api/sql-agent.md). Depends on `shared` (models,
-for the live schema) and `ai` + `llm-core` (the prompt template and the tool loop);
-depended on by `api`.
+deterministic retrieval tool set in [api](/packages/api.md). Each is a function over its
+inputs rather than a service that reaches into a database itself, which is what lets one
+be called as a tool by another. Depends on `shared` (models, for the live schema) and
+`ai` + `llm-core` (the prompt templates and the tool loop); depended on by `api`.
+
+Two live here, and they differ in shape:
+
+| Agent | Endpoint | Shape |
+|---|---|---|
+| [`run_sql_agent`](/api/sql-agent.md) | `POST /api/sql` | Stateless and one-shot — a question in, a query and its rows out |
+| [`run_chat_agent`](/retrieval/chat-agent.md) | `POST /api/chat` | Streams, and is driven from a conversation |
+
+The conversational agent breaks the "no sessions, no streaming" rule the SQL agent
+established, but not the one that matters: it still takes no database of its own. Its
+tools arrive as an injected `ChatToolset`, and it calls `run_sql_agent` as one of them.
 
 ## Module layout
 
@@ -23,7 +32,7 @@ depended on by `api`.
 |---|---|
 | `__init__.py` | Public surface: `run_sql_agent`, `SqlAgentRequest`, `SqlAgentResult`, `SqlAttempt`, `SqlRows`, `SqlAgentSettings`, `check_semantic_model`, `build_schema_description`, `build_examples_block`, `find_semantic_model_path`, `load_semantic_model`, and the package's errors |
 | `errors.py` | `AgentError` base; `SqlRejectedError` (the guard's refusal, fed back to the model as a tool result, not raised to the caller); `SemanticModelNotFoundError`, `SemanticModelInvalidError`, `SemanticModelIncompleteError` (the three semantic-model failure modes, mirroring the `LLMConfig*` trio in `ai.llm_config`) |
-| `config.py` | `SqlAgentSettings` (`BaseSettings`) + `get_sql_agent_settings()` (`@lru_cache`) — see [the endpoint's settings table](/api/sql-agent.md#settings) |
+| `config.py` | `SqlAgentSettings` and `ChatAgentSettings` (`BaseSettings`) with their `@lru_cache` getters — see [the SQL endpoint's settings](/api/sql-agent.md#settings) and [the chat agent's](/retrieval/chat-agent.md#settings). Loop bounds live here rather than in [`llm_config.yaml`](/reference/llm-config.md), which assigns models, not budgets |
 | `sql/_dtos.py` | The wire contract as plain Pydantic models — `SqlAgentRequest`, `SqlAgentResult`, `SqlAttempt`, `SqlRows` — deliberately free of FastAPI types, the same way `api.services.search_service.SearchQuery` is, so the same models serve an HTTP route, a test, or a future MCP tool wrapper |
 | `sql/_semantic_model.py` | Loads and validates [`semantic_model.yaml`](/reference/semantic-model.md): `find_semantic_model_path()`, `load_semantic_model()`, `@lru_cache`d `get_semantic_model()`, `resolve(document)`, and `check_semantic_model()` — the two-way check against `shared.models.Base.metadata` |
 | `sql/_schema.py` | A pure renderer over the loaded document, no longer a source of prose itself. `exposed_tables()`, `blocked_columns()`, `grounding_required_columns()`, `exposed_column_names()`, `build_schema_description()`, `build_examples_block()` — each takes an optional `document` and falls back to the process-wide one |
@@ -31,11 +40,37 @@ depended on by `api`.
 | `sql/_sandbox.py` | `execute_readonly()` — runs a statement inside `SET TRANSACTION READ ONLY` plus a `SET LOCAL statement_timeout`, always rolled back regardless of outcome |
 | `sql/_tools.py` | The three tools the loop is given (`list_column_values`, `run_sql`, `note_assumption`) and `GroundingState`, the mutable per-run record of what the agent has grounded, assumed, and attempted. `build_sql_tools(session, settings, document=None)` |
 | `sql/_agent.py` | `run_sql_agent(..., document=None)` — wires the prompt, the tools, and `llm_core.tool_loop` together, and assembles the result from the trail `GroundingState` left behind |
+| `chat/_dtos.py` | The chat wire contract: `ChatAgentRequest`, the `AgentEvent` union, `SourceReference`, the `ChatTool` / `ProgressLabel` / `ToolStatus` enums, and the shapes a toolset returns (`SearchOutcome`, `Vocabulary`, `DecisionText`, `DecisionProfile`) |
+| `chat/_protocols.py` | The `ChatToolset` Protocol — five async capabilities in the agent's own shapes. See [the seam](#the-toolset-seam) below |
+| `chat/_tools.py` | `build_chat_tools(toolset, settings, reader_provider=None)` → the six tool definitions, their executors and `ChatState`; plus `label_for_call()` and `FREE_TEXT_FILTER_FIELDS`, the grounding precondition's column list |
+| `chat/_reader.py` | `read_decision_text()` — the one-shot sub-agent a whole decision goes to, and `format_decision_text()`, which marks each appendix boundary before it does |
+| `chat/_agent.py` | `run_chat_agent(request, toolset, ...)` — runs the loop as a task pushing to a queue the generator drains, then streams one synthesis call over the evidence the agent selected |
 
 Every function above the `_semantic_model.py` layer takes an optional `document`
 parameter and falls back to the cached, process-wide one — this is what lets a test
 exercise the guard, the tools, or the whole agent against an alternative
 `SemanticModelDocument` without touching the module-level cache.
+
+## The toolset seam
+
+`api` already depends on `agents`, for `run_sql_agent`. The conversational agent needs
+the retrieval services that live in `api`, so importing them back would close a cycle.
+
+`ChatToolset` is the seam instead. `agents` declares the five capabilities it needs, in
+its own shapes; `api` supplies an object that satisfies them
+(`api/services/chat_toolset.py`). Nothing in `agents` imports `api`.
+
+| Capability | What `api` maps it onto |
+|---|---|
+| `search` | `search_service.search_documents` |
+| `vocabulary` | `search_service.get_filters`, plus keyword/concept name lookup |
+| `decision_text` | `document_service.get_document_chunks` |
+| `decision_profile` | `document_service.get_document_detail` |
+| `tabular_query` | `agents.run_sql_agent` |
+
+The second benefit is testing: a scripted toolset is a plain object with five methods,
+so the whole loop is exercised with no database, no HTTP and no model. See
+[testing strategy](/testing.md).
 
 ## The semantic model (`agents/sql/_semantic_model.py`)
 
@@ -106,7 +141,16 @@ real Postgres can prove: that a write is refused by the transaction itself, not 
 static guard, and that a failed statement leaves the session usable for the request that
 follows. See [testing strategy](/testing.md).
 
-Running `run_sql_agent` over many real questions at once, against a real provider and
+`test_chat_agent.py` covers the conversational loop the same way — a scripted
+`LLMProvider` and a fake `ChatToolset`, no database and no model. What it pins is
+mostly the behaviour that would be expensive to discover in production: that an
+ungrounded filter is refused and the loop recovers from the refusal, that a keyword
+filter is not, that the terminal `answer` tool ends the run, that `event: sql` precedes
+the answer, that a cited appendix keeps its label, and that **no whole decision text
+ever reaches an orchestrator message** — the invariant the reading sub-agent exists to
+maintain.
+
+Running either agent over many real questions at once, against a real provider and
 outside pytest, is what
 [`scripts/run_agent.py`](/playbooks/live-testing.md#option-d-llm-task-runner-scriptsrun_agentpy)
 is for.

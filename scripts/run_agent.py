@@ -82,6 +82,7 @@ _LOG_INPUT_CHARS = 80
 class AgentTask(StrEnum):
     SQL = "sql"
     SUMMARIZE = "summarize"
+    CHAT = "chat"
 
 
 # One input in, the JSON-ready output out. Everything a task needs to build first
@@ -169,6 +170,64 @@ async def _prepare_summarize(_session: AsyncSession) -> TaskRunner:
     return run
 
 
+async def _prepare_chat(session: AsyncSession) -> TaskRunner:
+    """The conversational agent, one question per line and no session state.
+
+    Runs the real loop against the real corpus — the tools, the sub-agents and
+    the streamed synthesis — and records what came out. The record keeps the
+    progress trail as well as the answer, because most of what goes wrong in an
+    agent run is visible in which tools it reached for, not in the prose.
+    """
+    from agents import ChatAgentRequest, check_semantic_model, run_chat_agent
+    from agents.chat import SourcesEvent, SqlEvent, TokenEvent, ToolCallEvent
+    from ai import create_embedding_provider
+    from api.config import get_search_settings
+    from api.services.chat_toolset import build_chat_toolset
+
+    # `query_corpus` reaches the SQL agent, so the same startup check the API
+    # makes fatal applies here — before the first billed call, not after twenty.
+    check_semantic_model()
+    toolset = build_chat_toolset(
+        session,
+        embedding_provider=create_embedding_provider(),
+        search_settings=get_search_settings(),
+        sql_llm_provider=create_llm_provider(LLMRole.SQL),
+    )
+    chat_provider = create_llm_provider(LLMRole.CHAT)
+    read_provider = create_llm_provider(LLMRole.READ)
+
+    async def run(question: str) -> dict[str, Any]:
+        answer_parts: list[str] = []
+        steps: list[dict[str, Any]] = []
+        sources: list[dict[str, Any]] = []
+        sql: dict[str, Any] | None = None
+
+        async for event in run_chat_agent(
+            ChatAgentRequest(question=question),
+            toolset,
+            llm_provider=chat_provider,
+            reader_provider=read_provider,
+        ):
+            match event:
+                case ToolCallEvent():
+                    steps.append({"tool": str(event.tool), "label": str(event.label)})
+                case SqlEvent():
+                    sql = event.model_dump(mode="json")
+                case TokenEvent():
+                    answer_parts.append(event.text)
+                case SourcesEvent():
+                    sources = [s.model_dump(mode="json") for s in event.sources]
+
+        return {
+            "answer": "".join(answer_parts),
+            "steps": steps,
+            "sources": sources,
+            "sql": sql,
+        }
+
+    return run
+
+
 TASKS: dict[AgentTask, TaskSpec] = {
     AgentTask.SQL: TaskSpec(
         prepare=_prepare_sql,
@@ -177,6 +236,10 @@ TASKS: dict[AgentTask, TaskSpec] = {
     AgentTask.SUMMARIZE: TaskSpec(
         prepare=_prepare_summarize,
         input_help="one path to a decision text file per line",
+    ),
+    AgentTask.CHAT: TaskSpec(
+        prepare=_prepare_chat,
+        input_help="one question per line",
     ),
 }
 

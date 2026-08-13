@@ -1,8 +1,8 @@
 # API
 
-## Chat (deprecated)
+## Chat
 
-* [Chat Endpoint (POST /api/chat)](chat-endpoint.md) - Deprecated but retained — the POST /api/chat Server-Sent Events contract — request shape, streamed token/sources/done events, and mid-stream error semantics.
+* [Chat Endpoint (POST /api/chat)](chat-endpoint.md) - The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, and the terminal error semantics.
 
 ## Search
 

@@ -293,10 +293,12 @@ one level to match.
 | `CHUNK_TOPIC` | `chunk` | Queue topic worker-chunk subscribes to |
 | `CHUNK_NEXT_TOPIC` | `embed` | Queue topic worker-chunk publishes to |
 | `EMBED_TOPIC` | `embed` | Queue topic worker-embed subscribes to |
-| `RETRIEVAL_TOP_K` | `8` | How many chunks to return after RRF fusion (`api`) |
-| `RETRIEVAL_SEARCH_LIMIT` | `20` | Results per arm (vector + text) before fusion (`api`) |
-| `RETRIEVAL_RERANK_ENABLED` | `false` | Enable optional LLM rerank step — default OFF for NFR1 <5s (`api`) |
-| `RETRIEVAL_INCLUDE_APPENDICES` | `false` | Search appended lower-instance decisions too. Default OFF — see [body-first retrieval](/decisions/body-first-retrieval.md) (`api`) |
+| `CHAT_AGENT_MAX_ITERATIONS` | `8` | Tool-loop budget for the [conversational agent](/retrieval/chat-agent.md); the first lever when a turn misses NFR1b (`agents`) |
+| `CHAT_AGENT_MAX_DOCUMENTS_READ` | `5` | Decisions the agent may read in full per run; exceeding it is a refusal, not an error (`agents`) |
+| `CHAT_AGENT_MAX_CHUNKS_CITED` | `12` | Passages the answer may be built from (`agents`) |
+| `CHAT_AGENT_SEARCH_LIMIT` | `8` | Decisions one agent search returns (`agents`) |
+| `CHAT_AGENT_CHUNKS_PER_DECISION` | `2` | Passages per decision one agent search returns — with the setting above, what bounds how much verbatim text a tool result puts in the loop's context (`agents`) |
+| `SEARCH_ARM_LIMIT` | `50` | Results per arm (vector + text) before fusion (`api`) |
 | `SEARCH_MIN_VECTOR_SIMILARITY` | `0.78` | Cosine similarity a chunk must reach before `/api/search`'s vector arm returns it — what decides "no match". Model- and corpus-specific; re-measure when the [embedding model](/decisions/embedding-model.md) changes. `0` disables the floor. See [the similarity floor](/retrieval/deterministic-search.md#the-similarity-floor) (`api`) |
 | `API_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins for the API server; Vite dev server default |
 | `SESSION_MAX_HISTORY_TURNS` | `10` | Max conversation turns passed to LLM; full history stays in DB |
