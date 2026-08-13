@@ -2,7 +2,7 @@
 
 ## Chat
 
-* [Chat Endpoint (POST /api/chat)](chat-endpoint.md) - The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, and the terminal error semantics.
+* [Chat Endpoint (POST /api/chat)](chat-endpoint.md) - The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
 
 ## Search
 
@@ -28,4 +28,4 @@
 
 ## SQL agent
 
-* [SQL Agent Endpoint (POST /api/sql)](sql-agent.md) - The POST /api/sql text-to-SQL contract — a Swedish question in, the generated read-only query and its rows out, never an interpreted answer — plus the caller's obligation to surface the query and the never-500s refusal semantics.
+* [SQL Agent Endpoint (POST /api/sql)](sql-agent.md) - The POST /api/sql text-to-SQL contract — a Swedish question in, the generated read-only query and its rows out, never an interpreted answer — plus the caller's obligation to surface the query, the never-500s refusal semantics, and the X-Interaction-Id correlation header.

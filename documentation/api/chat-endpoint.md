@@ -1,10 +1,10 @@
 ---
 type: API Endpoint
 title: Chat Endpoint (POST /api/chat)
-description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, and the terminal error semantics.
+description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-13T01:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -146,6 +146,26 @@ history. The message is deliberately generic; the cause is logged server-side.
 
 **Pre-stream validation.** An empty or over-long `message`, or an unparseable
 `session_id`, returns **HTTP 422** and no stream is opened.
+
+## Correlation
+
+```
+X-Interaction-Id: <uuid>    # request header, optional
+X-Interaction-Id: <uuid>    # response header, always present
+```
+
+A supplied header is honoured **only when it parses as a UUID**; anything else is
+silently ignored and an id is minted instead — the same rule as an unrecognized
+`session_id`. The response header always carries the id actually in use, canonicalised,
+so a client that supplied a rejected value can tell.
+
+One id spans everything the turn cost — the orchestrator's iterations, both sub-agents
+and the streamed synthesis — which is what [LLM Observability](/observability.md) sums
+cost over and what a reported bad answer is found by later. It is stored on both entries
+of the resulting [session](/data-model/sessions.md) turn.
+
+The header carries it rather than the `done` event because response headers are sent
+before the stream opens, so the id survives a turn that ends in `event: error` instead.
 
 ## Latency
 

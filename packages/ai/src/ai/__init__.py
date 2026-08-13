@@ -1,6 +1,7 @@
 from llm_core import trace_context
 
 from ai._observability import LLMTraceConfig, install_file_tracing
+from ai._tracing_scope import agent_run_scope, interaction_scope
 from ai.dtos import (
     ChunkContext,
     DecisionReading,
@@ -73,6 +74,11 @@ __all__ = [
     "LLMTraceConfig",
     "trace_context",
     "worker_trace_scope",
+    # Correlation. `interaction_scope` inherits an enclosing interaction id so a
+    # sub-agent joins its caller's turn; `agent_run_scope` always mints, which
+    # is what tells two invocations of one sub-agent apart inside that turn.
+    "interaction_scope",
+    "agent_run_scope",
     "close_llm_clients",
     # Service functions
     "decompose_query",

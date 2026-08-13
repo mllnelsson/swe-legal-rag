@@ -19,7 +19,7 @@ from agents.chat import (
     ToolResultEvent,
     ToolStatus,
 )
-from ai import SynthesizeRequest, synthesize_answer, trace_context
+from ai import SynthesizeRequest, interaction_scope, synthesize_answer
 from fastapi.testclient import TestClient
 from llm_core import (
     LLMResponse,
@@ -34,6 +34,7 @@ from shared.dtos.session import SessionRead
 from shared.enums import ChunkSection
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.correlation import INTERACTION_ID_HEADER
 from api.dependencies import get_db
 from api.main import create_app
 from api.routes.chat import _format_sse
@@ -400,7 +401,10 @@ class TestChatTracing:
                 )
             )
 
-            with trace_context(source="agents.chat"):
+            # `interaction_scope`, not `trace_context`, because that is what the
+            # real agent opens — and an agent that minted here instead of
+            # inheriting is precisely the defect these tests exist to catch.
+            with interaction_scope(source="agents.chat"):
                 await generate_structured(
                     [Message(role=Role.user, content="plan")],
                     _RankStub,
@@ -422,7 +426,7 @@ class TestChatTracing:
 
         return _gen
 
-    def _post(self):
+    def _post(self, headers: dict[str, str] | None = None):
         with (
             patch(
                 "api.routes.chat.get_or_create_session", return_value=self.chat_session
@@ -430,7 +434,9 @@ class TestChatTracing:
             patch("api.routes.chat.append_turn", new=AsyncMock()),
             patch("api.routes.chat.run_chat_agent", self._agent_making_real_calls()),
         ):
-            return self.client.post("/api/chat", json={"message": "Vad gäller?"})
+            return self.client.post(
+                "/api/chat", json={"message": "Vad gäller?"}, headers=headers or {}
+            )
 
     def test_every_call_shares_one_interaction_id(self):
         response = self._post()
@@ -443,9 +449,84 @@ class TestChatTracing:
             "ai.synthesize_answer",
         }
 
+    def test_the_returned_id_is_the_one_on_the_records(self):
+        """Otherwise the header names something no trace can be found by."""
+        response = self._post()
+
+        returned = response.headers[INTERACTION_ID_HEADER]
+        assert {r.context["interaction_id"] for r in self.records} == {returned}
+
     def test_records_carry_the_session_id(self):
         self._post()
 
         assert {r.context["session_id"] for r in self.records} == {
             str(self.chat_session.id)
         }
+
+
+class TestInteractionIdHeader:
+    """The id in, the id out — how a reported answer is found later."""
+
+    def setup_method(self):
+        self.chat_session = _make_session()
+        self.app, self.client = _make_client()
+
+    def teardown_method(self):
+        self.app.dependency_overrides.clear()
+
+    def _post(self, headers: dict[str, str] | None = None):
+        async def _agent(*_args, **_kwargs):
+            yield TokenEvent(text="Svar")
+            yield SourcesEvent(sources=[])
+            yield DoneEvent()
+
+        with (
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch("api.routes.chat.append_turn", new=AsyncMock()) as append,
+            patch("api.routes.chat.run_chat_agent", _agent),
+        ):
+            response = self.client.post(
+                "/api/chat", json={"message": "Vad gäller?"}, headers=headers or {}
+            )
+        return response, append
+
+    def test_a_supplied_uuid_is_honoured_and_echoed(self):
+        supplied = "11111111-1111-4111-8111-111111111111"
+        response, _ = self._post({INTERACTION_ID_HEADER: supplied})
+
+        assert response.headers[INTERACTION_ID_HEADER] == supplied
+
+    def test_an_absent_header_mints_one_and_returns_it(self):
+        response, _ = self._post()
+
+        uuid.UUID(response.headers[INTERACTION_ID_HEADER])
+
+    def test_a_non_uuid_is_ignored_and_the_replacement_is_returned(self):
+        """Arbitrary client text would become a key in every trace record."""
+        response, _ = self._post({INTERACTION_ID_HEADER: "not-a-uuid; drop table"})
+
+        returned = response.headers[INTERACTION_ID_HEADER]
+        assert returned != "not-a-uuid; drop table"
+        uuid.UUID(returned)
+
+    def test_a_supplied_id_is_canonicalised(self):
+        """One id must have one spelling, or it is two keys in the traces."""
+        response, _ = self._post(
+            {INTERACTION_ID_HEADER: "{11111111-1111-4111-8111-111111111111}"}
+        )
+
+        assert (
+            response.headers[INTERACTION_ID_HEADER]
+            == "11111111-1111-4111-8111-111111111111"
+        )
+
+    def test_the_persisted_turn_carries_the_returned_id(self):
+        """What makes session review a lookup rather than a timestamp guess."""
+        response, append = self._post()
+
+        assert (
+            append.await_args.kwargs["interaction_id"]
+            == (response.headers[INTERACTION_ID_HEADER])
+        )

@@ -1,10 +1,10 @@
 ---
 type: API Endpoint
 title: SQL Agent Endpoint (POST /api/sql)
-description: The POST /api/sql text-to-SQL contract — a Swedish question in, the generated read-only query and its rows out, never an interpreted answer — plus the caller's obligation to surface the query and the never-500s refusal semantics.
+description: The POST /api/sql text-to-SQL contract — a Swedish question in, the generated read-only query and its rows out, never an interpreted answer — plus the caller's obligation to surface the query, the never-500s refusal semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/sql
 tags: [api, sql, agent, text-to-sql, llm]
-timestamp: 2026-08-09T12:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # SQL Agent Endpoint (`POST /api/sql`)
@@ -109,10 +109,29 @@ comes back `truncated: true` rather than silently clipped), `sql_agent_statement
 (5000), `sql_agent_max_column_values` (100, distinct values `list_column_values` returns
 per call).
 
+## Correlation
+
+```
+X-Interaction-Id: <uuid>    # request header, optional
+X-Interaction-Id: <uuid>    # response header, always present
+```
+
+Accepted **only when it parses as a UUID**; anything else is silently ignored and an id
+is minted instead. The response header always carries the id actually in use,
+canonicalised, so a client that supplied a rejected value can tell. Called standalone
+this endpoint mints its own interaction id (there is no caller to inherit one from);
+reached as the [conversational agent's](/retrieval/chat-agent.md) `query_corpus` tool it
+inherits the caller's id instead, which is what keeps that sub-agent's spend inside the
+turn that asked for it rather than under an id of its own. See
+[correlation](/observability.md#correlation--the-wiring-invariant).
+
 ## Observability
 
 Traced with `source="agents.sql"`, `prompt="TEXT_TO_SQL"`. `llm_core.tool_loop` already
-emits one trace record per iteration, so no additional wiring happens at this route — see
+emits one trace record per iteration, so no additional wiring happens inside the agent —
+but the route itself resolves the interaction id (above) and opens the `interaction_scope`
+around the call to `run_sql_agent`, which also opens its own `agent_run_scope`, minted
+fresh on every invocation so two calls in one turn are distinguishable. See
 [LLM Observability](/observability.md).
 
 ## Exercising it without the API

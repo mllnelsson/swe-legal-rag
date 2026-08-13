@@ -45,6 +45,13 @@ The agent's own bounds — iterations, reading budget, citation cap — are
 - **`api/pagination.py`** — the generic `Page[T]` model (`items`, `total`, `limit`,
   `offset`) every list-returning endpoint uses, and `clamp_limit(requested, *, default,
   maximum)`, which keeps a caller-supplied page size inside what the server will serve.
+- **`api/correlation.py`** — `INTERACTION_ID_HEADER` (`X-Interaction-Id`) and
+  `resolve_interaction_id(supplied)`, shared by the chat and SQL routes. The header is
+  honoured only when it parses as a UUID and is canonicalised when it does; anything
+  else is ignored and an id minted. It lives here rather than in either route because
+  `api/main.py` also needs the header name — see [the CORS
+  requirement](#fastapi-app-apimainpy). See [LLM Observability](/observability.md) for
+  what the id correlates.
 
 ## The chat surface (`api/services/`)
 
@@ -66,11 +73,18 @@ Two modules, and neither is an agent — the loop lives in
   floor](/retrieval/deterministic-search.md#the-similarity-floor).
 - **`session_service.py`** — module-level functions:
   `get_or_create_session(session_id, session)` (None or stale id → fresh session, no
-  error), `append_turn(...)` (appends user + assistant entries, updates `last_active_at`,
-  no-op on missing id), `history_for_llm(session, max_turns)` (returns the last
-  `max_turns * 2` entries, preserving complete pairs; full history stays in the DB).
+  error), `append_turn(..., interaction_id)` (appends user + assistant entries, both
+  tagged with the interaction, updates `last_active_at`, no-op on missing id),
+  `history_for_llm(session, max_turns)` (returns the last `max_turns * 2` entries,
+  preserving complete pairs; full history stays in the DB).
   Only the question and the answer are persisted — never the evidence a turn gathered,
   which would otherwise be re-sent on the next turn.
+
+  `history_for_llm` **projects each entry to `{role, content}`**, dropping the stored
+  `interaction_id`. That is load-bearing rather than tidy: `ai.synthesize_answer`
+  renders the history with `json.dumps` over whole entries, so any bookkeeping field
+  left on one is sent to the model as noise and re-sent on every later turn. See
+  [sessions](/data-model/sessions.md).
 
 ## Search/browse/traversal service layer (`api/services/`)
 
@@ -107,9 +121,14 @@ search](/retrieval/deterministic-search.md) for why.
 [embedding dimension](/decisions/embedding-dimension.md)), then constructs one provider
 per [role](/reference/llm-config.md): `structured`, `chat`, `read` and `sql`. The chat
 agent uses two of them — `chat` drives its loop and writes the answer, `read` is the
-sub-agent it hands a whole decision to. CORS is configured from
-`AppSettings.api_cors_origins`. Routes: the search, documents, concepts, keywords and
-sql routers are registered ahead of the chat router, plus `GET /healthz`.
+sub-agent it hands a whole decision to. Routes: the search, documents, concepts,
+keywords and sql routers are registered ahead of the chat router, plus `GET /healthz`.
+
+CORS is configured from `AppSettings.api_cors_origins`, and names
+`X-Interaction-Id` in `expose_headers`. That is a separate requirement from the
+permissive `allow_headers`, which governs the request direction only: a browser cannot
+read a response header the server has not exposed, so without it the correlation id
+reaches the browser and stays invisible to it.
 
 ## Chat route (`api/routes/chat.py`)
 

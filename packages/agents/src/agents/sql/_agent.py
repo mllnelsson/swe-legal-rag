@@ -8,9 +8,8 @@ with the answer and whoever consumes this is expected to show it.
 from __future__ import annotations
 
 import logging
-import uuid
 
-from ai import LLMRole, create_llm_provider, trace_context
+from ai import LLMRole, agent_run_scope, create_llm_provider, interaction_scope
 from ai.prompts import TEXT_TO_SQL, render
 from llm_core import LLMProvider, MaxIterationsError, ToolExecutionError, tool_loop
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,14 +91,16 @@ async def run_sql_agent(
         },
     )
 
-    interaction_id = str(uuid.uuid4())
-    logger.info("SQL agent interaction %s", interaction_id)
-
-    with trace_context(
-        interaction_id=interaction_id,
-        source=_SOURCE,
-        prompt=TEXT_TO_SQL.name,
+    # Called two ways: standalone from `POST /api/sql`, where there is no
+    # enclosing interaction and one is minted, and as the conversational agent's
+    # `query_corpus` tool, where inheriting is what keeps this loop's spend
+    # inside the turn that asked for it instead of under an id of its own.
+    with (
+        interaction_scope(source=_SOURCE, prompt=TEXT_TO_SQL.name) as interaction_id,
+        agent_run_scope(),
     ):
+        logger.info("SQL agent interaction %s", interaction_id)
+
         try:
             loop_result = await tool_loop(
                 messages,

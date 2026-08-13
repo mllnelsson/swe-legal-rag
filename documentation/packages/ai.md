@@ -19,6 +19,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 |---|---|
 | `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
 | `_observability.py` | `FileTraceRecorder`, `LLMTraceConfig`, `install_file_tracing()` — writes LLM traces to file storage |
+| `_tracing_scope.py` | `interaction_scope()` / `agent_run_scope()` — the project's two correlation primitives, layered over llm-core's `trace_context`. See [Trace recording](#trace-recording-ai_observabilitypy) below |
 | `services.py` | Six async service functions (below) |
 | `llm_config.py` | Reads `llm_config.yaml` — document models, discovery, and role/embedding resolution |
 | `embedding.py` | `EmbeddingProvider` Protocol, `create_embedding_provider` factory, `verify_embedding_dimension` |
@@ -311,6 +312,21 @@ raw material — applying a price to it is an analysis question, answered agains
 would only freeze a rate that may be wrong or, as today, missing: no Berget rate is
 published in this repo, so every record would carry a null that could never be filled
 in.
+
+### Correlation (`ai/_tracing_scope.py`)
+
+`interaction_scope(interaction_id=None, **values)` and `agent_run_scope(**values)` sit
+next to `worker_trace_scope` for the same reason: `trace_context` itself carries an
+opaque mapping and llm-core deliberately gives no key a meaning, but `interaction_id`
+and `agent_run_id` are project concepts, so the module that gives them one lives in `ai`,
+not `llm-core`.
+
+`interaction_scope` is what lets a sub-agent join its caller's interaction instead of
+starting a separate one: an explicit id wins, else an id already in the trace context is
+**inherited**, else one is **minted**. `agent_run_scope` always mints, which is what
+still tells two invocations of the same sub-agent apart inside one interaction. Both are
+re-exported from `ai.__init__`. Full mechanics, the call sites that use them, and the
+`X-Interaction-Id` header they back: [LLM Observability](/observability.md).
 
 Full record schema, correlation keys and the wiring invariant:
 [LLM Observability](/observability.md). Rate rules: [LLM pricing](/reference/llm-pricing.md).

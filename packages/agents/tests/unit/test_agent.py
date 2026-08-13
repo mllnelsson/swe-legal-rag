@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
+from ai import interaction_scope
 from llm_core import LLMResponse, Message, Role, ToolCall
+from llm_core._tracing import LLMCallRecord, set_trace_recorder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.config import SqlAgentSettings
@@ -191,3 +193,51 @@ async def test_the_schema_and_examples_reach_the_model() -> None:
     assert "documents —" in user
     assert "Exempel:" in user
     assert "Kommentar:" in user
+
+
+class TestCorrelation:
+    """Whether this agent joins its caller's interaction or starts its own.
+
+    Both matter: reached from `POST /api/sql` there is no caller to join, and
+    reached as the conversational agent's `query_corpus` tool an id of its own
+    would put this loop's spend outside the turn that paid for it.
+    """
+
+    def setup_method(self):
+        self.records: list[LLMCallRecord] = []
+
+        class Recording:
+            def record(inner, record: LLMCallRecord) -> None:
+                self.records.append(record)
+
+        set_trace_recorder(Recording())
+
+    def teardown_method(self):
+        set_trace_recorder(None)
+
+    async def test_standalone_run_mints_its_own_interaction_id(self) -> None:
+        await _run(_final("Klart."))
+
+        assert self.records
+        assert len({r.context["interaction_id"] for r in self.records}) == 1
+
+    async def test_nested_run_inherits_the_callers_interaction_id(self) -> None:
+        with interaction_scope("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"):
+            await _run(_final("Klart."))
+
+        assert self.records
+        assert {r.context["interaction_id"] for r in self.records} == {
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+
+    async def test_each_run_gets_its_own_agent_run_id(self) -> None:
+        """Two `query_corpus` calls in one turn are otherwise indistinguishable."""
+        with interaction_scope("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"):
+            await _run(_final("Klart."))
+            first = {r.context["agent_run_id"] for r in self.records}
+            await _run(_final("Klart."))
+
+        second = {r.context["agent_run_id"] for r in self.records} - first
+        assert len(first) == 1
+        assert len(second) == 1
+        assert first != second

@@ -3,7 +3,7 @@ type: Reference
 title: LLM Pricing Prerequisites
 description: Verified per-token rates and the rules for applying them when analyzing LLM trace records. Reference data, not implemented anywhere in the repo.
 tags: [observability, cost, pricing, llm]
-timestamp: 2026-08-01T00:00:00Z
+timestamp: 2026-08-13T00:00:00Z
 ---
 
 # LLM Pricing Prerequisites
@@ -50,18 +50,24 @@ some roles and not others, so a single run's traces may mix priced and unpriced 
 
 The default provider is Berget (see [llm_config.yaml](/reference/llm-config.md)), and
 **no Berget rate is published in this repo**. Guessing one would be worse than reporting
-nothing, so the four models this project runs by default have no rate here:
+nothing, so the models this project runs by default have no rate here:
 
 | Model | Role |
 |---|---|
 | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | `roles.structured` |
-| `mistralai/Mistral-Medium-3.5-128B` | `roles.summarize` |
+| `mistralai/Mistral-Medium-3.5-128B` | `roles.summarize`, `roles.read`, `roles.sql` |
 | `zai-org/GLM-5.2` | `roles.chat` |
-| `intfloat/multilingual-e5-large` | `embedding` (Berget-hosted) |
 
 Which model fills each role is configurable, so confirm against `llm_config.yaml` (and
 any `LLM_MODEL_<ROLE>` override in the environment) before pricing a run. The trace
 records the model the provider **says it served**, which is the authoritative value.
+
+`intfloat/multilingual-e5-large` (`embedding.model`) is not in this table: the shipped
+`embedding.provider` is `local` — in-process `sentence-transformers`, no API call — and
+[local embeddings are deliberately not traced](/observability.md), so they contribute
+exactly zero to a question's cost regardless of pricing. Only a deployment that switches
+`embedding.provider` to `berget` would need a rate for it, and that configuration is not
+the default this table describes.
 
 **Consequence:** on the out-of-the-box configuration, cost questions are answerable in
 *tokens* only. Tokens are always recorded, so obtaining a Berget rate later prices every
@@ -127,6 +133,14 @@ cat data/llm-traces/2026-07-30/*.jsonl \
       | [.context.source, .model, .usage.input_tokens,
          .usage.output_tokens] | @tsv'
 ```
+
+The `<uuid>` is the value of the `X-Interaction-Id` response header, or the id
+logged by the API. This selects every source under one `interaction_id`,
+including the SQL sub-agent's records when the turn reached for `query_corpus`
+— `run_chat_agent` and `run_sql_agent` both inherit the caller's id rather than
+minting their own, so a turn that ran both the orchestrator and a counting
+question is one sum, not two. See
+[correlation](/observability.md#correlation--the-wiring-invariant).
 
 On GCS, `gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl'` substitutes for
 `cat`.

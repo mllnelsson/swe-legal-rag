@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to file storage — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-13T01:00:00Z
 ---
 
 # LLM Observability
@@ -73,7 +73,8 @@ disappears — adding a field does not break a reader and does not bump it.
                            "arguments": {"query": "…"}}],
   "usage": {"input_tokens": 1234, "output_tokens": 88, "total_tokens": 1322},
   "context": {"source": "agents.chat", "prompt": "CHAT_ORCHESTRATION",
-              "interaction_id": "…", "session_id": "…", "tool_loop_iteration": 2}
+              "interaction_id": "…", "agent_run_id": "…", "session_id": "…",
+              "tool_loop_iteration": 2}
 }
 ```
 
@@ -85,7 +86,7 @@ disappears — adding a field does not break a reader and does not bump it.
 | `model` | The model the provider **says it served**, not the one configured. |
 | `error` | `null` when `success`, otherwise `{"type", "message"}`. |
 | `messages` | The full prompt, every field of every message, never truncated. |
-| `usage` | Provider-reported token counts. With `model`, the raw material cost is derived from. |
+| `usage` | Provider-reported token counts. With `model`, this is the raw material that cost is derived from. |
 | `context` | The caller's correlation values, passed through verbatim. |
 
 **There is no cost field, and no rate table in this repo.** `model` and `usage` are
@@ -190,8 +191,9 @@ discarded.
 
 | Key | Set by |
 |---|---|
-| `interaction_id`, `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
-| `interaction_id` | `agents.chat.run_chat_agent`, for a run not started by the API |
+| `interaction_id` | `ai.interaction_scope()` (`packages/ai/src/ai/_tracing_scope.py`) — an explicit id wins; failing that, one already in the trace context is **inherited**; failing that, one is **minted**. Opened around the whole request by `api/routes/chat.py` and `api/routes/sql.py` (the id resolved from the `X-Interaction-Id` request header — see below) and by `api/routes/search.py` (source `api.search`, no header, always mints), and opened again by `agents.chat.run_chat_agent` / `agents.sql.run_sql_agent` themselves — which is what lets `query_corpus` join the turn that called it instead of starting one of its own |
+| `agent_run_id` | `ai.agent_run_scope()`, same module — **always mints**, never inherits. Opened once per invocation of `run_chat_agent` and `run_sql_agent`, so two `query_corpus` calls inside one turn, which otherwise share every key, still carry distinct `agent_run_id`s |
+| `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
 | `document_id`, `task_id` | Each worker, via the `MessageScope` `ai.worker_trace_scope(name)` supplies to `shared.worker.subscribe_step`, entered around `asyncio.run` inside its `handle_message` |
 | `document_id`, `task_id` | `scripts/run_step.py`, around the step dispatch in `_run_step` |
 | `run_id`, `case` | `scripts/run_agent.py`, around each input in `run_cases` — the join back from a batch run's JSONL record to the trace(s) it produced |
@@ -199,30 +201,55 @@ discarded.
 | `prompt` | `ai/services.py`, from the template's name |
 
 `source` says **what the call is**, not who asked for it — *who* is
-`interaction_id` or `document_id`. Values: `ai.expand_query`,
-`ai.extract_metadata`, `ai.extract_entities`, `ai.summarize_document`,
-`ai.synthesize_answer`, `ai.embed`, `agents.sql`, `agents.chat`,
-`agents.chat.read`. Contexts nest and merge; on a key collision the innermost
-wins.
+`interaction_id` or `document_id`. Values: `ai.decompose_query`,
+`ai.expand_query`, `ai.extract_metadata`, `ai.extract_entities`,
+`ai.summarize_document`, `ai.synthesize_answer`, `ai.embed`, `agents.sql`,
+`agents.chat`, `agents.chat.read`, `api.chat`, `api.search`, `worker-chunk`,
+`worker-embed`, `worker-extract`, `worker-metadata`, `scripts.run_step`,
+`scripts.run_agent`. Contexts nest and merge; on a key collision the innermost
+wins — which is exactly why `api.chat`/`api.search` and the `worker-*`/
+`scripts.*` names, all of them outer attributions, never actually reach a
+record: the `ai.*`/`agents.*` source set by the call itself always overrides
+them. `source` still needs to name them, because that is what "the innermost
+wins" means in practice — the outer value is the one a nested call replaces.
 
 `agents.chat` appears **once per tool-loop iteration**, because each is its own
 billed call — a five-step run produces five records under that source, plus one
 `ai.synthesize_answer` for the streamed answer, plus `agents.sql` and
-`agents.chat.read` for whichever sub-agents it reached for. `run_chat_agent`
-also sets its own `interaction_id`, so a run started outside the API — from
-[`scripts/run_agent.py`](/playbooks/live-testing.md) — is still correlated.
+`agents.chat.read` for whichever sub-agents it reached for. All of them carry
+the same `interaction_id`: `run_chat_agent` and `run_sql_agent` both open an
+`interaction_scope`, which **inherits** the id the API already put in context
+rather than minting a second one. A run started outside the API — from
+[`scripts/run_agent.py`](/playbooks/live-testing.md) — has no id to inherit, so
+`interaction_scope` mints one there instead; either way the run is correlated.
+
+### The client-supplied interaction id
+
+`POST /api/chat` and `POST /api/sql` both accept a request header
+`X-Interaction-Id` and always return one, resolved by
+`api.correlation.resolve_interaction_id()`. Honoured only when it parses as a
+UUID — anything else is silently ignored and an id is minted instead, the same
+way an unrecognized `session_id` silently starts a fresh session rather than
+erroring. The value lands in the `context` of every trace record the request
+produces and becomes the key those records are searched by, so arbitrary client
+text would be both an injection surface and a collision risk. A supplied id is
+canonicalised with `str(uuid.UUID(...))`, so one id has one stored spelling
+regardless of case or brace form.
+
+The response header always carries the id actually in use, which is what lets a
+client that reports a bad answer be pointed straight at the trace records that
+produced it — a header survives a turn that ends in `event: error`, where a
+`done` event (which also carries no id today) never arrives.
 
 `ai.expand_query` is the only source that appears on the otherwise LLM-free
 [deterministic search](/retrieval/deterministic-search.md) path, and only when a
 caller sets `expand: true`. Its absence from a search's trace is therefore
 meaningful: it says the result was reproducible without a model.
 
-The outer attribution set by a worker or by a manual runner is its own name —
-`worker-chunk`, `worker-embed`, `worker-extract`, `worker-metadata`, `scripts.run_step`,
-or `scripts.run_agent` — which the inner `ai.*`/`agents.*` source then overrides for the
-call itself. `run_agent.py`'s `run_id`/`case`, unlike its `source`, are never overridden
-by anything further in: they are this script's own keys, and they survive onto every
-trace record a case produces regardless of how many calls the task inside it makes.
+`run_agent.py`'s `run_id`/`case`, unlike its `source`, are never overridden by
+anything further in: they are this script's own keys, and they survive onto
+every trace record a case produces regardless of how many calls the task
+inside it makes.
 
 **The manual runner used to be a hole in this invariant.**
 [`scripts/run_step.py`](/playbooks/live-testing.md) never called
@@ -234,11 +261,19 @@ not in the table above, it is a hole of the same kind.
 
 ### Two placements that are load-bearing
 
-**In the API, the context is entered inside the SSE generator, not around the
-route handler.** Starlette drives that generator *after* `chat_endpoint` has
-returned, so a context entered around the handler body would have exited before
-the first token. Entered inside, it spans every iteration of the agent's tool
-loop, both sub-agents, the embedding and the streaming synthesis alike.
+**In the chat route, resolving the id and entering the context are two
+separate steps, in that order.** `resolve_interaction_id()` runs in the
+handler body, before the `StreamingResponse` is built, because the response
+headers — including `X-Interaction-Id` — are sent before Starlette starts
+draining the generator; an id resolved inside the generator could never reach
+them. The `trace_context` itself is still entered *inside* the generator,
+because Starlette drives that generator *after* `chat_endpoint` has returned —
+a context entered around the handler body would have exited before the first
+token. Entered inside, it spans every iteration of the agent's tool loop, both
+sub-agents, the embedding and the streaming synthesis alike, all inheriting the
+id resolved a step earlier. `POST /api/sql` has no such split: it is not
+streamed, so the route resolves the id, sets the response header, and opens the
+scope around the single call to `run_sql_agent` in one place.
 
 **In the workers, the context wraps `asyncio.run`, not the coroutine.**
 `asyncio.Runner` copies the current context when it builds the loop, so an outer
@@ -295,7 +330,8 @@ keyspaces the storage root holds, per [shared](/packages/shared.md)'s
 ## What did this question cost
 
 Find the interaction id in the API log (`Chat interaction <uuid> for session
-…`), then pull every call it caused:
+…`) or read it straight off the `X-Interaction-Id` response header — both name
+the same value — then pull every call it caused:
 
 ```bash
 cat data/llm-traces/$(date -u +%F)/*.jsonl \

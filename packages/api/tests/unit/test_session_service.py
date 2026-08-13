@@ -77,19 +77,45 @@ class TestGetOrCreateSession:
         assert result.history == history
 
 
+INTERACTION_ID = "11111111-1111-4111-8111-111111111111"
+
+
 class TestAppendTurn:
     @pytest.mark.asyncio
     async def test_appends_user_and_assistant_entries(self, repo: MagicMock):
         session = _make_session(history=[])
         repo.get_by_id.return_value = session
-        await append_turn(session.id, "Vad gäller?", "Kyrkorätten säger...", db)
+        await append_turn(
+            session.id,
+            "Vad gäller?",
+            "Kyrkorätten säger...",
+            db,
+            interaction_id=INTERACTION_ID,
+        )
         repo.update.assert_called_once()
         update_dto = repo.update.call_args.args[2]
-        assert {"role": "user", "content": "Vad gäller?"} in update_dto.history
+        assert {
+            "role": "user",
+            "content": "Vad gäller?",
+            "interaction_id": INTERACTION_ID,
+        } in update_dto.history
         assert {
             "role": "assistant",
             "content": "Kyrkorätten säger...",
+            "interaction_id": INTERACTION_ID,
         } in update_dto.history
+
+    @pytest.mark.asyncio
+    async def test_both_entries_carry_the_same_interaction_id(self, repo: MagicMock):
+        """The turn is the unit a trace lookup resolves, not the message."""
+        session = _make_session(history=[])
+        repo.get_by_id.return_value = session
+        await append_turn(session.id, "q", "a", db, interaction_id=INTERACTION_ID)
+        update_dto = repo.update.call_args.args[2]
+        assert [entry["interaction_id"] for entry in update_dto.history] == [
+            INTERACTION_ID,
+            INTERACTION_ID,
+        ]
 
     @pytest.mark.asyncio
     async def test_preserves_existing_history(self, repo: MagicMock):
@@ -99,7 +125,9 @@ class TestAppendTurn:
         ]
         session = _make_session(history=prior)
         repo.get_by_id.return_value = session
-        await append_turn(session.id, "Ny fråga", "Nytt svar", db)
+        await append_turn(
+            session.id, "Ny fråga", "Nytt svar", db, interaction_id=INTERACTION_ID
+        )
         update_dto = repo.update.call_args.args[2]
         assert len(update_dto.history) == 4
         assert update_dto.history[0] == prior[0]
@@ -108,14 +136,14 @@ class TestAppendTurn:
     async def test_updates_last_active_at(self, repo: MagicMock):
         session = _make_session()
         repo.get_by_id.return_value = session
-        await append_turn(session.id, "q", "a", db)
+        await append_turn(session.id, "q", "a", db, interaction_id=INTERACTION_ID)
         update_dto = repo.update.call_args.args[2]
         assert update_dto.last_active_at is not None
 
     @pytest.mark.asyncio
     async def test_no_op_when_session_not_found(self, repo: MagicMock):
         repo.get_by_id.return_value = None
-        await append_turn(uuid.uuid4(), "q", "a", db)
+        await append_turn(uuid.uuid4(), "q", "a", db, interaction_id=INTERACTION_ID)
         repo.update.assert_not_called()
 
 
@@ -153,3 +181,29 @@ class TestHistoryForLlm:
         session = _make_session(history=history)
         result = history_for_llm(session, max_turns=3)
         assert len(result) == 6
+
+    def test_strips_bookkeeping_fields_from_stored_entries(self):
+        """No stored field reaches a prompt except role and content.
+
+        `ai.synthesize_answer` renders the history with `json.dumps` over whole
+        entries, so anything left on one is sent to the model — and re-sent on
+        every later turn.
+        """
+        session = _make_session(
+            history=[
+                {"role": "user", "content": "q", "interaction_id": INTERACTION_ID},
+                {"role": "assistant", "content": "a", "interaction_id": INTERACTION_ID},
+            ]
+        )
+        result = history_for_llm(session, max_turns=5)
+        assert result == [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+        ]
+
+    def test_tolerates_entries_written_before_interaction_ids(self):
+        """The column is untyped JSONB; older rows have no interaction_id."""
+        session = _make_session(history=[{"role": "user", "content": "q"}])
+        assert history_for_llm(session, max_turns=5) == [
+            {"role": "user", "content": "q"}
+        ]

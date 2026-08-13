@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import shared
 from ai.providers.roles import LLMRole, create_llm_provider
 from api.config import AppSettings
+from api.correlation import INTERACTION_ID_HEADER
 from api.routes.chat import router as chat_router
 from api.routes.concepts import router as concepts_router
 from api.routes.documents import router as documents_router
@@ -67,6 +68,11 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # A browser cannot read a response header that is not exposed, however
+        # permissive `allow_headers` is — that governs the request direction
+        # only. Without this the correlation id reaches the browser and stays
+        # invisible to it.
+        expose_headers=[INTERACTION_ID_HEADER],
     )
 
     app.include_router(search_router)

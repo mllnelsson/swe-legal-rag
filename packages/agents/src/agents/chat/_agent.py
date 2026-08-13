@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import ai
-from ai import trace_context
+from ai import agent_run_scope, interaction_scope
 from ai.dtos import ChunkContext, SynthesizeRequest, TabularEvidence
 from ai.prompts import CHAT_ORCHESTRATION, render
 from llm_core import (
@@ -314,10 +314,18 @@ async def run_chat_agent(
         toolset, settings, reader_provider=reader_provider
     )
 
-    interaction_id = str(uuid.uuid4())
-    logger.info("Chat agent interaction %s", interaction_id)
+    # Inherits the interaction the API opened, and mints one only when there is
+    # no caller to inherit from — a `scripts/run_agent.py` case, or a test. The
+    # `prompt` key is what attributes these records to a prompt version; every
+    # other call site sets one.
+    with (
+        interaction_scope(
+            source=_SOURCE, prompt=CHAT_ORCHESTRATION.name
+        ) as interaction_id,
+        agent_run_scope(),
+    ):
+        logger.info("Chat agent interaction %s", interaction_id)
 
-    with trace_context(interaction_id=interaction_id, source=_SOURCE):
         queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
         loop_task = asyncio.create_task(
             _drive_loop(request, tools, executors, state, settings, llm_provider, queue)

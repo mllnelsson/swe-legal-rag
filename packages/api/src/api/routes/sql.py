@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, Request
+from ai import interaction_scope
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents import SqlAgentRequest, SqlAgentResult, run_sql_agent
+from api.correlation import INTERACTION_ID_HEADER, resolve_interaction_id
 from api.dependencies import get_db
 
 router = APIRouter()
@@ -11,6 +13,7 @@ router = APIRouter()
 async def sql_endpoint(
     body: SqlAgentRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> SqlAgentResult:
     """Answer a Swedish question with a SQL query and its rows.
@@ -23,8 +26,14 @@ async def sql_endpoint(
     Never 500s on a question it cannot answer: an ungroundable or out-of-schema
     question comes back `answered: false` with the reason in `note`.
     """
-    return await run_sql_agent(
-        body,
-        db,
-        llm_provider=request.app.state.sql_llm_provider,
-    )
+    interaction_id = resolve_interaction_id(request.headers.get(INTERACTION_ID_HEADER))
+    response.headers[INTERACTION_ID_HEADER] = interaction_id
+
+    # Opened here rather than left to the agent so a client-supplied id is
+    # honoured; reached this way the agent finds an interaction and joins it.
+    with interaction_scope(interaction_id):
+        return await run_sql_agent(
+            body,
+            db,
+            llm_provider=request.app.state.sql_llm_provider,
+        )

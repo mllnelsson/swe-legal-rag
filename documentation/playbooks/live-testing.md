@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-13T01:00:00Z
 ---
 
 # Live Testing Guide
@@ -476,8 +476,11 @@ cat data/llm-traces/$(date -u +%F)/*.jsonl \
 ```
 
 Expect one call per tool-loop iteration under `agents.chat`, plus `ai.embed`,
-`ai.synthesize_answer`,
-plus `api.retriever.rerank` when reranking is on.
+`ai.synthesize_answer`, and — depending on which tools the agent reached for —
+`agents.sql` (one row per SQL-loop iteration) and `agents.chat.read`. All of
+them share the interaction id logged above, since `run_chat_agent` and
+`run_sql_agent` both inherit it rather than minting their own — see
+[correlation](/observability.md#correlation--the-wiring-invariant).
 
 Closing the browser tab mid-answer should still leave an `ai.synthesize_answer` record,
 with `success: false`, `error.type` `GeneratorExit`, and the partial text that had been

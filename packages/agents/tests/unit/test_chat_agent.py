@@ -9,7 +9,9 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from ai import interaction_scope
 from llm_core import LLMResponse, Message, Role, StreamChunk, ToolCall
+from llm_core._tracing import LLMCallRecord, set_trace_recorder
 from shared.dtos.search import DocumentFilter
 from shared.enums import ChunkSection
 
@@ -560,3 +562,84 @@ async def test_citations_are_capped() -> None:
 def test_question_bounds_are_enforced(question: str) -> None:
     with pytest.raises(ValueError):
         ChatAgentRequest(question=question)
+
+
+class TestCorrelation:
+    """One turn, one interaction id — the basis for costing a question.
+
+    A turn fans out into the orchestrator's iterations, the reading sub-agent
+    and the streamed synthesis, each its own billed call. Summing what the turn
+    cost is a sum over one key only if all of them carry the same one.
+    """
+
+    def setup_method(self):
+        self.records: list[LLMCallRecord] = []
+
+        class Recording:
+            def record(inner, record: LLMCallRecord) -> None:
+                self.records.append(record)
+
+        set_trace_recorder(Recording())
+
+    def teardown_method(self):
+        set_trace_recorder(None)
+
+    async def _run_a_turn(self):
+        reader = ScriptedProvider(
+            Message(role=Role.assistant, content="Nämnden avslog överklagandet.")
+        )
+        provider = ScriptedProvider(
+            _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+            _tool_call(
+                ChatTool.READ_DECISION,
+                call_id="call-2",
+                document_id="d1",
+                question="Vad beslutade nämnden?",
+            ),
+            _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        )
+        await _collect(
+            run_chat_agent(
+                ChatAgentRequest(question="Vad beslutade nämnden?"),
+                FakeToolset(),
+                llm_provider=provider,
+                reader_provider=reader,
+                settings=_settings(),
+            )
+        )
+
+    async def test_every_call_in_a_turn_shares_the_callers_interaction_id(self) -> None:
+        with interaction_scope("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"):
+            await self._run_a_turn()
+
+        assert self.records
+        assert {r.context["interaction_id"] for r in self.records} == {
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+
+    async def test_the_orchestrator_reader_and_synthesis_are_all_traced(self) -> None:
+        """Each is a separate billed call and must be separable within the turn."""
+        await self._run_a_turn()
+
+        assert {r.context["source"] for r in self.records} == {
+            "agents.chat",
+            "agents.chat.read",
+            "ai.synthesize_answer",
+        }
+
+    async def test_a_run_without_a_caller_mints_its_own_interaction_id(self) -> None:
+        """`scripts/run_agent.py` has no enclosing interaction to join."""
+        await self._run_a_turn()
+
+        assert self.records
+        assert len({r.context["interaction_id"] for r in self.records}) == 1
+
+    async def test_orchestration_records_name_their_prompt(self) -> None:
+        """Without it these records cannot be attributed to a prompt version."""
+        await self._run_a_turn()
+
+        orchestration = [
+            r for r in self.records if r.context["source"] == "agents.chat"
+        ]
+        assert orchestration
+        assert {r.context["prompt"] for r in orchestration} == {"CHAT_ORCHESTRATION"}

@@ -32,13 +32,21 @@ async def append_turn(
     question: str,
     answer: str,
     session: AsyncSession,
+    *,
+    interaction_id: str,
 ) -> None:
+    """Record one turn, tagged with the interaction that produced it.
+
+    `interaction_id` is what turns "which turn was this?" into a lookup in the
+    [trace stream](/observability.md) rather than a guess from timestamps. It is
+    stored, never sent to a model — see `history_for_llm`.
+    """
     existing = await session_repo.get_by_id(session, session_id)
     if existing is None:
         return
     new_entries = [
-        {"role": "user", "content": question},
-        {"role": "assistant", "content": answer},
+        {"role": "user", "content": question, "interaction_id": interaction_id},
+        {"role": "assistant", "content": answer, "interaction_id": interaction_id},
     ]
     await session_repo.update(
         session,
@@ -51,6 +59,18 @@ async def append_turn(
 
 
 def history_for_llm(session: SessionRead, max_turns: int) -> list[dict]:
+    """The recent turns, projected to what a prompt should actually contain.
+
+    The projection is load-bearing, not tidiness: `ai.synthesize_answer` renders
+    the history with `json.dumps` over whole entries, so any bookkeeping field
+    stored on a turn would otherwise be fed to the model as noise — and paid for
+    on every subsequent turn.
+    """
     history = session.history
     max_entries = max_turns * ENTRIES_PER_TURN
-    return list(history[-max_entries:]) if len(history) > max_entries else list(history)
+    recent = history[-max_entries:] if len(history) > max_entries else history
+    return [_entry_for_llm(entry) for entry in recent]
+
+
+def _entry_for_llm(entry: dict) -> dict:
+    return {"role": entry.get("role", "user"), "content": entry.get("content", "")}

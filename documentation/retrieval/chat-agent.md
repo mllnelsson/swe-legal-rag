@@ -3,7 +3,7 @@ type: Concept
 title: Conversational Agent
 description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set, a terminal answer tool that doubles as the reranking, two Mistral sub-agents for reading and counting, and one streamed synthesis call.
 tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-13T01:00:00Z
 ---
 
 # Conversational Agent
@@ -188,7 +188,14 @@ is its own billed call — plus `agents.chat.read` for the reader,
 [`agents.sql`](/api/sql-agent.md#observability) for counting, and
 `ai.synthesize_answer` for the streamed answer. All of them share one
 `interaction_id`, which is what makes "what did this question cost" a sum over
-one key. See [LLM Observability](/observability.md).
+one key: `run_chat_agent` opens an `interaction_scope` that **inherits** the id
+the API already put in the trace context rather than minting its own, so
+`query_corpus` — itself another `interaction_scope` — joins the same turn
+instead of starting a separate one. Each of the two sub-agent invocations also
+opens its own `agent_run_scope`, which always mints, so two `query_corpus`
+calls inside one turn are still distinguishable even though every other
+correlation key they carry is identical. See [LLM
+Observability](/observability.md).
 
 ## Exercising it without the API
 

@@ -16,7 +16,7 @@ from agents.chat import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from ai import trace_context
+from ai import interaction_scope
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -28,6 +28,7 @@ from api.config import (
     get_search_settings,
     get_session_settings,
 )
+from api.correlation import INTERACTION_ID_HEADER, resolve_interaction_id
 from api.dependencies import get_db
 from api.services.chat_toolset import build_chat_toolset
 from api.services.session_service import (
@@ -92,24 +93,25 @@ async def chat_endpoint(
     chat_session = await get_or_create_session(body.session_id, db)
     history = history_for_llm(chat_session, session_settings.session_max_history_turns)
 
-    async def generate() -> AsyncIterator[str]:
-        # The trace context is set here, inside the generator, rather than
-        # around the handler body: Starlette drives this generator *after*
-        # chat_endpoint has returned, so a context entered out there would
-        # already have exited before the first token. Set inside, it spans every
-        # nested call — the orchestrator's iterations, the SQL sub-agent, the
-        # reader, the embedding and the streaming synthesis — so one interaction
-        # id ties together everything this question cost.
-        interaction_id = str(uuid.uuid4())
-        logger.info(
-            "Chat interaction %s for session %s", interaction_id, chat_session.id
-        )
+    # Resolved out here, not in the generator: the response headers are built
+    # before Starlette starts draining it, so an id minted inside could never
+    # reach them.
+    interaction_id = resolve_interaction_id(request.headers.get(INTERACTION_ID_HEADER))
+    logger.info("Chat interaction %s for session %s", interaction_id, chat_session.id)
 
+    async def generate() -> AsyncIterator[str]:
+        # The trace context, unlike the id itself, is entered here inside the
+        # generator: Starlette drives this generator *after* chat_endpoint has
+        # returned, so a context entered out there would already have exited
+        # before the first token. Set inside, it spans every nested call — the
+        # orchestrator's iterations, the SQL sub-agent, the reader, the embedding
+        # and the streaming synthesis. Both agents inherit this id rather than
+        # minting their own, which is what makes the whole turn one sum.
         answer_parts: list[str] = []
         done_emitted = False
 
-        with trace_context(
-            interaction_id=interaction_id,
+        with interaction_scope(
+            interaction_id,
             session_id=str(chat_session.id),
             source=_SOURCE,
         ):
@@ -173,7 +175,11 @@ async def chat_endpoint(
         if done_emitted:
             try:
                 await append_turn(
-                    chat_session.id, body.message, "".join(answer_parts), db
+                    chat_session.id,
+                    body.message,
+                    "".join(answer_parts),
+                    db,
+                    interaction_id=interaction_id,
                 )
             except Exception:
                 # The answer already reached the client; failing to remember it
@@ -188,5 +194,8 @@ async def chat_endpoint(
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            # Sent before the stream opens, so it survives a turn that ends in an
+            # `error` frame — which is the turn someone reports.
+            INTERACTION_ID_HEADER: interaction_id,
         },
     )
