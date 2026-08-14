@@ -4,7 +4,7 @@ title: shared Package
 description: The single source of truth for data and database access — models, DTOs, enums, errors, the task envelope, config, logging setup, and the storage/queue infrastructure abstractions.
 resource: packages/shared
 tags: [package, shared, models, dtos, infrastructure]
-timestamp: 2026-08-09T12:00:00Z
+timestamp: 2026-08-14T00:00:00Z
 ---
 
 # shared Package (`packages/shared/`)
@@ -103,7 +103,8 @@ handler, so import-time configuration made the format depend on import order.
 
 Modules of async functions, one per entity — the data-access layer. Fully described in
 [repositories](/data-model/repositories.md), including the `_protocols.py` injection
-seam.
+seam and `session.append_history`, the single-statement append that replaced a
+read-modify-write on the `sessions.history` column.
 
 ## `search/`
 
@@ -167,9 +168,10 @@ PDF-specific directory — every key, whatever it prefixes, is joined onto this 
 duplicated in the [download](/pipeline/download.md) and [parse](/pipeline/parse.md)
 workers and in `api/services/answerer.py`; all three, plus the new [PDF
 endpoint](/api/document-pdf.md), now call the one helper, since the layout is a contract
-shared across packages rather than any one caller's detail. The other keyspace under the
-same root is `LLM_TRACE_KEY_PREFIX` (`llm-traces`, default), written by the trace
-recorder — see [observability](/observability.md).
+shared across packages rather than any one caller's detail. `StorageBackend` carries
+PDFs only now — [LLM traces](/observability.md) are written directly to disk by `ai`'s
+`FileTraceRecorder`, under `LLM_TRACE_KEY_PREFIX` (`llm-traces`, default) beneath the
+same `LOCAL_STORAGE_PATH` root, but never through `store()`.
 
 ### Why it is only a blob store
 
@@ -178,12 +180,10 @@ JSON, or of a record — a key maps to a blob of bytes and nothing more, so the 
 backends have no behaviour to diverge on and a third would have nothing extra to
 implement.
 
-The pressure to widen it came from LLM trace capture, which wants an append-style
-stream. That belongs to the writer, not the storage layer: the trace recorder batches
-records, serializes the batch as JSONL, and writes it with `store` under a key it
-chooses itself. An object store cannot append, but it never has to — a batch is a whole
-object. Local and GCS therefore hold byte-identical contents under identical keys. See
-[LLM Observability](/observability.md).
+LLM trace capture used to be the pressure pushing the other way, when it went through
+this Protocol and wanted an append-style stream. That pressure is gone now that traces
+bypass `StorageBackend` entirely and write their own files — see [LLM
+Observability](/observability.md) for the layout and the trade that write makes.
 
 **Queue** — `QueueMessage(task_id, document_id, payload)` maps 1:1 to task rows;
 `QueuePublisher.publish(topic, message)` and `QueueSubscriber.subscribe/start/shutdown`

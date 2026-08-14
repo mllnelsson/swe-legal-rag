@@ -18,7 +18,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | Module | Role |
 |---|---|
 | `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
-| `_observability.py` | `FileTraceRecorder`, `LLMTraceConfig`, `install_file_tracing()` — writes LLM traces to file storage |
+| `_observability.py` | `FileTraceRecorder`, `LLMTraceConfig`, `install_file_tracing()` — writes each LLM trace as its own local file |
 | `_tracing_scope.py` | `interaction_scope()` / `agent_run_scope()` — the project's two correlation primitives, layered over llm-core's `trace_context`. See [Trace recording](#trace-recording-ai_observabilitypy) below |
 | `services.py` | Six async service functions (below) |
 | `llm_config.py` | Reads `llm_config.yaml` — document models, discovery, and role/embedding resolution |
@@ -27,7 +27,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `providers/openai_compatible_embeddings.py` | `OpenAiCompatibleEmbeddingProvider` — any OpenAI-compatible embeddings endpoint (Berget hosted, by default) |
 | `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers` (offline dev/test fallback) |
 | `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
-| `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step`; `close_llm_clients()` — the `StepTeardown` the four LLM-calling workers hand to the same call, releasing the loop-bound OpenAI-compatible client pool before their `asyncio.run()` loop closes (see [worker patterns](/pipeline/worker-patterns.md)) |
+| `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step`, opening an `interaction_scope` around the message so its trace records land in a directory of their own; `close_llm_clients()` — the `StepTeardown` the four LLM-calling workers hand to the same call, releasing the loop-bound OpenAI-compatible client pool before their `asyncio.run()` loop closes (see [worker patterns](/pipeline/worker-patterns.md)) |
 | `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |
 | `prompts/_templates.py` | The seven template constants |
 | `__init__.py` | Public API — service functions, embedding types, and DTOs |
@@ -291,19 +291,24 @@ the root `pyproject.toml`, and a second ceiling here would only fight it.
 ## Trace recording (`ai/_observability.py`)
 
 `ai` supplies the concrete recorder behind llm-core's hook. It belongs here because it
-needs both llm-core's record type and `shared`'s storage layer, and `shared` must not
-depend on llm-core.
+needs llm-core's record type, and `shared` must not depend on llm-core.
 
-`install_file_tracing(storage=None)` is called **once at startup** by every process that
-makes LLM calls — the API lifespan and each of the four LLM workers. It never raises: a
-backend it cannot build leaves no recorder at all, and llm-core treats that as tracing
-off. `trace_context` is re-exported here so callers need no direct llm-core dependency.
+`install_file_tracing(root=None, config=None)` is called **once at startup** by every
+process that makes LLM calls — the API lifespan and each of the four LLM workers. It
+takes no storage backend: traces never went through `shared`'s `StorageBackend`, and
+now nothing in this module imports it. It never raises: a trace root it cannot create
+leaves no recorder at all, and llm-core treats that as tracing off. `trace_context` is
+re-exported here so callers need no direct llm-core dependency.
 
-The recorder owns the **storage layout**, which is why `shared`'s `StorageBackend` stayed
-a five-method blob store. Records are queued, batched, serialized as JSONL, and written
-as whole objects with `store()` — so an object store, which cannot append, never has to.
-Batching is what makes that path viable: embedding runs once per chunk over the whole
-corpus, and an object per call would be hundreds of thousands of tiny billed writes.
+The recorder owns the **storage layout** — one JSON file per billed call, under
+`{LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{date}/{interaction_id}/`, so the
+directory a record lands in is the correlation index and no reader script has to
+reconstruct it. Each write is synchronous and whole-file — written to a `.tmp` name,
+then `os.replace`d into place — which puts a file write ahead of the next LLM call.
+On local disk that costs microseconds; it would be the wrong trade over a network
+filesystem or an object store, which is the condition under which buffering onto a
+background writer should come back. See [LLM Observability](/observability.md) for the
+full layout and the correlation table.
 
 Cost is **not** written into the record, and there is no rate table in this package.
 A record carries the served `model` and the provider's `usage`, which is the complete

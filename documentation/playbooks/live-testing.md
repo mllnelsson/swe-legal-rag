@@ -444,43 +444,49 @@ All workers log to stdout. Key things to look for:
 
 ## Verifying LLM Traces
 
-With `LLM_TRACE_ENABLED=true`, every LLM and hosted-embedding call lands in a daily
-directory of batched JSONL objects. After a pipeline run:
+With `LLM_TRACE_ENABLED=true`, every LLM and hosted-embedding call lands in its own
+JSON file, under a directory named for the unit of work that caused it. After a
+pipeline run:
 
 ```bash
-ls data/llm-traces/$(date -u +%F)/
-cat data/llm-traces/$(date -u +%F)/*.jsonl | wc -l
+ls data/llm-traces/$(date -u +%F)/          # one directory per worker message
+find data/llm-traces/$(date -u +%F) -name '*.json' | wc -l
 
-cat data/llm-traces/$(date -u +%F)/*.jsonl \
+cat data/llm-traces/$(date -u +%F)/*/*.json \
   | jq -r '[.operation, .context.source, .model,
             .usage.total_tokens, .success] | @tsv' | head
 ```
 
-Expect a **small number** of `.jsonl` objects — records are batched, so this is nowhere
-near one file per call — at least one record per LLM-using worker that fired, a non-null
-`model` and `usage.total_tokens` on each, and `success` true.
+Expect one directory per queue message that made a call, one file per billed call
+inside it, a non-null `model` and `usage.total_tokens` on each, and `success` true.
+Nothing should land in `_unscoped/` — a directory by that name means a process opened
+no interaction scope, which is a wiring bug rather than a trace of anything.
 
 > **Cost is answered in tokens, not currency.** No rate table lives in this repo and no
 > Berget rate is published here (see [LLM pricing](/reference/llm-pricing.md)). The
 > records carry `model` and `usage`; pricing them is an analysis step, and a rate
 > obtained later applies to these same records.
 
-To cost a single chat question, start the API, send one message, and note the
-`Chat interaction <uuid> for session …` line in the API log:
+To cost a single chat question, start the API, send one message, and read the
+`X-Interaction-Id` response header — the same value appears in the
+`Chat interaction <uuid> for session …` line in the API log. It names a directory:
 
 ```bash
-cat data/llm-traces/$(date -u +%F)/*.jsonl \
-  | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
-      | [.context.source, .model, .usage.input_tokens,
-         .usage.output_tokens] | @tsv'
+ID=<X-Interaction-Id>
+ls data/llm-traces/$(date -u +%F)/$ID/
+
+cat data/llm-traces/$(date -u +%F)/$ID/*.json \
+  | jq -r '[.context.source, .model, .usage.input_tokens,
+            .usage.output_tokens] | @tsv'
 ```
 
-Expect one call per tool-loop iteration under `agents.chat`, plus `ai.embed`,
+Expect one file per tool-loop iteration under `agents.chat`, plus `ai.embed`,
 `ai.synthesize_answer`, and — depending on which tools the agent reached for —
-`agents.sql` (one row per SQL-loop iteration) and `agents.chat.read`. All of
-them share the interaction id logged above, since `run_chat_agent` and
-`run_sql_agent` both inherit it rather than minting their own — see
-[correlation](/observability.md#correlation--the-wiring-invariant).
+`agents.sql` (one file per SQL-loop iteration) and `agents.chat.read`. They are all in
+that one directory because `run_chat_agent` and `run_sql_agent` inherit the
+interaction rather than minting their own — see
+[correlation](/observability.md#correlation--the-wiring-invariant). Filenames sort into
+call order, so `ls` alone shows the shape of the turn.
 
 Closing the browser tab mid-answer should still leave an `ai.synthesize_answer` record,
 with `success: false`, `error.type` `GeneratorExit`, and the partial text that had been

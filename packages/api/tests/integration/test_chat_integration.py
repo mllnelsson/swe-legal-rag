@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from agents.chat import DoneEvent, SourcesEvent, TokenEvent
+from api.correlation import INTERACTION_ID_HEADER
 from api.dependencies import get_db
 from api.main import create_app
 from shared.repositories import session as session_repo
@@ -31,13 +32,21 @@ def _parse_sse(text: str) -> list[dict[str, Any]]:
     return events
 
 
-async def _stream_chat(client: httpx.AsyncClient, body: dict) -> list[dict[str, Any]]:
+async def _stream_chat_with_headers(
+    client: httpx.AsyncClient, body: dict
+) -> tuple[list[dict[str, Any]], httpx.Headers]:
     collected = ""
     async with client.stream("POST", "/api/chat", json=body) as response:
         assert response.status_code == 200
+        headers = response.headers
         async for chunk in response.aiter_text():
             collected += chunk
-    return _parse_sse(collected)
+    return _parse_sse(collected), headers
+
+
+async def _stream_chat(client: httpx.AsyncClient, body: dict) -> list[dict[str, Any]]:
+    events, _headers = await _stream_chat_with_headers(client, body)
+    return events
 
 
 @pytest.fixture
@@ -153,9 +162,49 @@ class TestNewSessionRoundTrip:
 
         assert db_session is not None
         assert len(db_session.history) == 2
-        assert db_session.history[0] == {"role": "user", "content": "Vad gäller?"}
+        assert db_session.history[0]["role"] == "user"
+        assert db_session.history[0]["content"] == "Vad gäller?"
         assert db_session.history[1]["role"] == "assistant"
         assert "kyrkoordningen" in db_session.history[1]["content"]
+
+    async def test_the_persisted_turn_names_its_interaction(
+        self, http_client: httpx.AsyncClient, test_database_url: str
+    ):
+        """The stored turn and the returned header must name the same trace."""
+        with patch(_FAKE_AGENT, _agent_emitting(_SWEDISH_TOKENS)):
+            events, headers = await _stream_chat_with_headers(
+                http_client, {"message": "Vad gäller?"}
+            )
+
+        session_id = uuid.UUID(
+            next(e for e in events if e["event"] == "done")["data"]["session_id"]
+        )
+        db_session = await _load_session_from_db(test_database_url, session_id)
+
+        assert db_session is not None
+        returned = headers[INTERACTION_ID_HEADER]
+        assert [entry["interaction_id"] for entry in db_session.history] == [
+            returned,
+            returned,
+        ]
+
+    async def test_stored_bookkeeping_never_reaches_the_agent(
+        self, http_client: httpx.AsyncClient
+    ):
+        """`interaction_id` is stored, and projected away before a prompt."""
+        _CAPTURED_HISTORIES.clear()
+        with patch(_FAKE_AGENT, _agent_emitting(_SWEDISH_TOKENS)):
+            first = await _stream_chat(http_client, {"message": "Vad gäller?"})
+            session_id = next(e for e in first if e["event"] == "done")["data"][
+                "session_id"
+            ]
+            await _stream_chat(
+                http_client, {"message": "Berätta mer", "session_id": session_id}
+            )
+
+        second = _CAPTURED_HISTORIES[1]
+        assert second
+        assert all(set(entry) == {"role", "content"} for entry in second)
 
 
 class TestFollowUpConversation:

@@ -4,7 +4,7 @@ title: Repository Layer
 description: The function-based data-access layer bridging SQLAlchemy models and Pydantic DTOs, injected into services as Protocol-typed namespaces.
 resource: packages/shared/src/shared/repositories
 tags: [data-model, repositories, data-layer, dto, protocol]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-14T00:00:00Z
 ---
 
 # Repository Layer
@@ -106,6 +106,11 @@ the session/dependency flow explicit.
   document's citations to decisions the corpus does not hold, shown alongside resolved
   references so a reader can tell "cites nothing else" apart from "cites decisions we do
   not hold."
+- `session.append_history(session, session_id, entries, last_active_at)` — appends to
+  `sessions.history` with one `UPDATE ... SET history = history || :entries::JSONB`,
+  never reading the column first. Replaces a read-modify-write that lost whichever of
+  two concurrent turns on one session committed second; a missing session is a no-op
+  because the `UPDATE` simply matches no row. See [sessions](/data-model/sessions.md).
 
 ## Protocol-injected namespaces (`repositories/_protocols.py`)
 

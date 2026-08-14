@@ -73,8 +73,9 @@ class TraceRecorder(Protocol):
         be running under `GeneratorExit`, where awaiting anything that suspends
         raises `RuntimeError`; and worker processes call `asyncio.run()` per
         message, which cancels pending tasks at teardown and would silently drop
-        a fire-and-forget write. A recorder that needs I/O should hand off to
-        its own thread.
+        a fire-and-forget write. A recorder whose I/O is slow enough to matter —
+        a network filesystem, an object store — should buffer internally; a
+        local file write is not.
         """
         ...
 
@@ -278,8 +279,8 @@ def _finish(builder: TraceBuilder | None) -> None:
 
     Observability failing must never turn into an application failure, so every
     step from here on is inside the guard — including reading the trace context,
-    which happens now because the recorder may write from another thread where
-    the ContextVar is not set.
+    which is snapshotted here rather than left to the recorder, so a recorder
+    that defers the write cannot read a context that has since moved on.
     """
     if builder is None:
         return

@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-14T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -183,7 +183,10 @@ settle on the last one.
 `finally` that may be unwinding under `GeneratorExit`, where awaiting anything that
 suspends raises `RuntimeError`; and workers call `asyncio.run()` per message, which
 cancels pending tasks at teardown and would silently drop a fire-and-forget write. A
-recorder needing I/O hands off to its own thread.
+recorder whose I/O is slow enough to matter — a network filesystem, an object store —
+should buffer internally; a local file write is not, which is why the shipped recorder
+(`ai.FileTraceRecorder`, see [observability](/observability.md)) writes inline instead
+of handing off to a thread.
 
 With no recorder installed `traced_call()` yields `None`, every fold no-ops, and the
 package behaves exactly as it did before tracing existed — at the cost of one global read

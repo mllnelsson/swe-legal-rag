@@ -248,15 +248,12 @@ GEMINI_API_KEY=                 # required if any role uses provider: gemini
 # column width (e5-large=1024, e5-base=768). Checked at startup.
 EMBEDDING_DIMENSION=1024
 
-# LLM trace capture (see /observability.md). On by default; traces land under
-# {LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{date}/*.jsonl, one object per
-# flushed batch. Records carry model + tokens; cost is an analysis step.
+# LLM trace capture (see /observability.md). On by default; one file per billed
+# call, under {LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{date}/{interaction_id}/,
+# so one directory holds everything a request cost. Records carry model + tokens;
+# cost is an analysis step.
 LLM_TRACE_ENABLED=true
 LLM_TRACE_KEY_PREFIX=llm-traces
-LLM_TRACE_QUEUE_SIZE=1000
-LLM_TRACE_FLUSH_TIMEOUT=5.0
-LLM_TRACE_BATCH_SIZE=100
-LLM_TRACE_BATCH_SECONDS=5.0
 # Ask the provider for token usage on streamed responses. Turn off only if a
 # host rejects the parameter — it fails the whole call, and streaming is chat.
 LLM_STREAM_USAGE=true
@@ -302,12 +299,8 @@ one level to match.
 | `SEARCH_MIN_VECTOR_SIMILARITY` | `0.78` | Cosine similarity a chunk must reach before `/api/search`'s vector arm returns it — what decides "no match". Model- and corpus-specific; re-measure when the [embedding model](/decisions/embedding-model.md) changes. `0` disables the floor. See [the similarity floor](/retrieval/deterministic-search.md#the-similarity-floor) (`api`) |
 | `API_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins for the API server; Vite dev server default |
 | `SESSION_MAX_HISTORY_TURNS` | `10` | Max conversation turns passed to LLM; full history stays in DB |
-| `LLM_TRACE_ENABLED` | `true` | Capture every LLM/embedding call to storage — see [observability](/observability.md). Off means no recorder, no thread, no files |
-| `LLM_TRACE_KEY_PREFIX` | `llm-traces` | Storage key prefix for the daily trace directories |
-| `LLM_TRACE_QUEUE_SIZE` | `1000` | Records buffered before the recorder starts dropping rather than blocking an LLM call |
-| `LLM_TRACE_FLUSH_TIMEOUT` | `5.0` | Seconds `flush()` and process shutdown will wait for the writer |
-| `LLM_TRACE_BATCH_SIZE` | `100` | Records written per object. Batching is what keeps an object store from getting one write per call |
-| `LLM_TRACE_BATCH_SECONDS` | `5.0` | How long a partial batch waits before being written; also the loss window on a hard kill |
+| `LLM_TRACE_ENABLED` | `true` | Capture every LLM/embedding call to a file — see [observability](/observability.md). Off means no recorder and no files |
+| `LLM_TRACE_KEY_PREFIX` | `llm-traces` | Directory under `LOCAL_STORAGE_PATH` holding the daily trace tree |
 | `LLM_STREAM_USAGE` | `true` | Ask the provider for token usage on streamed responses. Turn off only if a host rejects the parameter |
 
 ## Running the Pipeline Locally
@@ -435,10 +428,10 @@ files either way — a PDF downloaded on the host is readable by a container run
 traces from host, `pipeline` and `api` all land under `data/llm-traces/{date}/`.
 
 Traces need nothing special from the mount. `./data` is a *directory* bind mount, and the
-recorder writes one **new** `.jsonl` object per flushed batch rather than appending to a
-shared file — so new objects appear on the host as they are written, a batch that
-straddles UTC midnight splits into the right day, and host, `pipeline` and `api` never
-contend over the same file. See [observability](/observability.md) for the layout.
+recorder writes one **new** `.json` file per call rather than appending to a shared one —
+so files appear on the host as they are written, each lands in the day and the
+interaction directory it belongs to, and host, `pipeline` and `api` never contend over
+the same file. See [observability](/observability.md) for the layout.
 
 The image is for local development only. It installs the dev dependency group (that is
 where `alembic` comes from) and the whole workspace; a Cloud Run image wants neither.

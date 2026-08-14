@@ -57,7 +57,7 @@ from dotenv import load_dotenv
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai import LLMRole, create_llm_provider, install_file_tracing, trace_context
+from ai import LLMRole, create_llm_provider, install_file_tracing, interaction_scope
 from shared.config import Settings, get_settings
 from shared.db import get_async_session
 from shared.dtos.document import DocumentCreate, DocumentUpdate
@@ -280,9 +280,10 @@ async def _run_step(
     session = ctx.session
     storage = create_storage_backend(settings.storage)
 
-    # Mirrors the workers: every LLM/embedding call this script makes is
-    # billed, so it is attributed to the document that caused it.
-    with trace_context(
+    # Mirrors the workers: one step is one unit of work, so it opens an
+    # interaction, and every LLM/embedding call it makes is billed and
+    # attributed to the document that caused it.
+    with interaction_scope(
         document_id=str(document_id), task_id=str(task_id), source=_SOURCE
     ):
         match step:

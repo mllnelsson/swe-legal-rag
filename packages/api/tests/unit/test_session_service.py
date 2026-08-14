@@ -32,6 +32,7 @@ def repo() -> Iterator[MagicMock]:
         mock.get_by_id = AsyncMock(return_value=None)
         mock.create = AsyncMock(return_value=_make_session())
         mock.update = AsyncMock(return_value=None)
+        mock.append_history = AsyncMock(return_value=None)
         yield mock
 
 
@@ -84,7 +85,6 @@ class TestAppendTurn:
     @pytest.mark.asyncio
     async def test_appends_user_and_assistant_entries(self, repo: MagicMock):
         session = _make_session(history=[])
-        repo.get_by_id.return_value = session
         await append_turn(
             session.id,
             "Vad gäller?",
@@ -92,59 +92,57 @@ class TestAppendTurn:
             db,
             interaction_id=INTERACTION_ID,
         )
-        repo.update.assert_called_once()
-        update_dto = repo.update.call_args.args[2]
-        assert {
-            "role": "user",
-            "content": "Vad gäller?",
-            "interaction_id": INTERACTION_ID,
-        } in update_dto.history
-        assert {
-            "role": "assistant",
-            "content": "Kyrkorätten säger...",
-            "interaction_id": INTERACTION_ID,
-        } in update_dto.history
+        repo.append_history.assert_called_once()
+        entries = repo.append_history.call_args.args[2]
+        assert entries == [
+            {
+                "role": "user",
+                "content": "Vad gäller?",
+                "interaction_id": INTERACTION_ID,
+            },
+            {
+                "role": "assistant",
+                "content": "Kyrkorätten säger...",
+                "interaction_id": INTERACTION_ID,
+            },
+        ]
 
     @pytest.mark.asyncio
     async def test_both_entries_carry_the_same_interaction_id(self, repo: MagicMock):
         """The turn is the unit a trace lookup resolves, not the message."""
         session = _make_session(history=[])
-        repo.get_by_id.return_value = session
         await append_turn(session.id, "q", "a", db, interaction_id=INTERACTION_ID)
-        update_dto = repo.update.call_args.args[2]
-        assert [entry["interaction_id"] for entry in update_dto.history] == [
+        entries = repo.append_history.call_args.args[2]
+        assert [entry["interaction_id"] for entry in entries] == [
             INTERACTION_ID,
             INTERACTION_ID,
         ]
 
     @pytest.mark.asyncio
-    async def test_preserves_existing_history(self, repo: MagicMock):
-        prior = [
-            {"role": "user", "content": "Tidigare fråga"},
-            {"role": "assistant", "content": "Svar"},
-        ]
-        session = _make_session(history=prior)
-        repo.get_by_id.return_value = session
-        await append_turn(
-            session.id, "Ny fråga", "Nytt svar", db, interaction_id=INTERACTION_ID
-        )
-        update_dto = repo.update.call_args.args[2]
-        assert len(update_dto.history) == 4
-        assert update_dto.history[0] == prior[0]
+    async def test_existing_history_is_never_read(self, repo: MagicMock):
+        """Reading it to append is what loses a concurrent turn.
+
+        Postgres does the append; nothing here needs to know what is already
+        stored, so the only entries handed over are the new ones.
+        """
+        session = _make_session(history=[{"role": "user", "content": "Tidigare"}])
+        await append_turn(session.id, "q", "a", db, interaction_id=INTERACTION_ID)
+
+        repo.get_by_id.assert_not_called()
+        assert len(repo.append_history.call_args.args[2]) == 2
 
     @pytest.mark.asyncio
     async def test_updates_last_active_at(self, repo: MagicMock):
         session = _make_session()
-        repo.get_by_id.return_value = session
         await append_turn(session.id, "q", "a", db, interaction_id=INTERACTION_ID)
-        update_dto = repo.update.call_args.args[2]
-        assert update_dto.last_active_at is not None
+        assert repo.append_history.call_args.args[3] is not None
 
     @pytest.mark.asyncio
-    async def test_no_op_when_session_not_found(self, repo: MagicMock):
-        repo.get_by_id.return_value = None
+    async def test_missing_session_is_left_to_the_update(self, repo: MagicMock):
+        """`WHERE id = …` matches no row, so no pre-check is needed."""
         await append_turn(uuid.uuid4(), "q", "a", db, interaction_id=INTERACTION_ID)
-        repo.update.assert_not_called()
+        repo.get_by_id.assert_not_called()
+        repo.append_history.assert_called_once()
 
 
 class TestHistoryForLlm:

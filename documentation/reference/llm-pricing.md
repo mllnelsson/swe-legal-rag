@@ -111,39 +111,38 @@ model, the analysis must account for it rather than approximate with the base ra
 
 ## Costing traces
 
-Records are plain JSONL — one object per flushed batch under
-`{LLM_TRACE_KEY_PREFIX}/{date}/`. Extract the two fields that matter and price them
-however the analysis is being done:
+Records are plain JSON — one file per billed call, under
+`{LLM_TRACE_KEY_PREFIX}/{date}/{interaction_id}/`. Extract the two fields that matter
+and price them however the analysis is being done:
 
 ```bash
 # every call's model and tokens, for one day
-cat data/llm-traces/2026-07-30/*.jsonl \
+cat data/llm-traces/2026-07-30/*/*.json \
   | jq -r '[.context.source, .model, .usage.input_tokens,
             .usage.output_tokens] | @tsv'
 
 # tokens by model, the input to any cost calculation
-cat data/llm-traces/2026-07-30/*.jsonl \
+cat data/llm-traces/2026-07-30/*/*.json \
   | jq -s 'group_by(.model) | map({model: .[0].model, calls: length,
            input: (map(.usage.input_tokens // 0) | add),
            output: (map(.usage.output_tokens // 0) | add)})'
 
-# one chat question, end to end
-cat data/llm-traces/2026-07-30/*.jsonl \
-  | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
-      | [.context.source, .model, .usage.input_tokens,
-         .usage.output_tokens] | @tsv'
+# one chat question, end to end — the directory is the filter
+cat data/llm-traces/2026-07-30/<interaction-id>/*.json \
+  | jq -r '[.context.source, .model, .usage.input_tokens,
+            .usage.output_tokens] | @tsv'
 ```
 
-The `<uuid>` is the value of the `X-Interaction-Id` response header, or the id
-logged by the API. This selects every source under one `interaction_id`,
-including the SQL sub-agent's records when the turn reached for `query_corpus`
-— `run_chat_agent` and `run_sql_agent` both inherit the caller's id rather than
-minting their own, so a turn that ran both the orchestrator and a counting
-question is one sum, not two. See
+The directory name is the value of the `X-Interaction-Id` response header, or the id
+logged by the API. Everything a turn cost is inside it, including the SQL sub-agent's
+records when the turn reached for `query_corpus` — `run_chat_agent` and `run_sql_agent`
+both inherit the caller's id rather than minting their own, so a turn that ran both the
+orchestrator and a counting question is one sum, not two. See
 [correlation](/observability.md#correlation--the-wiring-invariant).
 
-On GCS, `gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl'` substitutes for
-`cat`.
+The `// 0` above is a convenience for grouping, and it is exactly the shortcut the
+rules above forbid when totalling: it silently turns "not reported" into zero. Anything
+presented as a cost must count unreported and unpriced calls separately instead.
 
 ## Maintenance checklist
 

@@ -80,6 +80,11 @@ Two modules, and neither is an agent — the loop lives in
   Only the question and the answer are persisted — never the evidence a turn gathered,
   which would otherwise be re-sent on the next turn.
 
+  `append_turn` no longer reads the session before writing it — it calls
+  `session_repo.append_history`, one `UPDATE ... history || :entries` statement, so two
+  turns on the same session arriving at once both survive. See
+  [sessions](/data-model/sessions.md).
+
   `history_for_llm` **projects each entry to `{role, content}`**, dropping the stored
   `interaction_id`. That is load-bearing rather than tidy: `ai.synthesize_answer`
   renders the history with `json.dumps` over whole entries, so any bookkeeping field
@@ -116,7 +121,10 @@ search](/retrieval/deterministic-search.md) for why.
 
 ## FastAPI app (`api/main.py`)
 
-`create_app() -> FastAPI`. The lifespan handler sets `app.state.storage` and
+`create_app() -> FastAPI`. The lifespan handler calls `ai.install_file_tracing()`
+first — it takes no storage backend, since [LLM traces](/observability.md) are local
+files, unrelated to `app.state.storage` — so the dimension probe below is recorded
+like any other billed embedding call. It then sets `app.state.storage` and
 `app.state.embedding_provider` at startup (and runs `ai.verify_embedding_dimension` — see
 [embedding dimension](/decisions/embedding-dimension.md)), then constructs one provider
 per [role](/reference/llm-config.md): `structured`, `chat`, `read` and `sql`. The chat

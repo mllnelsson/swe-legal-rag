@@ -42,3 +42,21 @@ entry down to `{role, content}` before a prompt sees it. This is load-bearing, n
 tidiness — `ai.synthesize_answer` renders the whole history with `json.dumps`, so any
 field left on a stored entry would be sent to the model as noise, and re-sent again on
 every later turn.
+
+## Appending a turn
+
+`history` is appended to **by Postgres**, in one statement — the `append_history`
+[repository function](/data-model/repositories.md) issues
+`UPDATE sessions SET history = history || :entries::jsonb`. Nothing reads the array
+first.
+
+That is a correctness requirement, not an optimisation. Reading the array into Python
+and writing it back loses a turn whenever two arrive at once: both read the same
+history, both write their own version, and whichever commits last erases the other. A
+`SELECT ... FOR UPDATE` would also be wrong here for a second reason — the append runs
+after the SSE stream has finished, inside the request-scoped session, so the row lock
+would be held for the whole turn, which [NFR1b](/prd.md) budgets at up to a minute.
+
+Two consequences fall out: a missing session needs no pre-check, because the `WHERE`
+clause simply matches no row; and the read side is unaffected, since each request
+already loads its history once at the start and the append only ever adds to the end.

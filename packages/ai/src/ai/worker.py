@@ -10,9 +10,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from llm_core import aclose_async_openai, trace_context
+from llm_core import aclose_async_openai
 from shared.queue.base import QueueMessage
 from shared.worker import MessageScope
+
+from ai._tracing_scope import interaction_scope
 
 __all__ = ["close_llm_clients", "worker_trace_scope"]
 
@@ -31,14 +33,17 @@ async def close_llm_clients() -> None:
 def worker_trace_scope(source: str) -> MessageScope:
     """Attribute every LLM call made while handling a message.
 
-    `source` names the worker; inner calls that name themselves override it.
-    The document id is what ties a worker's token spend back to the document
-    that caused it.
+    One message is one unit of work, so it opens an interaction — that is what
+    gives its records a directory of their own on disk. `source` names the
+    worker; inner calls that name themselves override it. The document id is
+    what ties a worker's token spend back to the document that caused it, and it
+    stays a field rather than the directory because one document spans several
+    messages.
     """
 
     @contextmanager
     def scope(message: QueueMessage) -> Iterator[None]:
-        with trace_context(
+        with interaction_scope(
             document_id=str(message.document_id),
             task_id=str(message.task_id),
             source=source,

@@ -3,7 +3,7 @@ type: Concept
 title: Architecture Overview
 description: The three-subsystem system architecture — ingestion pipeline, storage layer, and the conversational agent — plus the three ways to query the corpus and pointers into each area.
 tags: [architecture, overview, system]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-14T00:00:00Z
 ---
 
 # Architecture Overview
@@ -54,11 +54,11 @@ in one database:
   [document_references](/data-model/document-references.md); GraphRAG concepts as
   relational tables
 
-PDFs live in a GCS bucket, served via signed URLs. The same bucket also holds the
-append-only [LLM trace stream](/observability.md) — every prompt, response and token
-count, written in batches as whole JSONL objects and deliberately kept out of Postgres
-so the records stay cheap to write and easy to analyse offline. Cost is not stored; it
-is derived from the model and tokens on read. **Why a single Postgres?** At ~1000
+PDFs live in a GCS bucket, served via signed URLs. [LLM traces](/observability.md) —
+every prompt, response and token count — are local files instead, one per billed call,
+deliberately kept out of Postgres so the records stay cheap to write and easy to
+analyse offline. Cost is not stored; it is derived from the model and tokens on read.
+**Why a single Postgres?** At ~1000
 docs this is not a scale problem — pgvector handles it trivially, and hybrid search
 (vector + full text + structured SQL filters) happens in one query with no separate
 vector DB (see the [architectural register](/decisions/architectural-register.md)).

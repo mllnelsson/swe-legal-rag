@@ -1,5 +1,12 @@
 # Documentation Update Log
 
+## 2026-08-14
+* **Update**: [LLM Observability](/observability.md) — the trace writer is one synchronous file per billed call under `{date}/{interaction_id}/`, replacing a queue, a daemon thread, batching, a flush protocol and drop accounting. Every justification for that machinery was object-storage-specific, and GCS is off; the directory now *is* the correlation index, so costing a request is a sum over one folder.
+* **Update**: [architecture](/architecture.md) and [shared package](/packages/shared.md) — traces no longer go through `StorageBackend`, which now serves PDFs alone. `install_file_tracing()` takes no storage backend.
+* **Update**: [LLM Observability](/observability.md) — every unit of work opens an `interaction_scope`, including the pipeline workers and both scripts, since the layout needs a directory per unit of work. A record arriving without one lands in `_unscoped/`, making a wiring gap visible on disk.
+* **Update**: [sessions](/data-model/sessions.md) and the [repository layer](/data-model/repositories.md) — a turn is appended by Postgres in one `history || :entries::jsonb` statement. The previous read-modify-write lost a turn whenever two arrived at once; a row lock would instead have been held for the whole streamed turn.
+* **Update**: [local dev](/playbooks/local-dev.md) and [live testing](/playbooks/live-testing.md) — four `LLM_TRACE_*` env vars removed, and the trace inspection commands are per-directory over `.json` rather than per-day over batched `.jsonl`.
+
 ## 2026-08-13
 * **Creation**: Established the [conversational agent](/retrieval/chat-agent.md) — a tool loop over the deterministic retrieval tool set, with a terminal `answer` tool that doubles as the reranking and two sub-agents for reading and counting.
 * **Update**: Rewrote the [chat endpoint](/api/chat-endpoint.md) contract and un-deprecated it — progress events carrying a closed `label` key vocabulary the client maps its own words onto, and a mandatory `sql` event.

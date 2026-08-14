@@ -33,11 +33,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # file read. See /reference/semantic-model.md.
     agents.check_semantic_model()
 
-    # Storage next, then tracing, then anything that makes an API call — the
-    # dimension probe below is a real billed embedding and should be recorded
-    # like any other.
+    # Tracing before anything that makes an API call — the dimension probe below
+    # is a real billed embedding and should be recorded like any other. It takes
+    # no storage backend: traces are local files, not blobs.
+    ai.install_file_tracing()
+
     app.state.storage = shared.create_storage_backend(StorageSettings())
-    ai.install_file_tracing(app.state.storage)
 
     embedding_provider = ai.create_embedding_provider()
 

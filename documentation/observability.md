@@ -1,18 +1,19 @@
 ---
 type: Concept
 title: LLM Observability
-description: How every LLM and embedding call is captured to file storage — the record schema, the correlation keys, and the wiring every process must do.
+description: How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-13T01:00:00Z
+timestamp: 2026-08-14T00:00:00Z
 ---
 
 # LLM Observability
 
-Every call to a language model or a hosted embedding endpoint is written to file
-storage as a JSON record holding the full prompt, the full response, token
-counts, and latency. Records go to the same
-[`StorageBackend`](/packages/shared.md) that holds the PDFs, so local
-development and GCP behave identically.
+Every call to a language model or a hosted embedding endpoint is written to a local
+JSON file holding the full prompt, the full response, token counts, and latency. This
+is independent of the [`StorageBackend`](/packages/shared.md) that holds the PDFs —
+traces never went through it, and there is no GCS trace path: this project's cloud
+deployment is shelved in favour of a local stack, so a local file is the only backend
+that exists or needs to.
 
 Two questions drive the design:
 
@@ -122,14 +123,11 @@ that `usage: null` means "not reported".
 
 ```bash
 # tokens by model for one day, the input to any cost calculation
-cat data/llm-traces/2026-07-30/*.jsonl \
+cat data/llm-traces/2026-07-30/*/*.json \
   | jq -s 'group_by(.model) | map({model: .[0].model, calls: length,
            input: (map(.usage.input_tokens // 0) | add),
            output: (map(.usage.output_tokens // 0) | add)})'
 ```
-
-On GCS, `gsutil cat 'gs://<bucket>/llm-traces/2026-07-30/*.jsonl'` substitutes for
-`cat`.
 
 ### A successful record whose response will not parse
 
@@ -141,37 +139,59 @@ fix the prompt.
 
 ## Storage layout
 
-Streams roll over daily. One flushed batch is one object, and the layout is
-**identical on both backends**:
+One file per billed call, one directory per unit of work — the directory *is* the
+correlation index, so no reader script or `StorageBackend.list()` has to reconstruct
+it:
 
 ```
-{LLM_TRACE_KEY_PREFIX}/{YYYY-MM-DD}/{YYYYMMDDTHHMMSSffffff}Z-{8 hex}.jsonl
+{LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{YYYY-MM-DD}/{interaction_id}/{HHMMSS.ffffff}-{source}-{id8}.json
 ```
 
-| Backend | A day is |
-|---|---|
-| Local | `{LOCAL_STORAGE_PATH}/llm-traces/2026-07-30/` — a directory of `.jsonl` files |
-| GCS | `gs://{bucket}/llm-traces/2026-07-30/` — the same names, same bytes |
+A real chat turn (from a scripted-provider smoke test — no live model run has
+produced traces in this repo):
 
-The recorder owns this layout, not the storage backend. It batches records and
-writes each batch as a whole object through the plain `store()` primitive, which
-is what lets `StorageBackend` stay a five-method blob store with no append, no
-JSON and no per-backend divergence — see [shared](/packages/shared.md).
+```
+2026-08-14/3f9a1c2d-.../125510.465743-agents.chat-bf46bfd6.json
+2026-08-14/3f9a1c2d-.../125510.467835-agents.chat.read-75dc0f72.json
+2026-08-14/3f9a1c2d-.../125510.470813-ai.synthesize_answer-a32d3d47.json
+```
 
-**Batching is what makes the object-store path viable.** Embedding runs once per
-chunk over the whole corpus; one object per call would be hundreds of thousands
-of tiny billed writes and a `list_blobs` of the same size to read a single day.
+- **The date** rolls a day's traces into one directory, so "what did today cost" is
+  still a single top-level prefix.
+- **The interaction directory** is what makes "what did this request cost" a sum over
+  one folder rather than a scan filtered by `context.interaction_id` — `ls` shows the
+  shape of a turn at a glance. See [correlation](#correlation--the-wiring-invariant)
+  for who opens it.
+- **The filename** sorts into call order, since time-of-day comes first. `{id8}` is
+  the record's own `id` truncated to 8 characters — timestamps alone would be enough
+  while calls run sequentially, but this keeps filenames unique if tool calls ever run
+  in parallel.
+- **`_unscoped`** stands in for `{interaction_id}` when a record arrives with no
+  interaction id in context. This makes a gap in the wiring invariant visible on disk
+  rather than leaving it a rule in a document — a growing `_unscoped` directory is a
+  bug reporting itself.
 
-A batch closes at `LLM_TRACE_BATCH_SIZE` records or `LLM_TRACE_BATCH_SECONDS`,
-whichever comes first, and always on `flush()` and shutdown. A batch that
-straddles midnight is split so a record never lands under the wrong day.
+Path components are built from the (client-suppliable) interaction id and the
+caller-set `source`, so both are whitelisted to `[A-Za-z0-9._-]` before becoming a
+path segment — a hostile id cannot escape the trace root.
 
-**Records are unordered.** Key order approximates flush order, not call order,
-and it never was a total order. Anything that cares sorts on `started_at`.
+### Writes are synchronous
 
-Prompts are never truncated, so the streams are large: a full backfill of ~1073
-documents at roughly three calls each lands in the 100–300 MB range. The daily
-rollover keeps any one directory worth listing.
+Each record is written whole: serialized, written under a `.tmp` name, then moved
+into place with `os.replace`. A reader never sees a partial file, and two writers
+never contend — different records always resolve to different paths, so there is
+nothing to lock.
+
+**This puts a file write on the event loop, ahead of the next LLM call.** On local
+disk that is tens of microseconds per call — on the order of 2ms across a whole chat
+turn, against the one-minute NFR1b budget — worth stating because it is a deliberate
+trade, not an oversight. It would be the wrong trade over a network filesystem or an
+object store, where the same write could stall for whole seconds; that is the
+condition under which buffering onto a background writer should come back, not
+before.
+
+Prompts are never truncated, so a full backfill's worth of traces is still large — a
+per-call, per-file layout does not change that, only where the bytes land.
 
 ## Correlation — the wiring invariant
 
@@ -184,14 +204,13 @@ it, and cost questions become unanswerable.
 returns the recorder already installed rather than building another. This is what
 lets [`scripts/run_pipeline.py`](/packages/overview.md) compose several workers'
 `subscribe()` functions into one process — each calls `install_file_tracing()`
-independently, and only the first actually builds a `FileTraceRecorder`. Without
-this, each later call would replace the installed recorder with a fresh one,
-leaving a stray writer thread and `atexit` hook behind for every recorder that got
-discarded.
+independently, and only the first actually builds a `FileTraceRecorder`. It takes no
+storage backend argument: traces are local files, resolved from `LOCAL_STORAGE_PATH`
+directly, not through `shared.create_storage_backend`.
 
 | Key | Set by |
 |---|---|
-| `interaction_id` | `ai.interaction_scope()` (`packages/ai/src/ai/_tracing_scope.py`) — an explicit id wins; failing that, one already in the trace context is **inherited**; failing that, one is **minted**. Opened around the whole request by `api/routes/chat.py` and `api/routes/sql.py` (the id resolved from the `X-Interaction-Id` request header — see below) and by `api/routes/search.py` (source `api.search`, no header, always mints), and opened again by `agents.chat.run_chat_agent` / `agents.sql.run_sql_agent` themselves — which is what lets `query_corpus` join the turn that called it instead of starting one of its own |
+| `interaction_id` | `ai.interaction_scope()` (`packages/ai/src/ai/_tracing_scope.py`) — an explicit id wins; failing that, one already in the trace context is **inherited**; failing that, one is **minted**. Opened around the whole request by `api/routes/chat.py` and `api/routes/sql.py` (the id resolved from the `X-Interaction-Id` request header — see below) and by `api/routes/search.py` (source `api.search`, no header, always mints); opened again by `agents.chat.run_chat_agent` / `agents.sql.run_sql_agent` themselves, which is what lets `query_corpus` join the turn that called it instead of starting one of its own; and opened by every non-API entry point too — `ai.worker_trace_scope(source)` (one per queue message), `scripts/run_step.py` (one per step dispatch) and `scripts/run_agent.py` (one per case), all of which mint since none has anything to inherit from. See [below](#every-unit-of-work-opens-an-interaction) |
 | `agent_run_id` | `ai.agent_run_scope()`, same module — **always mints**, never inherits. Opened once per sub-agent invocation: `run_chat_agent`, `run_sql_agent`, and each `read_decision_text` reading. A turn may make several `query_corpus` calls and read up to `chat_agent_max_documents_read` decisions, and those otherwise share every key they carry; this is what keeps them apart |
 | `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
 | `document_id`, `task_id` | Each worker, via the `MessageScope` `ai.worker_trace_scope(name)` supplies to `shared.worker.subscribe_step`, entered around `asyncio.run` inside its `handle_message` |
@@ -199,6 +218,20 @@ discarded.
 | `run_id`, `case` | `scripts/run_agent.py`, around each input in `run_cases` — the join back from a batch run's JSONL record to the trace(s) it produced |
 | `source` | The innermost code that knows what the call is |
 | `prompt` | `ai/services.py`, from the template's name |
+
+### Every unit of work opens an interaction
+
+The [storage layout](#storage-layout) needs a directory name for every record, so
+`ai.worker_trace_scope(source)`, `scripts/run_step.py` and `scripts/run_agent.py` each
+open an `interaction_scope` around their unit of work — one per queue message, one per
+step dispatch, one per case — exactly like the API opens one around a chat turn. Before
+this, those three set only `document_id`/`task_id` or `run_id`/`case`.
+
+Those keys **remain** as ordinary context fields alongside the minted `interaction_id`,
+rather than folding into the directory name — "what did ingesting document X cost" is
+still answered by grepping records for `context.document_id`, not by a path shortcut,
+because one document spans several worker messages, each minting its own interaction
+and its own directory.
 
 `source` says **what the call is**, not who asked for it — *who* is
 `interaction_id` or `document_id`. Values: `ai.decompose_query`,
@@ -285,59 +318,44 @@ worker passes `ai.worker_trace_scope(name)` in; the two workers with no LLM call
 
 ## Recorder lifecycle
 
-Records are handed to a bounded queue drained by one daemon thread. A trace
-write must never sit in front of an LLM call — on the chat path a synchronous
-object-store round-trip would surface directly as first-token latency.
+Each record is written inline, synchronously, before the call it describes returns
+control to its caller — see [Writes are synchronous](#writes-are-synchronous) for the
+trade that makes.
 
-Three consequences worth knowing:
-
-- **A bounded loss window.** On `SIGKILL` or a hard crash, whatever is still
-  queued *or sitting in an open batch* is lost — batching widens the window to
-  `LLM_TRACE_BATCH_SECONDS`. Acceptable for cost telemetry, which is
-  cross-checkable against the provider's dashboard. `flush()` covers the cases
-  that need certainty, and an `atexit` hook flushes on clean shutdown.
-- **`flush()` asks, it does not merely wait.** It puts a sentinel on the queue so
-  the writer closes the open batch immediately. Without it a partial batch would
-  sit until `LLM_TRACE_BATCH_SECONDS` elapsed, delaying every shutdown for no
-  reason. It waits on a written-record count rather than `Queue.join()`, because
-  with batching a record leaves the queue well before it reaches storage.
-- **A failed write still releases `flush()`.** The unwritten count drops whether
-  the write succeeded or not, so a permanently failing backend cannot leave a
-  process hanging at exit.
-- **A full queue drops rather than blocks.** Shedding records beats stalling an
-  LLM call behind a slow writer. Drops are logged.
-- **Install never fails.** A backend that cannot be built leaves no recorder at
-  all, which llm-core treats as tracing off. Observability must never stop a
-  worker or the API from starting.
+- **Never raises.** `TraceRecorder.record` must not raise — a stream records from a
+  `finally` that may be unwinding under `GeneratorExit`. A record that fails to
+  serialize or write is logged and dropped rather than costing the call it describes.
+- **No loss window worth naming.** There is no queue and no batch sitting open — a
+  record either finished writing or it did not start, so a hard kill loses at most the
+  one record in flight, not a window of seconds.
+- **Install never fails.** A trace root that cannot be created leaves no recorder at
+  all, which llm-core treats as tracing off. Observability must never stop a worker or
+  the API from starting.
 
 ## Configuration
 
 | Variable | Default | Effect |
 |---|---|---|
-| `LLM_TRACE_ENABLED` | `true` | Off means no recorder, no thread, no files. |
-| `LLM_TRACE_KEY_PREFIX` | `llm-traces` | Storage key prefix for the streams. |
-| `LLM_TRACE_QUEUE_SIZE` | `1000` | Records buffered before dropping. |
-| `LLM_TRACE_FLUSH_TIMEOUT` | `5.0` | Seconds `flush()` and shutdown will wait. |
-| `LLM_TRACE_BATCH_SIZE` | `100` | Records per object. Raising it means fewer, larger writes. |
-| `LLM_TRACE_BATCH_SECONDS` | `5.0` | How long a partial batch waits before being written. Also the loss window on a hard kill. |
+| `LLM_TRACE_ENABLED` | `true` | Off means no recorder and no files. |
+| `LLM_TRACE_KEY_PREFIX` | `llm-traces` | Directory name under `LOCAL_STORAGE_PATH` traces are written under. |
 | `LLM_STREAM_USAGE` | `true` | Ask the provider for token usage on streams. Switchable because a host that rejects the parameter fails the whole call, and streaming is the user-facing chat path. |
 
-With `STORAGE_BACKEND=local` and the repo's default `LOCAL_STORAGE_PATH=./data`,
-traces land under `data/llm-traces/`, alongside `data/documents/` — the two
-keyspaces the storage root holds, per [shared](/packages/shared.md)'s
-`document_pdf_key`/`LLM_TRACE_KEY_PREFIX` contract.
+With the repo's default `LOCAL_STORAGE_PATH=./data`, traces land under
+`data/llm-traces/`, alongside `data/documents/` — the two keyspaces sharing that root.
+Only the PDF keyspace goes through [`StorageBackend`](/packages/shared.md) now; traces
+are written directly with `Path`/`os.replace`, never through `store()`.
 
 ## What did this question cost
 
 Find the interaction id in the API log (`Chat interaction <uuid> for session
 …`) or read it straight off the `X-Interaction-Id` response header — both name
-the same value — then pull every call it caused:
+the same value — then read every file under its directory:
 
 ```bash
-cat data/llm-traces/$(date -u +%F)/*.jsonl \
-  | jq -r --arg i "<uuid>" 'select(.context.interaction_id == $i)
-      | [.context.source, .model, .usage.input_tokens,
-         .usage.output_tokens] | @tsv'
+ls data/llm-traces/$(date -u +%F)/<uuid>/
+cat data/llm-traces/$(date -u +%F)/<uuid>/*.json \
+  | jq -r '[.context.source, .model, .usage.input_tokens,
+            .usage.output_tokens] | @tsv'
 ```
 
 Expect one row per tool-loop iteration under `agents.chat`, one `ai.embed` per
@@ -351,8 +369,15 @@ question-and-answer pair the old pipeline made, and the trace stream is where
 that shows up. See [the conversational agent](/retrieval/chat-agent.md) for the
 settings that bound it.
 
-The same shape answers the per-document ingestion question against
-`.context.document_id`, and dropping the `select` answers it for a whole day.
+**Per-document ingestion cost has no directory shortcut**, because `document_id` is a
+context field, not a path segment — one document spans several worker messages, each
+minting its own interaction and directory. Grep for it across a day's files instead,
+and drop the date to widen it further:
+
+```bash
+grep -l "$doc_id" data/llm-traces/$(date -u +%F)/*/*.json \
+  | xargs cat | jq -r '[.context.source, .model, .usage.total_tokens] | @tsv'
+```
 
 > **On the default configuration the answer is in tokens, not currency.** No
 > Berget rate is published in this repo, and guessing one would be worse than
@@ -366,8 +391,9 @@ The same shape answers the per-document ingestion question against
 | Hook: record type, recorder Protocol, `trace_context`, `traced_call` | `llm-core`, `_tracing.py` |
 | Instrumentation of the four entry points | `llm-core`, `_service.py` |
 | Token/model mapping per provider | `llm-core`, `providers/` |
-| Blob `store`/`retrieve` — no JSON, no append | `shared`, `storage/` |
-| Batching, storage layout, serialization, `install_file_tracing` | `ai`, `_observability.py` |
+| Blob `store`/`retrieve` — no JSON, no append, PDFs only | `shared`, `storage/` |
+| Storage layout, synchronous writes, serialization, `install_file_tracing` | `ai`, `_observability.py` |
+| `interaction_scope`/`agent_run_scope` — the correlation keys | `ai`, `_tracing_scope.py` |
 | Rates and how to apply them | [LLM pricing](/reference/llm-pricing.md) — reference data, no code |
 
 llm-core carries the hook but never a writer, which is what lets it stay free of

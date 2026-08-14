@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.dtos.session import SessionCreate, SessionRead, SessionUpdate
+from shared.dtos.session import SessionCreate, SessionRead
 from shared.repositories import session as session_repo
 
 # DEPRECATED — chat-surface service, slated to move out of the api package with
@@ -40,21 +40,18 @@ async def append_turn(
     `interaction_id` is what turns "which turn was this?" into a lookup in the
     [trace stream](/observability.md) rather than a guess from timestamps. It is
     stored, never sent to a model — see `history_for_llm`.
+
+    The append is done by Postgres, not read-modify-written here, so two turns
+    arriving at once both survive. A missing session is a no-op.
     """
-    existing = await session_repo.get_by_id(session, session_id)
-    if existing is None:
-        return
-    new_entries = [
-        {"role": "user", "content": question, "interaction_id": interaction_id},
-        {"role": "assistant", "content": answer, "interaction_id": interaction_id},
-    ]
-    await session_repo.update(
+    await session_repo.append_history(
         session,
         session_id,
-        SessionUpdate(
-            history=list(existing.history) + new_entries,
-            last_active_at=datetime.now(timezone.utc),
-        ),
+        [
+            {"role": "user", "content": question, "interaction_id": interaction_id},
+            {"role": "assistant", "content": answer, "interaction_id": interaction_id},
+        ],
+        datetime.now(timezone.utc),
     )
 
 

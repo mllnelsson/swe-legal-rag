@@ -50,7 +50,7 @@ from typing import Any, TextIO
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai import LLMRole, create_llm_provider, install_file_tracing, trace_context
+from ai import LLMRole, create_llm_provider, install_file_tracing, interaction_scope
 from shared.db import get_async_session
 from shared.logging_config import configure_logging
 
@@ -296,11 +296,12 @@ async def run_cases(
         output: dict[str, Any] | None = None
         error: dict[str, str] | None = None
 
-        # `run_id` and `case` land on every trace record this case produces, which
-        # is the join from this file back to the full prompts. An agent that sets
-        # its own `source` or `interaction_id` further in wins those keys; these
-        # two are ours alone and survive.
-        with trace_context(run_id=run_id, case=index, source=_SOURCE):
+        # One case is one unit of work, so it opens an interaction — the agent
+        # inside inherits it rather than minting its own, and every record the
+        # case produces lands in one directory. `run_id` and `case` are the join
+        # from this file back to the full prompts; unlike `source`, nothing
+        # further in overrides them.
+        with interaction_scope(run_id=run_id, case=index, source=_SOURCE):
             try:
                 output = await runner(line.text)
             except Exception as exc:
