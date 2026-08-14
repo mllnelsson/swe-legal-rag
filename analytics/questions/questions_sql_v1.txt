@@ -1,0 +1,80 @@
+# Benchmarkfrågor för text-till-SQL-agenten.
+#
+# En fråga per rad. Tomma rader och rader som börjar med # hoppas över av
+# scripts/run_agent.py, men radnumren bevaras i fältet source_line.
+#
+#   uv run python scripts/run_agent.py sql questions.txt
+#
+# Facit med referens-SQL och förväntat resultat ligger i answers.json.
+# Frågorna är ordnade i fem nivåer med stigande svårighetsgrad, tio per nivå.
+
+# ─── Nivå 1 · Enkla uppslag i en tabell ──────────────────────────────────────
+# Ingen join, ingen gruppering, ingen grundning. Går fel bara om modellen
+# missförstår schemat.
+Hur många beslut finns det totalt i korpusen?
+Vilket är det tidigaste beslutsdatumet i korpusen?
+Vilket är det senaste beslutsdatumet i korpusen?
+Hur många beslut saknar ärendenummer?
+Hur många entiteter finns det totalt?
+Hur många textstycken finns det totalt?
+Hur många entiteter finns det av varje typ?
+Hur många beslut fattades under 2024?
+Vilka är de fem senaste besluten? Visa beslutsnummer och beslutsdatum.
+Hur många hänvisningar till beslut utanför korpusen finns registrerade?
+
+# ─── Nivå 2 · Aggregat, gruppering och datumaritmetik ────────────────────────
+# Kräver GROUP BY, datumfunktioner och sortering, men fortfarande en tabell
+# i taget och inga fritextkolumner.
+Hur många beslut fattades per år?
+Hur fördelar sig textstyckena mellan brödtext och bilagor?
+Hur många beslut fattades per månad under 2026?
+Vilket år fattades flest beslut?
+Hur många textstycken har ett beslut i genomsnitt?
+Vilka tio beslut har flest textstycken? Visa beslutsnummer och antal.
+Hur många beslut fattades under första halvåret 2025?
+Hur många olika kategorier förekommer bland besluten?
+För hur många beslut skiljer sig publiceringsdatumet i listningen från beslutsdatumet?
+Hur många beslut har minst ett bilagestycke?
+
+# ─── Nivå 3 · Joins genom kopplingstabellen och entitetsgrafen ───────────────
+# Kräver join över document_entities och att modellen väljer rätt entitetstyp.
+# Fällan är att blanda ihop antal kopplingar med antal beslut.
+Vilka är de tio vanligaste sökorden, räknat i antal beslut?
+Vilka tio författningar åberopas i flest beslut?
+Vilka tio församlingar eller stift förekommer i flest beslut?
+Hur många beslut har tre eller fler sökord?
+Hur många beslut nämner rollen kyrkoherde?
+Hur fördelar sig primary och mentioned per entitetstyp?
+Vilka beslut från 2026 har sökordet beslutsprövning? Visa beslutsnummer och beslutsdatum.
+Hur många beslut nämner både biskop och domkapitel?
+Vilka sökord förekommer i beslut både från 2020 och från 2026?
+Hur många entiteter är inte kopplade till något beslut alls?
+
+# ─── Nivå 4 · Fritextkolumner som kräver grundning ───────────────────────────
+# decision_outcome är den ordagranna slutklämmen, inte en kategori, och
+# category är ingen kontrollerad vokabulär. Frågorna nedan går fel om modellen
+# gissar en sträng i stället för att slå upp värdena med list_column_values.
+Hur många överklaganden har avslagits?
+Hur många överklaganden avslogs under 2023?
+Hur många överklaganden har avvisats?
+Hur många ärenden har avskrivits?
+Hur många beslut handlar om utlämnande av handling?
+Hur många överklaganden avslogs per år?
+Vilken kategori har flest beslut?
+Hur många beslut upphäver eller undanröjer underinstansens beslut?
+Hur många beslut har en sammansatt slutkläm med numrerade punkter?
+Hur många överklaganden om utlämnande av handling avslogs?
+
+# ─── Nivå 5 · Flera CTE:er, citeringsgraf och två identifierarrum ────────────
+# Kräver att modellen håller isär ärendenummer och beslutsnummer, förstår att
+# citeringsgrafen är riktad, och att den räknar andelar över grupper.
+Vilka sökord med minst fem beslut har högst andel avslagna överklaganden?
+Vilket beslut hänvisas till av flest andra beslut?
+Hur många beslut är helt isolerade i citeringsgrafen, alltså varken hänvisar till eller hänvisas till av något annat beslut?
+Hur många beslut har ett ärendenummer vars årtal skiljer sig från beslutsårets?
+Vilka fem saknade beslut citeras av flest beslut i korpusen?
+Hur många av de saknade hänvisningarna är beslutsnummer respektive ärendenummer?
+Skiljer sig andelen avslagna överklaganden mellan beslut som hänvisar till andra beslut och beslut som inte gör det?
+Visa för varje år antalet beslut, antalet avslagna överklaganden och avslagsandelen.
+Hur många hänvisningar går till ett beslut som avgjordes samma år som det hänvisande beslutet?
+Vilka sökord är överrepresenterade bland avvisade överklaganden jämfört med korpusen i stort?

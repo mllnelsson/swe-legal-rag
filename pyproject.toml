@@ -7,7 +7,10 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = [
+    "packages/*",
+    "analytics",
+]
 
 [tool.uv]
 # PyTorch dropped Intel Mac wheels after 2.2.2. Declare Intel Mac as a supported
