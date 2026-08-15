@@ -32,6 +32,9 @@ export function App() {
             <Route index element={<SearchHomePage />} />
             <Route path="sok" element={<ResultsPage />} />
             <Route path="agent" element={<AgentPage />} />
+            {/* A conversation is a link: reopening one is a URL, not selection
+                state, so it survives a reload and can be shared. */}
+            <Route path="agent/:sessionId" element={<AgentPage />} />
             <Route path="beslut/:documentId" element={<DecisionPage />} />
             <Route path="sokord" element={<KeywordIndexRoute />} />
             <Route path="sokord/:entityId" element={<KeywordDocumentsRoute />} />

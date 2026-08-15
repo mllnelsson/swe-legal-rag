@@ -1,22 +1,32 @@
 ---
 type: Table
-title: sessions (optional)
-description: Conversation history backing the chat endpoint's follow-up support; holds the question and the answer only, never the evidence a turn gathered.
+title: sessions
+description: Conversation history backing the chat endpoint's follow-up support and the conversation list; holds the question and the answer only, never the evidence a turn gathered.
 resource: postgres://sessions
 tags: [data-model, table, sessions, chat]
-timestamp: 2026-08-13T01:00:00Z
+timestamp: 2026-08-15T00:00:00Z
 ---
 
-# `sessions` (optional)
+# `sessions`
 
-Conversation history for follow-up support. Can live in-memory or Redis instead if
-cross-restart persistence isn't needed.
+Conversation history: the follow-up support behind the [chat
+endpoint](/api/chat-endpoint.md), and the conversations the
+[sessions endpoints](/api/sessions.md) list, reopen and delete.
 
-This table serves only the [chat endpoint](/api/chat-endpoint.md) — no retrieval
-endpoint or service touches it. It is the one piece of state in an otherwise stateless
-API: the [conversational agent](/retrieval/chat-agent.md) itself keeps nothing between
-requests, and `session_service` in the [api package](/packages/api.md) owns every read
-and write.
+**Durable, not a cache.** Reopening a conversation from last week is a feature,
+so this has to survive a restart — an in-memory or Redis version of it would not
+be the same table with different plumbing, it would be a different product.
+
+It serves those two surfaces and nothing else — no retrieval endpoint or service
+touches it. It is the one piece of state in an otherwise stateless API, and the
+only table anything here writes or deletes: the [conversational
+agent](/retrieval/chat-agent.md) itself keeps nothing between requests, and
+`session_service` in the [api package](/packages/api.md) owns every read and
+write.
+
+**No owner column, deliberately.** There are no accounts, so every row is
+visible to whoever opens the app — see [the sessions
+endpoints](/api/sessions.md#every-conversation-is-listed-to-everyone).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -60,3 +70,23 @@ would be held for the whole turn, which [NFR1b](/prd.md) budgets at up to a minu
 Two consequences fall out: a missing session needs no pre-check, because the `WHERE`
 clause simply matches no row; and the read side is unaffected, since each request
 already loads its history once at the start and the append only ever adds to the end.
+
+## A row exists before the conversation does
+
+`get_or_create_session` writes the row when the request arrives, and
+`append_turn` runs only after the turn reaches `done`. So a failed turn, a turn
+the user stopped mid-answer, and a request rejected at validation each leave a
+row with `history = []` behind.
+
+Those are not conversations, and [the list](/api/sessions.md) filters them out
+with `jsonb_array_length(history) > 0`. Nothing cleans them up: they cost a row
+each and are what a TTL sweep over `last_active_at` would take first.
+
+## Reading it without reading all of it
+
+The conversation list needs a title and a size, not a transcript. Both are
+projected in SQL — `jsonb_extract_path_text(history, '0', 'content')` and
+`jsonb_array_length(history)` — so listing conversations never pulls this column
+into Python. `SessionSummaryRow` in `shared/dtos/session.py` is that projection;
+`SessionRead`, which carries the whole array, is for the two callers that
+genuinely need it.

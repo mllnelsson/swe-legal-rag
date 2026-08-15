@@ -230,3 +230,8 @@ before the agent sees it.
 
 **Only the question and the answer are persisted.** The evidence a turn gathered
 is not, which is what stops turn two re-sending turn one's documents.
+
+Sessions outlive the request that made them and are readable: [`/api/sessions`](/api/sessions.md)
+lists, reopens and deletes them. A `session_id` a client got from that list is
+just a `session_id` here — the agent cannot tell a conversation that was
+reopened from one that was never left.

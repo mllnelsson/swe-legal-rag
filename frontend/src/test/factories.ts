@@ -10,7 +10,13 @@
  */
 
 import type { SourceReference, SqlEvent } from "../api/chat-events";
-import type { SearchChunk, SearchDiagnostics, SearchHit } from "../api/types";
+import type {
+  SearchChunk,
+  SearchDiagnostics,
+  SearchHit,
+  SessionSummary,
+  SessionTurn,
+} from "../api/types";
 
 export function makeChunk(overrides: Partial<SearchChunk> = {}): SearchChunk {
   return {
@@ -76,6 +82,30 @@ export function makeSqlEvent(overrides: Partial<SqlEvent> = {}): SqlEvent {
     truncated: false,
     assumptions: [],
     attempts: [],
+    ...overrides,
+  };
+}
+
+/* Past conversations. Generated types again — `/api/sessions` is ordinary JSON. */
+
+export function makeSessionSummary(
+  overrides: Partial<SessionSummary> = {},
+): SessionSummary {
+  return {
+    id: "33333333-3333-3333-3333-333333333333",
+    created_at: "2026-08-14T09:00:00Z",
+    last_active_at: "2026-08-14T09:12:00Z",
+    title: "Vad gäller vid jäv i kyrkoråd?",
+    turn_count: 2,
+    ...overrides,
+  };
+}
+
+export function makeSessionTurn(overrides: Partial<SessionTurn> = {}): SessionTurn {
+  return {
+    question: "Vad gäller vid jäv i kyrkoråd?",
+    answer: "Nämnden har prövat frågan i flera beslut.",
+    interaction_id: "44444444-4444-4444-4444-444444444444",
     ...overrides,
   };
 }

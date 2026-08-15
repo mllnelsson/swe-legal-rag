@@ -39,7 +39,8 @@ just `react`, `react-dom`, `react-router`, `@tanstack/react-query`.
 |---|---|
 | `/` | Search home — carries the **Sök / Agent** mode toggle |
 | `/sok` | Search results |
-| `/agent` | Agent mode; `?q=` hands over a question from the home page and is dropped on arrival |
+| `/agent` | Agent mode, a new conversation; `?q=` hands over a question from the home page and is dropped on arrival |
+| `/agent/:sessionId` | An earlier conversation, reopened |
 | `/beslut/:documentId` | Decision detail |
 | `/sokord` | Keyword (Sökord) index |
 | `/sokord/:entityId` | Decisions carrying one keyword |
@@ -63,7 +64,7 @@ files carry it:
 |---|---|
 | `src/api/chat-events.ts` | The event contract, as TypeScript |
 | `src/api/chat-stream.ts` | `openChatStream` — fetch, then an SSE parser over the response body |
-| `src/features/agent/` | The hook, the reducer and the components |
+| `src/features/agent/` | The hook, the reducer, the rail and the components |
 
 **Why fetch and not `EventSource`.** The question travels in a request body and
 `EventSource` only issues GETs. Doing it by hand is also what lets the client
@@ -90,15 +91,53 @@ unrecognised anyway renders neutral prose, never the raw key.
 
 ### Conversation state
 
-`session_id` is held in React state for the length of the visit: `null` on the
-first message, then whatever the `done` frame returned. **The client never
-re-sends the history** — the server holds it and the request carries one
-message. A reload starts a new conversation; listing and reopening earlier ones
-needs read endpoints the API does not have.
+**The client never re-sends the history** — the server holds it and each request
+carries one message. `session_id` is the whole of the client's conversation
+state, and it lives in the URL rather than in React: `/agent` is a new
+conversation, `/agent/{id}` an existing one. A conversation started at `/agent`
+claims its URL (`replace`, not push) as soon as the `done` frame names it.
+
+That is what makes a conversation a link — reloadable, bookmarkable, shareable —
+and it is also what lets the rail mark the open row without being told twice.
+
+The claim happens through an `onSessionStarted` callback the hook fires when the
+`done` frame names a conversation, **not** through an effect watching the id. An
+effect fires on every change, including the route changing *away*, which turns
+"Nytt samtal" into a bounce straight back to the conversation just left. The
+callback fires once, at the moment the fact is learned.
 
 An **aborted turn is not persisted**, because the API appends a turn only after
 `done`. The transcript says so rather than showing a turn the agent has no
-memory of.
+memory of — and it is genuinely absent after a reload, which is the same
+promise.
+
+### Earlier conversations
+
+The rail beside the transcript lists every conversation the app has held, newest
+first, from [`GET /api/sessions`](/api/sessions.md). Titles are the opening
+question verbatim; **no model writes them**, because a generated label is text in
+the navigation the reader cannot check, at a cost per conversation. "Nytt
+samtal" is a link to `/agent`; a row is a link to `/agent/{id}`; `x` deletes,
+behind a confirmation, and is the only destructive thing this app does.
+
+The rail says on screen that the app has no accounts, so someone else's question
+appearing in it is not a surprise. And it distinguishes *empty* from *could not
+load*: a rail that renders nothing on a failed fetch tells the reader their
+earlier question is gone.
+
+**A reopened turn shows what was said, not what it rested on.** The API stores
+the question and the answer only, so a restored turn carries no sources, no
+steps and no SQL — and says so, rather than rendering the empty-source
+statement, which would be a different and false claim. That is [honesty rule
+21](/frontend/honesty-rules.md). The `interaction_id` survives, so an old bad
+answer is still findable in the [trace stream](/observability.md).
+
+**The one exception to the caching policy.** `src/api/queries.ts` uses
+`staleTime: Infinity` throughout, because the corpus changes only when the
+ingestion pipeline runs. The conversation list does not: asking a question
+changes it, from this tab, seconds ago. So `queryKeys.sessions()` is the single
+query with `staleTime: 0`, and the agent hook invalidates it on `done`. A
+transcript, once fetched, is immutable again and keeps `Infinity`.
 
 ## Generated API types
 
@@ -205,15 +244,14 @@ costs time rather than money, but the API still constructs the `structured`/
 Not in this version: saved matters or bookmarks, a marketing site, auth, and a
 mobile layout.
 
-**Earlier conversations.** Agent mode holds one conversation per visit. The
-[sessions table](/data-model/sessions.md) already carries everything a list
-would need — `id`, `created_at`, `last_active_at`, `history` — but there is no
-endpoint to read it, so listing and reopening past conversations is a separate
-piece of work. `/agent` leaves the room for a rail beside the transcript.
+**Renaming a conversation.** Titles are the opening question and cannot be
+edited; `sessions` has no title column, and adding one to let a reader relabel a
+row is a feature with a schema change behind it rather than a UI detail.
 
-A reopened conversation would show text without citations: the API persists the
-question and the answer only, never the evidence a turn gathered, which is what
-stops turn two re-sending turn one's documents.
+**Pruning old conversations.** Deleting is per-row and by hand. Nothing expires,
+and the empty rows [`get_or_create_session` leaves
+behind](/data-model/sessions.md#a-row-exists-before-the-conversation-does) are
+filtered out of the list rather than swept up.
 
 ## Deployment
 

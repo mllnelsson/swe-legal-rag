@@ -31,6 +31,13 @@ export type UnresolvedCitation = Schemas["UnresolvedCitation"];
 export type EntityWithCount = Schemas["EntityWithCount"];
 export type EntityDocumentRef = Schemas["EntityDocumentRef"];
 
+/** A past conversation. The chat frames themselves are hand-written (see
+ *  `chat-events.ts`); these are ordinary JSON endpoints, so they are generated
+ *  like everything else. */
+export type SessionSummary = Schemas["SessionSummary"];
+export type SessionTranscript = Schemas["SessionTranscript"];
+export type SessionTurn = Schemas["SessionTurn"];
+
 export type ChunkSection = Schemas["ChunkSection"];
 export type EntityType = Schemas["EntityType"];
 export type EntityRelevance = Schemas["EntityRelevance"];

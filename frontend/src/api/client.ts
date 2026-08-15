@@ -19,6 +19,8 @@ import type {
   Page,
   SearchQuery,
   SearchResponse,
+  SessionSummary,
+  SessionTranscript,
 } from "./types";
 
 /** A failed API call. `status` is 0 when the request never reached the server. */
@@ -47,6 +49,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+/** For a response with no body to parse. `request` always reads JSON, and a 204
+ *  has none — reading it would throw on the one call that succeeded. */
+async function requestNoContent(path: string, init?: RequestInit): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch (cause) {
+    throw new ApiError(0, "Kunde inte nå tjänsten", { cause });
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, `${response.status} ${response.statusText}`);
+  }
 }
 
 /** Drop empty values, and repeat a key per element for the list-valued filters. */
@@ -153,4 +170,25 @@ export function fetchKeywordDocuments(
   return request<Page<EntityDocumentRef>>(
     `/api/keywords/${keywordId}/documents${buildQuery({ ...params })}`,
   );
+}
+
+/* Past conversations. The only mutable data this app reads, and the only thing
+ * it deletes — everything above is corpus the ingestion pipeline owns. */
+
+/** Titles and sizes, never transcripts: the list endpoint projects in SQL so
+ *  drawing a rail does not pull every answer ever written. */
+export function fetchSessions(
+  params: { limit?: number; offset?: number } = {},
+): Promise<Page<SessionSummary>> {
+  return request<Page<SessionSummary>>(`/api/sessions${buildQuery({ ...params })}`);
+}
+
+/** One conversation's turns. Carries no sources — the API stores the question
+ *  and the answer only, which the UI has to state rather than imply. */
+export function fetchSessionTranscript(sessionId: string): Promise<SessionTranscript> {
+  return request<SessionTranscript>(`/api/sessions/${sessionId}`);
+}
+
+export function deleteSession(sessionId: string): Promise<void> {
+  return requestNoContent(`/api/sessions/${sessionId}`, { method: "DELETE" });
 }

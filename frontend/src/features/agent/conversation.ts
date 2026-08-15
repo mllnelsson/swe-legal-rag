@@ -13,6 +13,7 @@ import type {
   SqlEvent,
   ToolStatus,
 } from "../../api/chat-events";
+import type { SessionTurn } from "../../api/types";
 
 /** One tool the agent reached for, as the client sees it.
  *
@@ -28,9 +29,17 @@ export type Step = {
 
 export type TurnStatus = "streaming" | "done" | "error" | "aborted";
 
+/** Whether this turn was watched happening or read back out of the session.
+ *
+ *  The distinction is not bookkeeping: a live turn arrives with the passages it
+ *  was built from, and a restored one cannot, because the API stores the
+ *  question and the answer and nothing else. Same prose, weaker claim. */
+export type TurnOrigin = "live" | "restored";
+
 export type Turn = {
   /** Client-side only; the server identifies turns by interaction id. */
   key: string;
+  origin: TurnOrigin;
   question: string;
   steps: Step[];
   sql: SqlEvent[];
@@ -45,6 +54,7 @@ export type Turn = {
 export function newTurn(key: string, question: string): Turn {
   return {
     key,
+    origin: "live",
     question,
     steps: [],
     sql: [],
@@ -53,6 +63,29 @@ export function newTurn(key: string, question: string): Turn {
     sourcesReceived: false,
     interactionId: null,
     status: "streaming",
+    error: null,
+  };
+}
+
+/** A turn as a reopened conversation has it: what was asked, what was said.
+ *
+ *  Finished by definition — it was appended only because it reached `done` —
+ *  and evidence-free by construction. `sourcesReceived` stays false so the
+ *  empty-source statement does not fire: "this answer cited nothing" and "the
+ *  citations were not kept" are different claims, and only the second is true
+ *  here. */
+export function restoredTurn(key: string, turn: SessionTurn): Turn {
+  return {
+    key,
+    origin: "restored",
+    question: turn.question,
+    steps: [],
+    sql: [],
+    answer: turn.answer,
+    sources: [],
+    sourcesReceived: false,
+    interactionId: turn.interaction_id,
+    status: "done",
     error: null,
   };
 }

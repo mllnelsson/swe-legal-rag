@@ -111,6 +111,15 @@ the session/dependency flow explicit.
   never reading the column first. Replaces a read-modify-write that lost whichever of
   two concurrent turns on one session committed second; a missing session is a no-op
   because the `UPDATE` simply matches no row. See [sessions](/data-model/sessions.md).
+- `session.list_summaries(session, *, limit, offset)` — the conversation list behind
+  [`GET /api/sessions`](/api/sessions.md), projected in SQL so `history` never leaves
+  Postgres: `jsonb_extract_path_text(history, '0', 'content')` for the opening question,
+  `jsonb_array_length(history)` for the size, and the same expression as the filter that
+  keeps sessions which never held a turn out of the list. Paired with
+  `session.count_with_history` for the page total.
+- `session.delete(session, session_id)` — the only delete in the repository layer that
+  a route reaches. Returns whether a row matched, so a delete that removed nothing can
+  be a 404 rather than a silent success.
 
 ## Protocol-injected namespaces (`repositories/_protocols.py`)
 

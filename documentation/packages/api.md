@@ -91,6 +91,20 @@ Two modules, and neither is an agent — the loop lives in
   left on one is sent to the model as noise and re-sent on every later turn. See
   [sessions](/data-model/sessions.md).
 
+  The same module serves [`/api/sessions`](/api/sessions.md):
+  `list_sessions(db, *, limit, offset)` → `Page[SessionSummary]`,
+  `get_transcript(session_id, db)` → `SessionTranscript | None`, and
+  `delete_session(session_id, db)` → `bool`. The two interesting parts are pure
+  functions beside them, so they are unit-testable without a database:
+  `session_title(first_message)` cuts the opening question to a rail-sized label
+  on a word boundary, and `transcript_turns(history)` folds the flat entry array
+  back into turns **totally** — `history` is untyped JSONB, so an entry that does
+  not pair still renders rather than raising.
+
+  **`/api/sessions` is the API's first mutating endpoint.** Every retrieval route
+  is read-only and stateless; `DELETE /api/sessions/{id}` is the only route
+  anywhere in this package that removes a row.
+
 ## Search/browse/traversal service layer (`api/services/`)
 
 Every function here takes `(AsyncSession, a typed pydantic model)` and returns typed
@@ -157,6 +171,17 @@ Request flow: validate `ChatRequest` (422 on empty/long/bad `session_id`) →
 (`text/event-stream`, headers `Cache-Control: no-cache`, `X-Accel-Buffering: no`); the
 `done` frame carries the `session_id`, and the turn is persisted after it. The DB
 session comes from `api/dependencies.get_db`, shared with every other router.
+
+## Sessions routes (`api/routes/sessions.py`)
+
+The read and delete half of the chat surface — [contract](/api/sessions.md). Three
+thin adapters over `session_service`: a `Page[SessionSummary]` list, a
+`SessionTranscript` by id, and a `DELETE` returning 204 or 404. They use the same
+`clamp_limit` + `Page[T]` paging as `keywords.py`, and the same `get_db`.
+
+Worth stating where the rest of this package's design notes are: **these are the
+only routes that are not read-only.** Everything else here answers questions about
+a corpus it never touches.
 
 ## Search, document, concept and keyword routes (`api/routes/`)
 

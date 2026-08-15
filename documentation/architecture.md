@@ -21,7 +21,8 @@ Three major subsystems, all running on GCP, scale-to-zero where possible:
 The backend is a uv workspace of [packages](/packages/overview.md); the
 [frontend](/frontend/overview.md) has a surface for each of the first two — a
 search UI over the deterministic retrieval API, and agent mode, an SSE client
-for the [chat endpoint](/api/chat-endpoint.md).
+for the [chat endpoint](/api/chat-endpoint.md) with a rail of past conversations
+over [`/api/sessions`](/api/sessions.md).
 
 ## Three ways to query the corpus
 
@@ -42,7 +43,7 @@ for the [chat endpoint](/api/chat-endpoint.md).
 
 ## Storage layer
 
-A single Postgres instance (Cloud SQL) with the pgvector extension serves four concerns
+A single Postgres instance (Cloud SQL) with the pgvector extension serves five concerns
 in one database:
 
 - **Document registry** — ingestion state and metadata per document
@@ -50,6 +51,8 @@ in one database:
 - **Chunk store** — [chunk](/data-model/chunks.md) text and positional info
 - **Vector index** — pgvector `VECTOR(1024)` embeddings plus a GIN index on the tsvector
   column for Swedish full-text search
+- **Conversation history** — [sessions](/data-model/sessions.md), the only table
+  anything here writes or deletes; read back by [`/api/sessions`](/api/sessions.md)
 - **Entity graph** — [entities](/data-model/entities.md),
   [document_entities](/data-model/document-entities.md), and
   [document_references](/data-model/document-references.md); GraphRAG concepts as

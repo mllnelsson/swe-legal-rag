@@ -5,15 +5,31 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.dtos.session import SessionCreate, SessionRead
+from api.pagination import Page
+from shared.dtos.session import (
+    SessionCreate,
+    SessionRead,
+    SessionSummary,
+    SessionSummaryRow,
+    SessionTranscript,
+    SessionTurn,
+)
 from shared.repositories import session as session_repo
 
 # DEPRECATED — chat-surface service, slated to move out of the api package with
-# POST /api/chat. See /api/chat-endpoint.md. Conversation state is the agent's
-# concern; the retrieval endpoints are stateless.
+# POST /api/chat and /api/sessions. See /api/chat-endpoint.md. Conversation state
+# is the agent's concern; the retrieval endpoints are stateless.
 
 # One conversation turn is a user question plus the assistant answer.
 ENTRIES_PER_TURN = 2
+
+# How much of the opening question names a conversation in a list. Long enough
+# to tell two questions apart, short enough for a rail.
+TITLE_MAX_CHARS = 60
+
+# A conversation whose first entry holds no text. Only reachable through a
+# hand-written history — `append_turn` never writes one.
+UNTITLED = "Utan fråga"
 
 
 async def get_or_create_session(
@@ -53,6 +69,126 @@ async def append_turn(
         ],
         datetime.now(timezone.utc),
     )
+
+
+def session_title(first_message: str | None) -> str:
+    """Name a conversation by what was asked first, in the asker's own words.
+
+    No model is involved, deliberately. A generated title would put text in the
+    navigation that the reader cannot check against anything, for a per-
+    conversation cost, to replace a sentence they wrote themselves.
+    """
+    collapsed = " ".join((first_message or "").split())
+    if collapsed == "":
+        return UNTITLED
+    if len(collapsed) <= TITLE_MAX_CHARS:
+        return collapsed
+
+    cut = collapsed[:TITLE_MAX_CHARS]
+    # Break on the last whole word so the title never ends mid-word; a single
+    # word longer than the budget has none, and is cut where it is.
+    spaced = cut.rsplit(" ", 1)[0] if " " in cut else cut
+    return f"{spaced.rstrip()}…"
+
+
+def _summary(row: SessionSummaryRow) -> SessionSummary:
+    return SessionSummary(
+        id=row.id,
+        created_at=row.created_at,
+        last_active_at=row.last_active_at,
+        title=session_title(row.first_message),
+        # Rounded up, so a history with an unpaired trailing entry still counts
+        # as the turn it was part of rather than disappearing.
+        turn_count=(row.entry_count + ENTRIES_PER_TURN - 1) // ENTRIES_PER_TURN,
+    )
+
+
+def transcript_turns(history: list[dict]) -> list[SessionTurn]:
+    """Fold a stored history back into the turns it was appended as.
+
+    `history` is untyped JSONB and the pairing is a convention `append_turn`
+    upholds, not something Postgres enforces — so this is total rather than
+    strict. A `user` entry opens a turn and the next `assistant` entry closes
+    it; anything that does not fit still renders as *something*, because a
+    history written by an older version of this code is a display problem and
+    not a reason to fail a request.
+    """
+    turns: list[SessionTurn] = []
+    awaiting_answer = False
+
+    for entry in history:
+        # Same default as `_entry_for_llm`: a roleless entry is a question.
+        asked = entry.get("role", "user") == "user"
+        content = _text(entry.get("content"))
+
+        if not asked and awaiting_answer:
+            turns[-1].answer = content
+            awaiting_answer = False
+            continue
+
+        turns.append(
+            SessionTurn(
+                question=content if asked else "",
+                answer="" if asked else content,
+                interaction_id=_text_or_none(entry.get("interaction_id")),
+            )
+        )
+        awaiting_answer = asked
+
+    return turns
+
+
+def _text(value: object) -> str:
+    """Whatever is in an untyped JSONB field, as something renderable."""
+    return value if isinstance(value, str) else ""
+
+
+def _text_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+async def list_sessions(
+    session: AsyncSession, *, limit: int, offset: int
+) -> Page[SessionSummary]:
+    """Every conversation this app holds, most recently active first.
+
+    Every one of them: there are no accounts, so there is no owner to filter by
+    — which the interface says out loud rather than leaving to be discovered.
+    """
+    rows = await session_repo.list_summaries(session, limit=limit, offset=offset)
+    total = await session_repo.count_with_history(session)
+    return Page(
+        items=[_summary(row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+async def get_transcript(
+    session_id: uuid.UUID, session: AsyncSession
+) -> SessionTranscript | None:
+    """One conversation, read back as turns. `None` when there is no such row.
+
+    What comes back is what was said and nothing else. The passages, document
+    extracts and query rows a turn was built on are not stored — see
+    `append_turn` — so a reopened conversation carries no citations, and the
+    interface has to say so instead of showing an empty source list.
+    """
+    stored = await session_repo.get_by_id(session, session_id)
+    if stored is None:
+        return None
+    return SessionTranscript(
+        id=stored.id,
+        created_at=stored.created_at,
+        last_active_at=stored.last_active_at,
+        turns=transcript_turns(stored.history),
+    )
+
+
+async def delete_session(session_id: uuid.UUID, session: AsyncSession) -> bool:
+    """Forget a conversation. False when there was nothing to forget."""
+    return await session_repo.delete(session, session_id)
 
 
 def history_for_llm(session: SessionRead, max_turns: int) -> list[dict]:

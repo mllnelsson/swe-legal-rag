@@ -1,14 +1,26 @@
 /* TanStack Query bindings for the retrieval API.
  *
  * Caching policy worth stating once: the corpus only changes when the ingestion
- * pipeline runs, never in response to anything a user does here. Nothing in this
- * app writes. So everything is effectively immutable for the length of a session
- * and refetching on window focus is pure noise.
+ * pipeline runs, never in response to anything a user does here. So everything
+ * is effectively immutable for the length of a session and refetching on window
+ * focus is pure noise.
+ *
+ * The conversation list is the exception, and the only one. It changes every
+ * time the user asks a question — from this tab, seconds ago — so it is the one
+ * query that may not be cached forever, and the one thing this app deletes.
+ * Anything else added here should default to `staleTime: Infinity` as above.
  */
 
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 
 import {
+  deleteSession,
   fetchConceptDocuments,
   fetchConcepts,
   fetchDocument,
@@ -17,6 +29,8 @@ import {
   fetchFacets,
   fetchKeywordDocuments,
   fetchKeywords,
+  fetchSessionTranscript,
+  fetchSessions,
   searchDocuments,
   type DocumentListParams,
 } from "./client";
@@ -31,6 +45,8 @@ import type {
   Page,
   SearchQuery,
   SearchResponse,
+  SessionSummary,
+  SessionTranscript,
 } from "./types";
 
 export const queryKeys = {
@@ -46,6 +62,8 @@ export const queryKeys = {
   keywords: (params: object) => ["keywords", params] as const,
   keywordDocuments: (keywordId: string, params: object) =>
     ["keywords", keywordId, "documents", params] as const,
+  sessions: () => ["sessions"] as const,
+  sessionTranscript: (sessionId: string) => ["sessions", sessionId] as const,
 };
 
 /** A search runs a local embedding server-side, so it is slow enough to be worth
@@ -140,5 +158,40 @@ export function useKeywordDocuments(
     queryFn: () => fetchKeywordDocuments(keywordId as string, params),
     enabled: keywordId !== undefined,
     staleTime: Infinity,
+  });
+}
+
+/** The conversation list. `staleTime: 0` because asking a question changes it —
+ *  the agent hook invalidates this key when a turn finishes. */
+export function useSessions(): UseQueryResult<Page<SessionSummary>> {
+  return useQuery({
+    queryKey: queryKeys.sessions(),
+    queryFn: () => fetchSessions(),
+    staleTime: 0,
+  });
+}
+
+/** A conversation's turns. Cached forever, unlike the list: a turn is appended
+ *  once and never edited, so a transcript already fetched cannot go stale. */
+export function useSessionTranscript(
+  sessionId: string | undefined,
+): UseQueryResult<SessionTranscript> {
+  return useQuery({
+    queryKey: queryKeys.sessionTranscript(sessionId ?? ""),
+    queryFn: () => fetchSessionTranscript(sessionId as string),
+    enabled: sessionId !== undefined,
+    staleTime: Infinity,
+  });
+}
+
+/** The one destructive call this app makes. */
+export function useDeleteSession(): UseMutationResult<void, Error, string> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: deleteSession,
+    onSuccess: (_result, sessionId) => {
+      void client.invalidateQueries({ queryKey: queryKeys.sessions() });
+      client.removeQueries({ queryKey: queryKeys.sessionTranscript(sessionId) });
+    },
   });
 }

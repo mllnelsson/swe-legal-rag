@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
-import { useSearchParams } from "react-router";
+import { useCallback, useEffect, useRef } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { Composer } from "./Composer";
+import { ConversationRail } from "./ConversationRail";
 import { TurnView } from "./TurnView";
 import { useAgentConversation } from "./useAgentConversation";
 
@@ -16,12 +17,25 @@ const QUESTION_PARAM = "q";
  *  surface with its own rules about what it may claim, not a mode bolted onto
  *  the results page.
  *
- *  The left column is deliberately empty. Listing and reopening past
- *  conversations needs read endpoints the API does not have yet; the layout
- *  leaves the room so adding them does not move the transcript. */
+ *  Which conversation is open is carried by the URL rather than by state:
+ *  `/agent` is a new one, `/agent/{id}` an earlier one. That makes a
+ *  conversation a link, survives a reload, and lets the rail mark the open row
+ *  without being told. A conversation started at `/agent` claims its URL as
+ *  soon as the server names it. */
 export function AgentPage() {
+  const { sessionId: routeSessionId } = useParams();
   const [params, setParams] = useSearchParams();
-  const { turns, busy, ask, stop } = useAgentConversation();
+  const navigate = useNavigate();
+  // `replace`, not push: the fresh-conversation URL and this one are the same
+  // conversation, so Back should leave the page rather than un-name it.
+  const claimUrl = useCallback(
+    (started: string) => void navigate(`/agent/${started}`, { replace: true }),
+    [navigate],
+  );
+  const { turns, busy, loading, failedToLoad, ask, stop } = useAgentConversation({
+    sessionId: routeSessionId,
+    onSessionStarted: claimUrl,
+  });
   const handedOver = useRef(false);
   const end = useRef<HTMLDivElement>(null);
 
@@ -53,28 +67,58 @@ export function AgentPage() {
       <div
         style={{
           width: "100%",
-          maxWidth: "var(--measure-prose)",
+          maxWidth: "var(--content-max)",
           display: "flex",
-          flexDirection: "column",
-          gap: "var(--space-9)",
+          gap: "var(--space-8)",
         }}
       >
-        {turns.length === 0 ? <EmptyState /> : null}
+        <div style={{ width: "var(--sidebar-w)", flex: "none" }}>
+          <ConversationRail openSessionId={routeSessionId} />
+        </div>
 
-        {turns.map((turn) => (
-          <TurnView key={turn.key} turn={turn} />
-        ))}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            maxWidth: "var(--measure-prose)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--space-9)",
+          }}
+        >
+          {failedToLoad && <LoadFailure />}
+          {loading && !failedToLoad && <Loading />}
+          {turns.length === 0 && !loading && !failedToLoad ? <EmptyState /> : null}
 
-        <div ref={end} />
+          {turns.map((turn) => (
+            <TurnView key={turn.key} turn={turn} />
+          ))}
 
-        <Composer
-          onSubmit={ask}
-          onStop={stop}
-          busy={busy}
-          autoFocus={turns.length === 0}
-        />
+          <div ref={end} />
+
+          <Composer
+            onSubmit={ask}
+            onStop={stop}
+            busy={busy}
+            autoFocus={turns.length === 0}
+          />
+        </div>
       </div>
     </main>
+  );
+}
+
+function Loading() {
+  return <p style={mutedStyle}>Hämtar samtalet…</p>;
+}
+
+/** Said plainly, because the composer below still works: a conversation that
+ *  could not be read is one the next question will not build on. */
+function LoadFailure() {
+  return (
+    <p style={{ ...mutedStyle, color: "var(--status-error-fg)" }}>
+      Samtalet kunde inte hämtas. En ny fråga här startar ett nytt samtal.
+    </p>
   );
 }
 
@@ -111,3 +155,10 @@ function EmptyState() {
     </div>
   );
 }
+
+const mutedStyle = {
+  margin: 0,
+  fontFamily: "var(--font-sans)",
+  fontSize: "var(--text-body-size)",
+  color: "var(--text-muted)",
+} as const;

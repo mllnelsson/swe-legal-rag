@@ -1,14 +1,14 @@
 ---
 type: Concept
 title: Honesty rules
-description: The frontend's tested constraints on what it claims — twelve about a search result, eight more about an answer a language model wrote. Each exists because the data does not support the more convenient alternative.
+description: The frontend's tested constraints on what it claims — twelve about a search result, nine more about an answer a language model wrote. Each exists because the data does not support the more convenient alternative.
 tags: [frontend, ui, honesty, search, agent, appendix, rrf]
 timestamp: 2026-08-15T00:00:00Z
 ---
 
 # Honesty rules
 
-Twenty constraints the frontend enforces on what it puts on screen, each backed
+Twenty-one constraints the frontend enforces on what it puts on screen, each backed
 by a test. They are not generic UI polish — each exists because the corpus or an
 API's response shape does not support the more convenient alternative, and
 getting one wrong would put a claim on screen the data cannot back up.
@@ -18,7 +18,7 @@ Two groups, in two test files:
 | Rules | Surface | Test |
 |---|---|---|
 | 1–12 | [Search](/api/search.md) results and decisions | `src/components/research/honesty-rules.test.tsx` |
-| 13–20 | [Agent mode](/frontend/overview.md) | `src/features/agent/agent-honesty-rules.test.tsx` |
+| 13–21 | [Agent mode](/frontend/overview.md) | `src/features/agent/agent-honesty-rules.test.tsx` |
 
 The second group is the harder one. In search, every word on screen is either
 the nämnd's own text or a label this app wrote; in agent mode the prose is
@@ -108,7 +108,7 @@ verbatim holdings running 41–378 characters long, so the filter control
 shortens the *label* it displays while still sending the underlying value
 byte-identical to what `/api/filters` published.
 
-## Agent mode (13–20)
+## Agent mode (13–21)
 
 These govern an answer a language model wrote, streamed over the [chat
 endpoint](/api/chat-endpoint.md). The reader cannot check that prose against the
@@ -156,6 +156,18 @@ screen.
     `case_number` and no `decision_number`, so a source labels its ärendenummer
     as one and invents no beslutsnummer — the same distinction rule 8 makes on a
     decision card, where `2025-0035` is decided as `14/2026`.
+
+21. **A reopened conversation shows what was said, not what it rested on.** The
+    API persists the question and the answer only — never the passages, the
+    reader's extracts or the SQL rows a turn gathered, which is what stops turn
+    two re-sending turn one's documents (see [the sessions
+    endpoints](/api/sessions.md)). So a turn read back out of a past
+    conversation renders its prose with a plain marker saying the citations were
+    not kept, and renders **no source list at all**. The empty-source statement
+    rule 19 requires would be a different claim — "this answer cited nothing"
+    rather than "we did not keep what it cited" — and only the second is true
+    here. The turn's `interaction_id` survives, so the answer is still traceable
+    even though its evidence is not on screen.
 
 One more thing the interface shows for a reason rather than for polish: each
 finished turn prints its `X-Interaction-Id`. That id spans everything the turn

@@ -8,9 +8,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { applyEvent, newTurn, type Turn } from "./conversation";
+import { applyEvent, newTurn, restoredTurn, type Turn } from "./conversation";
 import type { ChatEvent } from "../../api/chat-events";
-import { makeSource, makeSqlEvent } from "../../test/factories";
+import { makeSessionTurn, makeSource, makeSqlEvent } from "../../test/factories";
 
 function fold(...events: ChatEvent[]): Turn {
   return events.reduce(applyEvent, newTurn("t1", "Vad gäller vid jäv?"));
@@ -138,5 +138,47 @@ describe("sources and counts", () => {
     const turn = fold({ kind: "sources", sources: [makeSource()] });
 
     expect(turn.sources[0]?.case_number).toBe("2025-0035");
+  });
+});
+
+describe("a turn read back out of a past conversation", () => {
+  it("is finished, because only a finished turn was ever stored", () => {
+    // The API appends a turn after `done` and not before, so anything in a
+    // stored history completed. There is no such thing as a restored turn that
+    // is still streaming, or an aborted one.
+    const turn = restoredTurn("r0", makeSessionTurn());
+
+    expect(turn.status).toBe("done");
+    expect(turn.origin).toBe("restored");
+    expect(turn.error).toBeNull();
+  });
+
+  it("carries the question and the answer and nothing else", () => {
+    const turn = restoredTurn(
+      "r0",
+      makeSessionTurn({ question: "Vad gäller?", answer: "Detta gäller." }),
+    );
+
+    expect(turn.question).toBe("Vad gäller?");
+    expect(turn.answer).toBe("Detta gäller.");
+    expect(turn.steps).toEqual([]);
+    expect(turn.sql).toEqual([]);
+    expect(turn.sources).toEqual([]);
+  });
+
+  it("does not pretend the sources frame arrived", () => {
+    // `sourcesReceived` is what makes the UI say "this answer cites nothing".
+    // A restored turn cited something; what was not kept is the record of it.
+    expect(restoredTurn("r0", makeSessionTurn()).sourcesReceived).toBe(false);
+  });
+
+  it("keeps the interaction id, so an old bad answer is still traceable", () => {
+    const turn = restoredTurn("r0", makeSessionTurn({ interaction_id: "i-9" }));
+    expect(turn.interactionId).toBe("i-9");
+  });
+
+  it("tolerates a turn stored before interaction ids existed", () => {
+    const turn = restoredTurn("r0", makeSessionTurn({ interaction_id: null }));
+    expect(turn.interactionId).toBeNull();
   });
 });

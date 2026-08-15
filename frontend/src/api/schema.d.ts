@@ -258,6 +258,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sessions Endpoint
+         * @description The conversations, most recently active first.
+         *
+         *     A summary rather than a transcript: the title is the opening question and
+         *     nothing else is read, so drawing a list of fifty conversations does not pull
+         *     fifty conversations' worth of answers out of the database.
+         *
+         *     Conversations whose turn never completed are absent. A session row is
+         *     created before the agent runs, so a failed, aborted or rejected request
+         *     leaves one behind with an empty history; those are not conversations.
+         */
+        get: operations["list_sessions_endpoint_api_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Session Transcript Endpoint
+         * @description One conversation, as the turns it was appended as.
+         *
+         *     **What was said, not what it rested on.** Only the question and the answer
+         *     are persisted — never the passages, extracts or query rows a turn gathered —
+         *     so a reopened conversation has no citations to show, and a client must say
+         *     so rather than render an empty source list.
+         */
+        get: operations["session_transcript_endpoint_api_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Session Endpoint
+         * @description Forget a conversation.
+         *
+         *     No soft delete: the row holds one person's own questions and nothing else
+         *     references it. The [traces](/observability.md) the turns produced are keyed
+         *     by `interaction_id` in file storage and outlive it, so what is actually lost
+         *     is the transcript, not the record of what the turns cost.
+         */
+        delete: operations["delete_session_endpoint_api_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -574,6 +636,17 @@ export interface components {
             /** Offset */
             offset: number;
         };
+        /** Page[SessionSummary] */
+        Page_SessionSummary_: {
+            /** Items */
+            items: components["schemas"]["SessionSummary"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
         /**
          * ReferenceEdge
          * @description A citation with the *other* document resolved, ready to render as a link.
@@ -741,6 +814,73 @@ export interface components {
             /** Effective Queries */
             effective_queries: string[];
             diagnostics: components["schemas"]["SearchDiagnostics"];
+        };
+        /**
+         * SessionSummary
+         * @description A conversation as the list shows it: what was asked first, and how much.
+         */
+        SessionSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Last Active At
+             * Format: date-time
+             */
+            last_active_at: string;
+            /** Title */
+            title: string;
+            /** Turn Count */
+            turn_count: number;
+        };
+        /**
+         * SessionTranscript
+         * @description A whole conversation, paired back into turns.
+         *
+         *     Carries no evidence, because none is stored: the passages, extracts and
+         *     query results a turn gathered are deliberately not persisted.
+         */
+        SessionTranscript: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Last Active At
+             * Format: date-time
+             */
+            last_active_at: string;
+            /** Turns */
+            turns: components["schemas"]["SessionTurn"][];
+        };
+        /**
+         * SessionTurn
+         * @description One question and the answer it got.
+         *
+         *     `interaction_id` is the same id the `X-Interaction-Id` header carried, so a
+         *     turn read back out of a session is still a lookup into the trace stream. It
+         *     is `None` for entries written before that field existed.
+         */
+        SessionTurn: {
+            /** Question */
+            question: string;
+            /** Answer */
+            answer: string;
+            /** Interaction Id */
+            interaction_id: string | null;
         };
         /** SqlAgentRequest */
         SqlAgentRequest: {
@@ -1232,6 +1372,98 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_endpoint_api_sessions_get: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_SessionSummary_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    session_transcript_endpoint_api_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionTranscript"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_session_endpoint_api_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -6,7 +6,9 @@
  * written by a language model rather than lifted from a decision. These are the
  * rules that keep the reader able to tell those two apart.
  *
- * Numbered from 13 to continue `documentation/frontend/honesty-rules.md`.
+ * Numbered from 13 to continue `documentation/frontend/honesty-rules.md`. Rule
+ * 21 covers a turn read back out of a past conversation, where the prose
+ * survived and the evidence did not.
  */
 
 import { render, screen } from "@testing-library/react";
@@ -18,8 +20,8 @@ import { SourceList } from "./SourceList";
 import { SqlEvidence } from "./SqlEvidence";
 import { TurnSteps } from "./TurnSteps";
 import { TurnView } from "./TurnView";
-import { applyEvent, newTurn, type Step, type Turn } from "./conversation";
-import { makeSource, makeSqlEvent } from "../../test/factories";
+import { applyEvent, newTurn, restoredTurn, type Step, type Turn } from "./conversation";
+import { makeSessionTurn, makeSource, makeSqlEvent } from "../../test/factories";
 
 function renderTurn(turn: Turn) {
   return render(
@@ -221,6 +223,57 @@ describe("rule 20 — the two identifier spaces are not conflated", () => {
     expect(screen.getByText("Ärendenummer")).toBeInTheDocument();
     expect(screen.getByText("2025-0035")).toBeInTheDocument();
     expect(screen.queryByText("Beslut")).not.toBeInTheDocument();
+  });
+});
+
+describe("rule 21 — a reopened conversation shows what was said, not what it rested on", () => {
+  test("a restored turn says its citations were not kept", () => {
+    // The API persists the question and the answer only. The passages the turn
+    // was built from are genuinely gone, so the gap where sources would be has
+    // to be named rather than left for the reader to interpret.
+    renderTurn(restoredTurn("r0", makeSessionTurn()));
+
+    expect(screen.getByText(/tidigare samtal/i)).toBeInTheDocument();
+    expect(screen.getByText(/hänvisningar sparas inte/i)).toBeInTheDocument();
+  });
+
+  test("it does not claim the answer cited nothing", () => {
+    // The distinction from rule 19, and the reason `sourcesReceived` stays
+    // false: "this answer rests on no decision" is a different statement from
+    // "we did not keep the decisions it rested on", and only the second is true.
+    renderTurn(restoredTurn("r0", makeSessionTurn()));
+
+    expect(screen.queryByText(/vilar inte på något citerat beslut/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Källor")).not.toBeInTheDocument();
+  });
+
+  test("a live turn that cited nothing keeps saying so, and carries no marker", () => {
+    let turn = newTurn("t1", "tack");
+    turn = applyEvent(turn, { kind: "token", text: "Varsågod!" });
+    turn = applyEvent(turn, { kind: "sources", sources: [] });
+    turn = applyEvent(turn, { kind: "done", session_id: "s1" });
+
+    renderTurn(turn);
+
+    expect(screen.getByText(/vilar inte på något citerat beslut/)).toBeInTheDocument();
+    expect(screen.queryByText(/hänvisningar sparas inte/i)).not.toBeInTheDocument();
+  });
+
+  test("a restored turn is finished, and holds no half-written state", () => {
+    const turn = restoredTurn("r0", makeSessionTurn());
+
+    expect(turn.status).toBe("done");
+    expect(turn.origin).toBe("restored");
+    expect(turn.steps).toEqual([]);
+    expect(turn.sql).toEqual([]);
+    expect(turn.sourcesReceived).toBe(false);
+  });
+
+  test("the trace reference survives, so a bad old answer is still findable", () => {
+    renderTurn(restoredTurn("r0", makeSessionTurn()));
+    expect(
+      screen.getByText("44444444-4444-4444-4444-444444444444"),
+    ).toBeInTheDocument();
   });
 });
 

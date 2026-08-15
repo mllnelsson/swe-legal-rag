@@ -38,6 +38,8 @@ export function TurnView({ turn }: TurnViewProps) {
 
       {turn.answer !== "" && <AnswerBody text={turn.answer} streaming={streaming} />}
 
+      {turn.origin === "restored" && <RestoredNotice />}
+
       {turn.status === "error" && <TurnNotice tone="error" text={turn.error} />}
 
       {turn.status === "aborted" && (
@@ -69,6 +71,34 @@ export function TurnView({ turn }: TurnViewProps) {
         </p>
       )}
     </article>
+  );
+}
+
+/** A turn read back out of a session says what is missing from it.
+ *
+ *  The API persists the question and the answer, never the passages, extracts
+ *  or query rows the turn gathered — that is what stops turn two re-sending turn
+ *  one's documents. So the citations genuinely are gone, and the silence where
+ *  the sources would be has to be named. Saying nothing would let it read as an
+ *  answer that cited nothing, which is a different and false claim. */
+function RestoredNotice() {
+  return (
+    <p
+      style={{
+        margin: 0,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "var(--space-2)",
+        fontFamily: "var(--font-sans)",
+        fontSize: "var(--text-small-size)",
+        lineHeight: "var(--text-small-lh)",
+        color: "var(--text-muted)",
+      }}
+    >
+      <Icon name="history" size={14} />
+      Från ett tidigare samtal. Svarets hänvisningar sparas inte — ställ frågan
+      igen för att se vilka beslut den vilar på.
+    </p>
   );
 }
 

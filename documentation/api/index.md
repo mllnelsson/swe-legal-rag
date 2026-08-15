@@ -3,6 +3,7 @@
 ## Chat
 
 * [Chat Endpoint (POST /api/chat)](chat-endpoint.md) - The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
+* [Sessions Endpoints (GET/DELETE /api/sessions)](sessions.md) - The read and delete contract for past conversations — a summary list that never loads a transcript, a transcript that carries no evidence because none is stored, the empty-history filter, and the single-user model that means every conversation is listed to everyone.
 
 ## Search
 

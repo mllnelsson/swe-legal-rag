@@ -16,6 +16,10 @@ const SWEDISH_DATE = new Intl.DateTimeFormat("sv-SE", {
   day: "numeric",
 });
 
+/** Swedish convention is the ISO form, which is also the most compact one — the
+ *  right trade for a list where the date is a secondary detail. */
+const SWEDISH_SHORT_DATE = new Intl.DateTimeFormat("sv-SE");
+
 const SWEDISH_NUMBER = new Intl.NumberFormat("sv-SE");
 
 /** ISO date from the API to a readable Swedish one. */
@@ -24,6 +28,13 @@ export function formatDecisionDate(isoDate: string | null): string | null {
   const parsed = new Date(isoDate);
   if (Number.isNaN(parsed.getTime())) return null;
   return SWEDISH_DATE.format(parsed);
+}
+
+/** An API timestamp as a short Swedish date. Null when it will not parse. */
+export function formatShortDate(isoTimestamp: string): string | null {
+  const parsed = new Date(isoTimestamp);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return SWEDISH_SHORT_DATE.format(parsed);
 }
 
 /** Digits with Swedish grouping, per the design system's "counts are digits". */
