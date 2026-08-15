@@ -1,0 +1,1513 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-12",
+  "description": "Facit till questions.txt. Referens-SQL skriven för hand och körd mot korpusen; resultatet är vad agenten ska komma fram till. Fältet grounding_required räknas fram med agents.sql._guard.find_predicate_columns och listar de fritextkolumner frågan tvingar agenten att slå upp med list_column_values innan run_sql släpps igenom.",
+  "corpus": {
+    "database": "overklagan",
+    "documents": 184,
+    "chunks": 1610,
+    "entities": 446,
+    "document_entities": 1807,
+    "document_references": 28,
+    "unresolved_references": 83
+  },
+  "tiers": {
+    "1": "Enkla uppslag i en tabell",
+    "2": "Aggregat, gruppering och datumaritmetik",
+    "3": "Joins genom kopplingstabellen och entitetsgrafen",
+    "4": "Fritextkolumner som kräver grundning",
+    "5": "Flera CTE:er, citeringsgraf och två identifierarrum"
+  },
+  "answers": [
+    {
+      "id": "T1.01",
+      "tier": 1,
+      "source_line": 14,
+      "question": "Hur många beslut finns det totalt i korpusen?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal FROM documents",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          184
+        ]
+      ],
+      "grading": "Rakt uppslag. documents är navtabellen — ett beslut per rad."
+    },
+    {
+      "id": "T1.02",
+      "tier": 1,
+      "source_line": 15,
+      "question": "Vilket är det tidigaste beslutsdatumet i korpusen?",
+      "grounding_required": [],
+      "sql": "SELECT min(decision_date) AS tidigaste FROM documents",
+      "columns": [
+        "tidigaste"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          "2020-01-03"
+        ]
+      ],
+      "grading": "decision_date, inte source_published_at eller created_at. De två senare är inhämtningsmetadata och inte sakuppgift om ärendet."
+    },
+    {
+      "id": "T1.03",
+      "tier": 1,
+      "source_line": 16,
+      "question": "Vilket är det senaste beslutsdatumet i korpusen?",
+      "grounding_required": [],
+      "sql": "SELECT max(decision_date) AS senaste FROM documents",
+      "columns": [
+        "senaste"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          "2026-06-09"
+        ]
+      ],
+      "grading": "Se föregående fråga. Samma kolumnval."
+    },
+    {
+      "id": "T1.04",
+      "tier": 1,
+      "source_line": 17,
+      "question": "Hur många beslut saknar ärendenummer?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal FROM documents WHERE case_number IS NULL",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          2
+        ]
+      ],
+      "grading": "Måste räkna NULL, inte tomma strängar. count(case_number) mot count(*) ger samma svar men är en omväg."
+    },
+    {
+      "id": "T1.05",
+      "tier": 1,
+      "source_line": 18,
+      "question": "Hur många entiteter finns det totalt?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal FROM entities",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          446
+        ]
+      ],
+      "grading": "Antal entiteter, inte antal kopplingar — document_entities har fler rader."
+    },
+    {
+      "id": "T1.06",
+      "tier": 1,
+      "source_line": 19,
+      "question": "Hur många textstycken finns det totalt?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal FROM chunks",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          1610
+        ]
+      ],
+      "grading": "Rakt uppslag i chunks."
+    },
+    {
+      "id": "T1.07",
+      "tier": 1,
+      "source_line": 20,
+      "question": "Hur många entiteter finns det av varje typ?",
+      "grounding_required": [],
+      "sql": "SELECT type AS typ, count(*) AS antal\nFROM entities\nGROUP BY type\nORDER BY antal DESC, typ",
+      "columns": [
+        "typ",
+        "antal"
+      ],
+      "row_count": 5,
+      "rows": [
+        [
+          "regulation",
+          197
+        ],
+        [
+          "parish",
+          161
+        ],
+        [
+          "keyword",
+          74
+        ],
+        [
+          "role",
+          9
+        ],
+        [
+          "legal_concept",
+          5
+        ]
+      ],
+      "grading": "entities.type är en sluten uppsättning om fem värden och kräver ingen grundning. Alla fem ska finnas med."
+    },
+    {
+      "id": "T1.08",
+      "tier": 1,
+      "source_line": 21,
+      "question": "Hur många beslut fattades under 2024?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE extract(year FROM decision_date) = 2024",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          23
+        ]
+      ],
+      "grading": "År ska hämtas ur decision_date. Årtalet i case_number avser när ärendet inleddes och ger fel svar."
+    },
+    {
+      "id": "T1.09",
+      "tier": 1,
+      "source_line": 22,
+      "question": "Vilka är de fem senaste besluten? Visa beslutsnummer och beslutsdatum.",
+      "grounding_required": [],
+      "sql": "SELECT decision_number, decision_date\nFROM documents\nORDER BY decision_date DESC, decision_number DESC\nLIMIT 5",
+      "columns": [
+        "decision_number",
+        "decision_date"
+      ],
+      "row_count": 5,
+      "rows": [
+        [
+          "25/2026",
+          "2026-06-09"
+        ],
+        [
+          "24/2026",
+          "2026-06-09"
+        ],
+        [
+          "23/2026",
+          "2026-06-09"
+        ],
+        [
+          "22/2026",
+          "2026-04-08"
+        ],
+        [
+          "21/2026",
+          "2026-04-08"
+        ]
+      ],
+      "grading": "Sortering på decision_date. Ordningen inom samma datum är godtycklig, så mängden av fem beslutsnummer är det som ska stämma."
+    },
+    {
+      "id": "T1.10",
+      "tier": 1,
+      "source_line": 23,
+      "question": "Hur många hänvisningar till beslut utanför korpusen finns registrerade?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal FROM unresolved_references",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          83
+        ]
+      ],
+      "grading": "unresolved_references, inte document_references. Den förra är hänvisningar till beslut som INTE finns i korpusen."
+    },
+    {
+      "id": "T2.01",
+      "tier": 2,
+      "source_line": 28,
+      "question": "Hur många beslut fattades per år?",
+      "grounding_required": [],
+      "sql": "SELECT extract(year FROM decision_date) AS ar, count(*) AS antal\nFROM documents\nGROUP BY ar\nORDER BY ar",
+      "columns": [
+        "ar",
+        "antal"
+      ],
+      "row_count": 7,
+      "rows": [
+        [
+          2020.0,
+          36
+        ],
+        [
+          2021.0,
+          28
+        ],
+        [
+          2022.0,
+          29
+        ],
+        [
+          2023.0,
+          21
+        ],
+        [
+          2024.0,
+          23
+        ],
+        [
+          2025.0,
+          22
+        ],
+        [
+          2026.0,
+          25
+        ]
+      ],
+      "grading": "Sju år, 2020–2026. Ett svar som saknar ett år har troligen grupperat på case_number i stället."
+    },
+    {
+      "id": "T2.02",
+      "tier": 2,
+      "source_line": 29,
+      "question": "Hur fördelar sig textstyckena mellan brödtext och bilagor?",
+      "grounding_required": [],
+      "sql": "SELECT section, count(*) AS antal\nFROM chunks\nGROUP BY section\nORDER BY section",
+      "columns": [
+        "section",
+        "antal"
+      ],
+      "row_count": 2,
+      "rows": [
+        [
+          "appendix",
+          845
+        ],
+        [
+          "body",
+          765
+        ]
+      ],
+      "grading": "appendix är det ÖVERKLAGADE beslutet, alltså underinstansens ord. Här efterfrågas bara fördelningen, men distinktionen återkommer."
+    },
+    {
+      "id": "T2.03",
+      "tier": 2,
+      "source_line": 30,
+      "question": "Hur många beslut fattades per månad under 2026?",
+      "grounding_required": [],
+      "sql": "SELECT extract(month FROM decision_date) AS manad, count(*) AS antal\nFROM documents\nWHERE extract(year FROM decision_date) = 2026\nGROUP BY manad\nORDER BY manad",
+      "columns": [
+        "manad",
+        "antal"
+      ],
+      "row_count": 5,
+      "rows": [
+        [
+          1.0,
+          10
+        ],
+        [
+          2.0,
+          3
+        ],
+        [
+          3.0,
+          1
+        ],
+        [
+          4.0,
+          8
+        ],
+        [
+          6.0,
+          3
+        ]
+      ],
+      "grading": "Månader utan beslut ska inte dyka upp som nollrader — korpusen slutar i juni 2026."
+    },
+    {
+      "id": "T2.04",
+      "tier": 2,
+      "source_line": 31,
+      "question": "Vilket år fattades flest beslut?",
+      "grounding_required": [],
+      "sql": "SELECT extract(year FROM decision_date) AS ar, count(*) AS antal\nFROM documents\nGROUP BY ar\nORDER BY antal DESC, ar\nLIMIT 1",
+      "columns": [
+        "ar",
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          2020.0,
+          36
+        ]
+      ],
+      "grading": "ORDER BY antal DESC LIMIT 1. Ett svar som listar alla år har inte besvarat frågan."
+    },
+    {
+      "id": "T2.05",
+      "tier": 2,
+      "source_line": 32,
+      "question": "Hur många textstycken har ett beslut i genomsnitt?",
+      "grounding_required": [],
+      "sql": "SELECT round(count(*)::numeric / count(DISTINCT document_id), 2) AS snitt\nFROM chunks",
+      "columns": [
+        "snitt"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          8.75
+        ]
+      ],
+      "grading": "Nämnaren ska vara antal beslut som HAR stycken. Att dela på 184 rakt av ger samma tal här bara för att alla beslut är styckade."
+    },
+    {
+      "id": "T2.06",
+      "tier": 2,
+      "source_line": 33,
+      "question": "Vilka tio beslut har flest textstycken? Visa beslutsnummer och antal.",
+      "grounding_required": [],
+      "sql": "SELECT d.decision_number, count(c.id) AS antal_stycken\nFROM documents AS d\nJOIN chunks AS c ON c.document_id = d.id\nGROUP BY d.decision_number\nORDER BY antal_stycken DESC, d.decision_number\nLIMIT 10",
+      "columns": [
+        "decision_number",
+        "antal_stycken"
+      ],
+      "row_count": 10,
+      "rows": [
+        [
+          "1/2021",
+          135
+        ],
+        [
+          "7/2025",
+          27
+        ],
+        [
+          "12/2022",
+          26
+        ],
+        [
+          "14/2026",
+          26
+        ],
+        [
+          "1/2023",
+          25
+        ],
+        [
+          "11/2025",
+          25
+        ],
+        [
+          "28/2022",
+          23
+        ],
+        [
+          "13/2023",
+          22
+        ],
+        [
+          "20/2022",
+          22
+        ],
+        [
+          "6/2023",
+          22
+        ]
+      ],
+      "grading": "Antalet stycken säger ingenting om ärendets tyngd — det speglar PDF:ens längd, och 1/2021 är en extrem avvikare med 135 stycken."
+    },
+    {
+      "id": "T2.07",
+      "tier": 2,
+      "source_line": 34,
+      "question": "Hur många beslut fattades under första halvåret 2025?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE decision_date >= DATE '2025-01-01'\n  AND decision_date <= DATE '2025-06-30'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          13
+        ]
+      ],
+      "grading": "Halvårsgränsen ska vara sluten i båda ändar. BETWEEN duger; ett '< 2025-06-30' tappar beslut fattade den 30 juni."
+    },
+    {
+      "id": "T2.08",
+      "tier": 2,
+      "source_line": 35,
+      "question": "Hur många olika kategorier förekommer bland besluten?",
+      "grounding_required": [],
+      "sql": "SELECT count(DISTINCT category) AS antal FROM documents",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          43
+        ]
+      ],
+      "grading": "43 distinkta strängar, men INTE 43 ämnen — category är ingen kontrollerad vokabulär och innehåller snarlika varianter. Frågan gäller strängarna."
+    },
+    {
+      "id": "T2.09",
+      "tier": 2,
+      "source_line": 36,
+      "question": "För hur många beslut skiljer sig publiceringsdatumet i listningen från beslutsdatumet?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE source_published_at::date <> decision_date",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          182
+        ]
+      ],
+      "grading": "source_published_at är timestamptz och decision_date är date; utan cast jämförs midnatt mot publiceringstidpunkt och nästan allt ser olika ut."
+    },
+    {
+      "id": "T2.10",
+      "tier": 2,
+      "source_line": 37,
+      "question": "Hur många beslut har minst ett bilagestycke?",
+      "grounding_required": [],
+      "sql": "SELECT count(DISTINCT document_id) AS antal FROM chunks WHERE section = 'appendix'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          168
+        ]
+      ],
+      "grading": "count(DISTINCT document_id), inte count(*) — frågan gäller beslut, inte stycken. 845 är antalet bilagestycken och är fel svar."
+    },
+    {
+      "id": "T3.01",
+      "tier": 3,
+      "source_line": 42,
+      "question": "Vilka är de tio vanligaste sökorden, räknat i antal beslut?",
+      "grounding_required": [],
+      "sql": "SELECT e.name AS sokord, count(DISTINCT de.document_id) AS antal\nFROM entities AS e\nJOIN document_entities AS de ON de.entity_id = e.id\nWHERE e.type = 'keyword'\nGROUP BY e.name\nORDER BY antal DESC, e.name\nLIMIT 10",
+      "columns": [
+        "sokord",
+        "antal"
+      ],
+      "row_count": 10,
+      "rows": [
+        [
+          "beslutsprövning",
+          70
+        ],
+        [
+          "avvisning",
+          46
+        ],
+        [
+          "kyrkofullmäktige",
+          15
+        ],
+        [
+          "utlämnande av handling",
+          14
+        ],
+        [
+          "omprövning",
+          11
+        ],
+        [
+          "handlingsoffentlighet",
+          10
+        ],
+        [
+          "utlämnande",
+          10
+        ],
+        [
+          "obehörighet",
+          9
+        ],
+        [
+          "verkställighetsförbud",
+          8
+        ],
+        [
+          "indelningsändring",
+          7
+        ]
+      ],
+      "grading": "type = 'keyword' är nämndens egna sökord och den enda kategorisering korpusen själv går i god för. count(DISTINCT document_id) krävs."
+    },
+    {
+      "id": "T3.02",
+      "tier": 3,
+      "source_line": 43,
+      "question": "Vilka tio författningar åberopas i flest beslut?",
+      "grounding_required": [],
+      "sql": "SELECT e.name AS forfattning, count(DISTINCT de.document_id) AS antal\nFROM entities AS e\nJOIN document_entities AS de ON de.entity_id = e.id\nWHERE e.type = 'regulation'\nGROUP BY e.name\nORDER BY antal DESC, e.name\nLIMIT 10",
+      "columns": [
+        "forfattning",
+        "antal"
+      ],
+      "row_count": 10,
+      "rows": [
+        [
+          "57 kap. 10 § kyrkoordningen",
+          67
+        ],
+        [
+          "57 kap. 8-19 §§ kyrkoordningen",
+          53
+        ],
+        [
+          "53 kap. 3-11 §§ kyrkoordningen",
+          27
+        ],
+        [
+          "58 kap. 1 § kyrkoordningen",
+          22
+        ],
+        [
+          "57 kap. 8 § kyrkoordningen",
+          21
+        ],
+        [
+          "31 kap. 12 § kyrkoordningen",
+          20
+        ],
+        [
+          "16 kap. 7 § kyrkoordningen",
+          14
+        ],
+        [
+          "57 kap. 9 § kyrkoordningen",
+          14
+        ],
+        [
+          "3 kap. 22 § kyrkoordningen",
+          12
+        ],
+        [
+          "57 kap. 8-18 §§ kyrkoordningen",
+          12
+        ]
+      ],
+      "grading": "Samma form som föregående, annan type. Författningar är utvunna ur texten av en språkmodell och paragrafspann samexisterar med enskilda paragrafer."
+    },
+    {
+      "id": "T3.03",
+      "tier": 3,
+      "source_line": 44,
+      "question": "Vilka tio församlingar eller stift förekommer i flest beslut?",
+      "grounding_required": [],
+      "sql": "SELECT e.name AS forsamling, count(DISTINCT de.document_id) AS antal\nFROM entities AS e\nJOIN document_entities AS de ON de.entity_id = e.id\nWHERE e.type = 'parish'\nGROUP BY e.name\nORDER BY antal DESC, e.name\nLIMIT 10",
+      "columns": [
+        "forsamling",
+        "antal"
+      ],
+      "row_count": 10,
+      "rows": [
+        [
+          "x stift",
+          81
+        ],
+        [
+          "y församling",
+          59
+        ],
+        [
+          "y pastorat",
+          39
+        ],
+        [
+          "z församling",
+          16
+        ],
+        [
+          "x pastorat",
+          7
+        ],
+        [
+          "v församling",
+          4
+        ],
+        [
+          "s stift",
+          3
+        ],
+        [
+          "t församling",
+          3
+        ],
+        [
+          "v stift",
+          3
+        ],
+        [
+          "x församling",
+          3
+        ]
+      ],
+      "grading": "Namnen är anonymiserade i källan ('x stift', 'y församling'), vilket är väntat och inte ett fel i svaret."
+    },
+    {
+      "id": "T3.04",
+      "tier": 3,
+      "source_line": 45,
+      "question": "Hur många beslut har tre eller fler sökord?",
+      "grounding_required": [],
+      "sql": "WITH per_beslut AS (\n    SELECT de.document_id, count(*) AS antal_sokord\n    FROM document_entities AS de\n    JOIN entities AS e ON e.id = de.entity_id\n    WHERE e.type = 'keyword'\n    GROUP BY de.document_id\n)\nSELECT count(*) AS antal FROM per_beslut WHERE antal_sokord >= 3",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          36
+        ]
+      ],
+      "grading": "Kräver gruppering före räkning — HAVING count(*) >= 3 i en subfråga, inte ett WHERE-villkor. Snittet är 1,85 sökord per beslut, så 36 av 184 är rimligt; ett svar nära 184 betyder att modellen räknat kopplingar."
+    },
+    {
+      "id": "T3.05",
+      "tier": 3,
+      "source_line": 46,
+      "question": "Hur många beslut nämner rollen kyrkoherde?",
+      "grounding_required": [
+        "entities.name"
+      ],
+      "sql": "SELECT count(DISTINCT de.document_id) AS antal\nFROM document_entities AS de\nJOIN entities AS e ON e.id = de.entity_id\nWHERE e.type = 'role' AND e.name = 'kyrkoherde'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          57
+        ]
+      ],
+      "grading": "entities.name är fritext och måste grundas med list_column_values först. Namnen lagras i gemener, så 'Kyrkoherde' träffar inget."
+    },
+    {
+      "id": "T3.06",
+      "tier": 3,
+      "source_line": 47,
+      "question": "Hur fördelar sig primary och mentioned per entitetstyp?",
+      "grounding_required": [],
+      "sql": "SELECT e.type AS typ, de.relevance, count(*) AS antal\nFROM document_entities AS de\nJOIN entities AS e ON e.id = de.entity_id\nGROUP BY e.type, de.relevance\nORDER BY e.type, de.relevance",
+      "columns": [
+        "typ",
+        "relevance",
+        "antal"
+      ],
+      "row_count": 8,
+      "rows": [
+        [
+          "keyword",
+          "primary",
+          341
+        ],
+        [
+          "legal_concept",
+          "mentioned",
+          101
+        ],
+        [
+          "legal_concept",
+          "primary",
+          125
+        ],
+        [
+          "parish",
+          "mentioned",
+          247
+        ],
+        [
+          "parish",
+          "primary",
+          7
+        ],
+        [
+          "regulation",
+          "mentioned",
+          623
+        ],
+        [
+          "role",
+          "mentioned",
+          350
+        ],
+        [
+          "role",
+          "primary",
+          13
+        ]
+      ],
+      "grading": "Fällan: keyword är ALLTID primary och regulation alltid mentioned. Ett svar som visar båda värdena för alla fem typer är påhittat."
+    },
+    {
+      "id": "T3.07",
+      "tier": 3,
+      "source_line": 48,
+      "question": "Vilka beslut från 2026 har sökordet beslutsprövning? Visa beslutsnummer och beslutsdatum.",
+      "grounding_required": [
+        "entities.name"
+      ],
+      "sql": "SELECT d.decision_number, d.decision_date\nFROM documents AS d\nJOIN document_entities AS de ON de.document_id = d.id\nJOIN entities AS e ON e.id = de.entity_id\nWHERE e.type = 'keyword'\n  AND e.name = 'beslutsprövning'\n  AND extract(year FROM d.decision_date) = 2026\nORDER BY d.decision_date, d.decision_number",
+      "columns": [
+        "decision_number",
+        "decision_date"
+      ],
+      "row_count": 3,
+      "rows": [
+        [
+          "15/2026",
+          "2026-04-08"
+        ],
+        [
+          "16/2026",
+          "2026-04-08"
+        ],
+        [
+          "21/2026",
+          "2026-04-08"
+        ]
+      ],
+      "grading": "Kräver grundning av entities.name. Sökordet är gement och utan bindestreck."
+    },
+    {
+      "id": "T3.08",
+      "tier": 3,
+      "source_line": 49,
+      "question": "Hur många beslut nämner både biskop och domkapitel?",
+      "grounding_required": [
+        "entities.name"
+      ],
+      "sql": "SELECT count(*) AS antal\nFROM documents AS d\nWHERE EXISTS (\n        SELECT 1 FROM document_entities AS de\n        JOIN entities AS e ON e.id = de.entity_id\n        WHERE de.document_id = d.id AND e.type = 'role' AND e.name = 'biskop'\n      )\n  AND EXISTS (\n        SELECT 1 FROM document_entities AS de\n        JOIN entities AS e ON e.id = de.entity_id\n        WHERE de.document_id = d.id AND e.type = 'role' AND e.name = 'domkapitel'\n      )",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          13
+        ]
+      ],
+      "grading": "Två separata EXISTS, inte 'name IN (biskop, domkapitel)' — det senare ger beslut som nämner ENDERA och är den vanligaste felformen här."
+    },
+    {
+      "id": "T3.09",
+      "tier": 3,
+      "source_line": 50,
+      "question": "Vilka sökord förekommer i beslut både från 2020 och från 2026?",
+      "grounding_required": [],
+      "sql": "SELECT e.name AS sokord\nFROM entities AS e\nJOIN document_entities AS de ON de.entity_id = e.id\nJOIN documents AS d ON d.id = de.document_id\nWHERE e.type = 'keyword'\nGROUP BY e.name\nHAVING count(*) FILTER (WHERE extract(year FROM d.decision_date) = 2020) > 0\n   AND count(*) FILTER (WHERE extract(year FROM d.decision_date) = 2026) > 0\nORDER BY e.name",
+      "columns": [
+        "sokord"
+      ],
+      "row_count": 9,
+      "rows": [
+        [
+          "avskrivning"
+        ],
+        [
+          "avvisning"
+        ],
+        [
+          "beslutsprövning"
+        ],
+        [
+          "handläggning"
+        ],
+        [
+          "handlingsoffentlighet"
+        ],
+        [
+          "kyrkofullmäktige"
+        ],
+        [
+          "kyrkotillhörighet"
+        ],
+        [
+          "obehörighet"
+        ],
+        [
+          "omprövning"
+        ]
+      ],
+      "grading": "Kräver HAVING med två villkorade räkningar, eller INTERSECT. Ett vanligt WHERE-villkor på båda åren ger tomt resultat eftersom ett beslut har ett år."
+    },
+    {
+      "id": "T3.10",
+      "tier": 3,
+      "source_line": 51,
+      "question": "Hur många entiteter är inte kopplade till något beslut alls?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal\nFROM entities AS e\nWHERE NOT EXISTS (\n        SELECT 1 FROM document_entities AS de WHERE de.entity_id = e.id\n      )",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          140
+        ]
+      ],
+      "grading": "Anti-join. 140 av 446 entiteter är föräldralösa — utvunna men aldrig kopplade. Ett svar på 0 betyder att modellen gjort en vanlig join."
+    },
+    {
+      "id": "T4.01",
+      "tier": 4,
+      "source_line": 57,
+      "question": "Hur många överklaganden har avslagits?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE decision_outcome ~* 'avslår[^.]*\\möverklagande(t|n|na)?\\M'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          90
+        ]
+      ],
+      "grading": "Kärnfällan. decision_outcome är den ordagranna slutklämmen: ILIKE '%avslår%' ger 110 och räknar in avslagna vittnesyrkanden och begäranden om omprövning. ILIKE '%avslår överklagandet%' ger 88 och missar de lydelser som skriver ut parten ('avslår A:s överklagande'). Korrekt svar 90. Godtas 88 som nära miss; 110 är fel."
+    },
+    {
+      "id": "T4.02",
+      "tier": 4,
+      "source_line": 58,
+      "question": "Hur många överklaganden avslogs under 2023?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE decision_outcome ~* 'avslår[^.]*\\möverklagande(t|n|na)?\\M'\n  AND extract(year FROM decision_date) = 2023",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          7
+        ]
+      ],
+      "grading": "Samma predikat som föregående, avgränsat på år. 2023 är korpusens glesaste år, så ett för högt tal avslöjar ett för brett strängvillkor."
+    },
+    {
+      "id": "T4.03",
+      "tier": 4,
+      "source_line": 59,
+      "question": "Hur många överklaganden har avvisats?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE decision_outcome ~* 'avvisar[^.]*\\möverklagande(t|n|na)?\\M'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          35
+        ]
+      ],
+      "grading": "Avvisning är inte avslag — avvisning betyder att överklagandet inte prövas i sak. Ett svar som är lika med avslagssiffran betyder att modellen behandlat orden som synonymer."
+    },
+    {
+      "id": "T4.04",
+      "tier": 4,
+      "source_line": 60,
+      "question": "Hur många ärenden har avskrivits?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE decision_outcome ~* '\\mavskriver\\M'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          5
+        ]
+      ],
+      "grading": "Avskrivning är ett tredje utfall. Ordboundary behövs inte här men skadar inte; 'avskrivning' som kategori är något annat än 'avskriver' i slutklämmen."
+    },
+    {
+      "id": "T4.05",
+      "tier": 4,
+      "source_line": 61,
+      "question": "Hur många beslut handlar om utlämnande av handling?",
+      "grounding_required": [
+        "entities.name"
+      ],
+      "sql": "SELECT count(DISTINCT de.document_id) AS antal\nFROM document_entities AS de\nJOIN entities AS e ON e.id = de.entity_id\nWHERE e.type = 'keyword' AND e.name IN ('utlämnande', 'utlämnande av handling', 'utlämnande av handlingar')",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          28
+        ]
+      ],
+      "grading": "Ämnesfråga: den semantiska modellen säger uttryckligen att sökord går före documents.category. Tre sökordsvarianter måste tas med och ger 28. Ett category-baserat svar ger 21 (17 + 4 varianter) och godtas som nära miss; 14 betyder att bara en variant hittades."
+    },
+    {
+      "id": "T4.06",
+      "tier": 4,
+      "source_line": 62,
+      "question": "Hur många överklaganden avslogs per år?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT extract(year FROM decision_date) AS ar,\n       count(*) FILTER (WHERE decision_outcome ~* 'avslår[^.]*\\möverklagande(t|n|na)?\\M') AS avslagna\nFROM documents\nGROUP BY ar\nORDER BY ar",
+      "columns": [
+        "ar",
+        "avslagna"
+      ],
+      "row_count": 7,
+      "rows": [
+        [
+          2020.0,
+          16
+        ],
+        [
+          2021.0,
+          14
+        ],
+        [
+          2022.0,
+          14
+        ],
+        [
+          2023.0,
+          7
+        ],
+        [
+          2024.0,
+          14
+        ],
+        [
+          2025.0,
+          12
+        ],
+        [
+          2026.0,
+          13
+        ]
+      ],
+      "grading": "FILTER eller CASE inuti aggregatet. Ett WHERE-villkor i stället tappar de år som råkar sakna avslag — här inga, men formen är ändå fel."
+    },
+    {
+      "id": "T4.07",
+      "tier": 4,
+      "source_line": 63,
+      "question": "Vilken kategori har flest beslut?",
+      "grounding_required": [],
+      "sql": "SELECT category, count(*) AS antal\nFROM documents\nGROUP BY category\nORDER BY antal DESC, category\nLIMIT 1",
+      "columns": [
+        "category",
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          "Beslutsprövning",
+          68
+        ]
+      ],
+      "grading": "Ingen grundning krävs: category grupperas, den villkoras inte. En modell som ändå anropar list_column_values har inte förstått regeln, men svarar rätt."
+    },
+    {
+      "id": "T4.08",
+      "tier": 4,
+      "source_line": 64,
+      "question": "Hur många beslut upphäver eller undanröjer underinstansens beslut?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE decision_outcome ~* '\\m(upphäver|undanröjer)\\M'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          28
+        ]
+      ],
+      "grading": "Två skilda verb för samma sorts utgång, och båda måste med. Enbart 'upphäver' ger ett för lågt tal."
+    },
+    {
+      "id": "T4.09",
+      "tier": 4,
+      "source_line": 65,
+      "question": "Hur många beslut har en sammansatt slutkläm med numrerade punkter?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT count(*) AS antal FROM documents WHERE decision_outcome ~ '\\m2\\.'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          11
+        ]
+      ],
+      "grading": "Sammansatta slutklämmar är numrerade '1. ... 2. ...'. De är också förklaringen till varför enkel strängmatchning räknar fel i båda riktningarna i frågorna ovan."
+    },
+    {
+      "id": "T4.10",
+      "tier": 4,
+      "source_line": 66,
+      "question": "Hur många överklaganden om utlämnande av handling avslogs?",
+      "grounding_required": [
+        "documents.decision_outcome",
+        "entities.name"
+      ],
+      "sql": "SELECT count(DISTINCT d.id) AS antal\nFROM documents AS d\nJOIN document_entities AS de ON de.document_id = d.id\nJOIN entities AS e ON e.id = de.entity_id\nWHERE e.type = 'keyword'\n  AND e.name IN ('utlämnande', 'utlämnande av handling', 'utlämnande av handlingar')\n  AND d.decision_outcome ~* 'avslår[^.]*\\möverklagande(t|n|na)?\\M'",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          22
+        ]
+      ],
+      "grading": "Kombinerar båda fritextfällorna i en fråga och kräver grundning av två kolumner. count(DISTINCT d.id) behövs — ett beslut kan bära flera av sökordsvarianterna och skulle annars räknas dubbelt."
+    },
+    {
+      "id": "T5.01",
+      "tier": 5,
+      "source_line": 71,
+      "question": "Vilka sökord med minst fem beslut har högst andel avslagna överklaganden?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "WITH sokord AS (\n    SELECT de.document_id, e.name\n    FROM entities AS e\n    JOIN document_entities AS de ON de.entity_id = e.id\n    WHERE e.type = 'keyword'\n)\nSELECT s.name AS sokord,\n       count(*) AS antal_beslut,\n       round(100.0 * count(*) FILTER (WHERE d.decision_outcome ~* 'avslår[^.]*\\möverklagande(t|n|na)?\\M') / count(*), 1) AS andel_avslag\nFROM sokord AS s\nJOIN documents AS d ON d.id = s.document_id\nGROUP BY s.name\nHAVING count(*) >= 5\nORDER BY andel_avslag DESC, antal_beslut DESC, s.name",
+      "columns": [
+        "sokord",
+        "antal_beslut",
+        "andel_avslag"
+      ],
+      "row_count": 16,
+      "rows": [
+        [
+          "barnkonsekvensanalys",
+          5,
+          100.0
+        ],
+        [
+          "behörighetsprövning",
+          5,
+          100.0
+        ],
+        [
+          "kyrkotillhörighet",
+          5,
+          100.0
+        ],
+        [
+          "utlämnande",
+          10,
+          80.0
+        ],
+        [
+          "utlämnande av handling",
+          14,
+          78.6
+        ],
+        [
+          "avskrivning",
+          6,
+          66.7
+        ],
+        [
+          "handlingsoffentlighet",
+          10,
+          60.0
+        ],
+        [
+          "beslutsprövning",
+          70,
+          50.0
+        ],
+        [
+          "kyrkofullmäktige",
+          15,
+          46.7
+        ],
+        [
+          "obehörighet",
+          9,
+          44.4
+        ],
+        [
+          "jäv",
+          7,
+          42.9
+        ],
+        [
+          "avvisning",
+          46,
+          37.0
+        ],
+        [
+          "skriftlig erinran",
+          5,
+          20.0
+        ],
+        [
+          "indelningsändring",
+          7,
+          14.3
+        ],
+        [
+          "verkställighetsförbud",
+          8,
+          12.5
+        ],
+        [
+          "omprövning",
+          11,
+          9.1
+        ]
+      ],
+      "grading": "CTE, villkorat aggregat och HAVING på gruppstorlek. Utan tröskeln på fem beslut fylls toppen av sökord med ett enda beslut och 100 procent."
+    },
+    {
+      "id": "T5.02",
+      "tier": 5,
+      "source_line": 72,
+      "question": "Vilket beslut hänvisas till av flest andra beslut?",
+      "grounding_required": [],
+      "sql": "WITH citerade AS (\n    SELECT r.target_document_id, count(*) AS antal_hanvisningar\n    FROM document_references AS r\n    GROUP BY r.target_document_id\n)\nSELECT d.decision_number, c.antal_hanvisningar\nFROM citerade AS c\nJOIN documents AS d ON d.id = c.target_document_id\nWHERE c.antal_hanvisningar = (SELECT max(antal_hanvisningar) FROM citerade)\nORDER BY d.decision_number",
+      "columns": [
+        "decision_number",
+        "antal_hanvisningar"
+      ],
+      "row_count": 4,
+      "rows": [
+        [
+          "2/2020",
+          2
+        ],
+        [
+          "29/2020",
+          2
+        ],
+        [
+          "7/2024",
+          2
+        ],
+        [
+          "9/2025",
+          2
+        ]
+      ],
+      "grading": "Grafen är riktad: target är det citerade beslutet, och att gruppera på source_document_id svarar på motsatt fråga. Frågan är ställd i singular men toppen är delad — fyra beslut har två hänvisningar var. Ett svar med bara ett av dem är ofullständigt; ett ORDER BY ... LIMIT 1 döljer delningen."
+    },
+    {
+      "id": "T5.03",
+      "tier": 5,
+      "source_line": 73,
+      "question": "Hur många beslut är helt isolerade i citeringsgrafen, alltså varken hänvisar till eller hänvisas till av något annat beslut?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal\nFROM documents AS d\nWHERE NOT EXISTS (SELECT 1 FROM document_references AS r WHERE r.source_document_id = d.id)\n  AND NOT EXISTS (SELECT 1 FROM document_references AS r WHERE r.target_document_id = d.id)",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          147
+        ]
+      ],
+      "grading": "Båda riktningarna måste uteslutas. Ett svar på 161 (bara source) eller 160 (bara target) betyder att bara halva villkoret skrevs."
+    },
+    {
+      "id": "T5.04",
+      "tier": 5,
+      "source_line": 74,
+      "question": "Hur många beslut har ett ärendenummer vars årtal skiljer sig från beslutsårets?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal\nFROM documents\nWHERE case_number IS NOT NULL\n  AND left(case_number, 4) <> to_char(decision_date, 'YYYY')",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          28
+        ]
+      ],
+      "grading": "Två identifierarrum med olika tidsbetydelse: årtalet i case_number är när ärendet INLEDDES, decision_date när det avgjordes. IS NOT NULL behövs, annars tystas de två besluten utan ärendenummer bort på fel grund."
+    },
+    {
+      "id": "T5.05",
+      "tier": 5,
+      "source_line": 75,
+      "question": "Vilka fem saknade beslut citeras av flest beslut i korpusen?",
+      "grounding_required": [],
+      "sql": "SELECT target_case_number, count(DISTINCT source_document_id) AS antal_citerande\nFROM unresolved_references\nGROUP BY target_case_number\nORDER BY antal_citerande DESC, target_case_number\nLIMIT 5",
+      "columns": [
+        "target_case_number",
+        "antal_citerande"
+      ],
+      "row_count": 5,
+      "rows": [
+        [
+          "17/2014",
+          3
+        ],
+        [
+          "18/2006",
+          3
+        ],
+        [
+          "24/2003",
+          3
+        ],
+        [
+          "3/2001",
+          3
+        ],
+        [
+          "3/2002",
+          3
+        ]
+      ],
+      "grading": "unresolved_references är beslut som citeras men INTE finns i korpusen. Att hämta dem ur document_references ger fel tabell och fel svar."
+    },
+    {
+      "id": "T5.06",
+      "tier": 5,
+      "source_line": 76,
+      "question": "Hur många av de saknade hänvisningarna är beslutsnummer respektive ärendenummer?",
+      "grounding_required": [],
+      "sql": "SELECT CASE WHEN target_case_number LIKE '%/%' THEN 'beslutsnummer' ELSE 'arendenummer' END AS sort,\n       count(DISTINCT target_case_number) AS antal\nFROM unresolved_references\nGROUP BY sort\nORDER BY sort",
+      "columns": [
+        "sort",
+        "antal"
+      ],
+      "row_count": 2,
+      "rows": [
+        [
+          "arendenummer",
+          3
+        ],
+        [
+          "beslutsnummer",
+          66
+        ]
+      ],
+      "grading": "Kolumnen heter target_case_number men rymmer BÅDA identifierarrummen — formen skiljer dem åt, ett beslutsnummer innehåller snedstreck. Ett svar som antar att allt är ärendenummer missar 66 av 69."
+    },
+    {
+      "id": "T5.07",
+      "tier": 5,
+      "source_line": 77,
+      "question": "Skiljer sig andelen avslagna överklaganden mellan beslut som hänvisar till andra beslut och beslut som inte gör det?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT CASE WHEN EXISTS (SELECT 1 FROM document_references AS r WHERE r.source_document_id = d.id)\n            THEN 'hanvisar' ELSE 'hanvisar inte' END AS grupp,\n       count(*) AS antal_beslut,\n       round(100.0 * count(*) FILTER (WHERE d.decision_outcome ~* 'avslår[^.]*\\möverklagande(t|n|na)?\\M') / count(*), 1) AS andel_avslag\nFROM documents AS d\nGROUP BY grupp\nORDER BY grupp",
+      "columns": [
+        "grupp",
+        "antal_beslut",
+        "andel_avslag"
+      ],
+      "row_count": 2,
+      "rows": [
+        [
+          "hanvisar",
+          23,
+          34.8
+        ],
+        [
+          "hanvisar inte",
+          161,
+          50.9
+        ]
+      ],
+      "grading": "Korrelerad EXISTS inuti en CASE som det grupperas på. Frågan är jämförande, så ett svar med bara en av grupperna är inget svar."
+    },
+    {
+      "id": "T5.08",
+      "tier": 5,
+      "source_line": 78,
+      "question": "Visa för varje år antalet beslut, antalet avslagna överklaganden och avslagsandelen.",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "SELECT extract(year FROM decision_date) AS ar,\n       count(*) AS antal_beslut,\n       count(*) FILTER (WHERE decision_outcome ~* 'avslår[^.]*\\möverklagande(t|n|na)?\\M') AS avslagna,\n       round(100.0 * count(*) FILTER (WHERE decision_outcome ~* 'avslår[^.]*\\möverklagande(t|n|na)?\\M') / count(*), 1) AS andel\nFROM documents\nGROUP BY ar\nORDER BY ar",
+      "columns": [
+        "ar",
+        "antal_beslut",
+        "avslagna",
+        "andel"
+      ],
+      "row_count": 7,
+      "rows": [
+        [
+          2020.0,
+          36,
+          16,
+          44.4
+        ],
+        [
+          2021.0,
+          28,
+          14,
+          50.0
+        ],
+        [
+          2022.0,
+          29,
+          14,
+          48.3
+        ],
+        [
+          2023.0,
+          21,
+          7,
+          33.3
+        ],
+        [
+          2024.0,
+          23,
+          14,
+          60.9
+        ],
+        [
+          2025.0,
+          22,
+          12,
+          54.5
+        ],
+        [
+          2026.0,
+          25,
+          13,
+          52.0
+        ]
+      ],
+      "grading": "Tre aggregat över samma gruppering, varav två villkorade. Andelen måste räknas med 100.0 eller en cast — heltalsdivision ger noll rakt igenom."
+    },
+    {
+      "id": "T5.09",
+      "tier": 5,
+      "source_line": 79,
+      "question": "Hur många hänvisningar går till ett beslut som avgjordes samma år som det hänvisande beslutet?",
+      "grounding_required": [],
+      "sql": "SELECT count(*) AS antal\nFROM document_references AS r\nJOIN documents AS s ON s.id = r.source_document_id\nJOIN documents AS t ON t.id = r.target_document_id\nWHERE extract(year FROM s.decision_date) = extract(year FROM t.decision_date)",
+      "columns": [
+        "antal"
+      ],
+      "row_count": 1,
+      "rows": [
+        [
+          16
+        ]
+      ],
+      "grading": "Självjoin över samma tabell två gånger med skilda alias. Inget beslut citerar ett senare beslut, så grafen pekar alltid bakåt eller inom året."
+    },
+    {
+      "id": "T5.10",
+      "tier": 5,
+      "source_line": 80,
+      "question": "Vilka sökord är överrepresenterade bland avvisade överklaganden jämfört med korpusen i stort?",
+      "grounding_required": [
+        "documents.decision_outcome"
+      ],
+      "sql": "WITH avvisade AS (\n    SELECT id FROM documents WHERE decision_outcome ~* 'avvisar[^.]*\\möverklagande(t|n|na)?\\M'\n),\nsokord AS (\n    SELECT e.name, de.document_id\n    FROM entities AS e\n    JOIN document_entities AS de ON de.entity_id = e.id\n    WHERE e.type = 'keyword'\n)\nSELECT s.name AS sokord,\n       count(*) FILTER (WHERE a.id IS NOT NULL) AS bland_avvisade,\n       count(*) AS i_korpusen,\n       round(100.0 * count(*) FILTER (WHERE a.id IS NOT NULL) / count(*), 1) AS andel_avvisade\nFROM sokord AS s\nLEFT JOIN avvisade AS a ON a.id = s.document_id\nGROUP BY s.name\nHAVING count(*) >= 5 AND count(*) FILTER (WHERE a.id IS NOT NULL) > 0\nORDER BY andel_avvisade DESC, i_korpusen DESC, s.name",
+      "columns": [
+        "sokord",
+        "bland_avvisade",
+        "i_korpusen",
+        "andel_avvisade"
+      ],
+      "row_count": 8,
+      "rows": [
+        [
+          "avvisning",
+          26,
+          46,
+          56.5
+        ],
+        [
+          "avskrivning",
+          2,
+          6,
+          33.3
+        ],
+        [
+          "kyrkofullmäktige",
+          3,
+          15,
+          20.0
+        ],
+        [
+          "indelningsändring",
+          1,
+          7,
+          14.3
+        ],
+        [
+          "obehörighet",
+          1,
+          9,
+          11.1
+        ],
+        [
+          "omprövning",
+          1,
+          11,
+          9.1
+        ],
+        [
+          "beslutsprövning",
+          6,
+          70,
+          8.6
+        ],
+        [
+          "utlämnande av handling",
+          1,
+          14,
+          7.1
+        ]
+      ],
+      "grading": "Svåraste frågan: två CTE:er, en LEFT JOIN som måste vara vänster (annars försvinner nämnaren), villkorade aggregat i både SELECT och HAVING. Jämförelsetalet är korpusandelen avvisade, 35 av 184 = 19,0 procent — allt över det är överrepresenterat."
+    }
+  ]
+}

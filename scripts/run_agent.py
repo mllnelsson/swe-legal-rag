@@ -256,8 +256,8 @@ def read_inputs(path: Path) -> list[InputLine]:
     return inputs
 
 
-def default_output_path(task: AgentTask, run_id: str) -> Path:
-    return DEFAULT_OUTPUT_DIR / f"{task}-{run_id}.jsonl"
+def default_output_path(test_name: str, run_id: str) -> Path:
+    return DEFAULT_OUTPUT_DIR / f"{run_id}_{test_name}_answers.jsonl"
 
 
 def _write_record(out: TextIO, record: dict[str, Any]) -> None:
@@ -342,7 +342,8 @@ async def _dispatch(args: argparse.Namespace, inputs: Sequence[InputLine]) -> in
 
     task = AgentTask(args.task)
     run_id = datetime.now(UTC).strftime(_RUN_ID_FORMAT)
-    out_path = Path(args.out) if args.out else default_output_path(task, run_id)
+    test_name = Path(args.input_file).stem
+    out_path = Path(args.out) if args.out else default_output_path(test_name, run_id)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # One session for the run. `summarize` never touches it; the connection is
@@ -389,7 +390,8 @@ def main() -> int:
     args = _parse_args()
 
     try:
-        inputs = read_inputs(Path(args.input_file))
+        input_file = Path(args.input_file)
+        inputs = read_inputs(input_file)
     except OSError as exc:
         # The one failure that is the caller's typo rather than a defect.
         print(f"FAIL {exc}", file=sys.stderr)
@@ -401,7 +403,7 @@ def main() -> int:
         print(f"FAIL no inputs in {args.input_file}", file=sys.stderr)
         return 1
 
-    return asyncio.run(_dispatch(args, inputs))
+    return asyncio.run(_dispatch(args, test_name, inputs))
 
 
 if __name__ == "__main__":

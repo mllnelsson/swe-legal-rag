@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 members = [
     "packages/*",
     "analytics",
+    "test-dir",
 ]
 
 [tool.uv]
