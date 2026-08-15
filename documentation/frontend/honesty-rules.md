@@ -1,20 +1,31 @@
 ---
 type: Concept
-title: Search result honesty rules
-description: The frontend's tested constraints on what it claims about a search result — each one exists because the data does not support the more convenient alternative.
-tags: [frontend, ui, honesty, search, appendix, rrf]
-timestamp: 2026-08-08T00:00:00Z
+title: Honesty rules
+description: The frontend's tested constraints on what it claims — twelve about a search result, eight more about an answer a language model wrote. Each exists because the data does not support the more convenient alternative.
+tags: [frontend, ui, honesty, search, agent, appendix, rrf]
+timestamp: 2026-08-15T00:00:00Z
 ---
 
-# Search result honesty rules
+# Honesty rules
 
-Twelve constraints the frontend enforces on how it presents search results and
-decisions, each backed by a test in
-`src/components/research/honesty-rules.test.tsx`. They are not generic UI
-polish — each exists because the corpus or the [search
-API](/api/search.md)'s response shape does not support the more convenient
-alternative, and getting one wrong would put a claim on screen the data
-cannot back up.
+Twenty constraints the frontend enforces on what it puts on screen, each backed
+by a test. They are not generic UI polish — each exists because the corpus or an
+API's response shape does not support the more convenient alternative, and
+getting one wrong would put a claim on screen the data cannot back up.
+
+Two groups, in two test files:
+
+| Rules | Surface | Test |
+|---|---|---|
+| 1–12 | [Search](/api/search.md) results and decisions | `src/components/research/honesty-rules.test.tsx` |
+| 13–20 | [Agent mode](/frontend/overview.md) | `src/features/agent/agent-honesty-rules.test.tsx` |
+
+The second group is the harder one. In search, every word on screen is either
+the nämnd's own text or a label this app wrote; in agent mode the prose is
+written by a language model, and these are the rules that keep a reader able to
+tell what it rests on.
+
+## Search results (1–12)
 
 1. **Appendix text is not the nämnd's own words.** A chunk with
    `section: "appendix"` is the appealed lower-instance decision — often the
@@ -96,3 +107,57 @@ cannot back up.
 verbatim holdings running 41–378 characters long, so the filter control
 shortens the *label* it displays while still sending the underlying value
 byte-identical to what `/api/filters` published.
+
+## Agent mode (13–20)
+
+These govern an answer a language model wrote, streamed over the [chat
+endpoint](/api/chat-endpoint.md). The reader cannot check that prose against the
+corpus themselves, so everything that would let them try has to survive onto the
+screen.
+
+13. **An appendix source is not the nämnd's words.** The same rule as 1, applied
+    to `event: sources`. `section: "appendix"` is the appealed lower-instance
+    decision — often the one Överklagandenämnden overturned — and every such
+    source carries the marker, using the same `SectionBadge` the search results
+    do. The excerpt is 200 characters of a passage the model saw in full, so it
+    is a label for the reader, not the evidence.
+14. **A count is never shown without the query behind it.** Whenever a turn
+    emitted `event: sql`, the generated query, its rows, its `assumptions` and
+    its `truncated` flag render beside the answer, and **not behind a collapsed
+    disclosure** — a query the reader has to open is a query the reader who took
+    the number at face value will not open. This is [the SQL agent's stated
+    obligation on its caller](/api/sql-agent.md#the-consumers-obligation), not
+    decoration. The attempt trail may collapse; the query that produced the
+    answer may not. A `query_corpus` that could not build a query says so rather
+    than rendering nothing.
+15. **`error` is terminal.** The contract sends no `done` after one, so the UI
+    stops on it: the failed turn is marked, whatever tokens arrived are kept —
+    they are what the agent actually said — and nothing goes on claiming the
+    answer is still being written.
+16. **A `refused` tool result is a step, not a failure.** It is a policy decline
+    the agent repairs from on its next iteration — an ungrounded filter, a spent
+    reading budget. It renders as an ordinary step ("Avvaktade med filtret tills
+    värdena var kända"), never as an error, and is visually distinct from a
+    `status: "error"` result.
+17. **Streaming text is not a finished answer.** A turn still receiving tokens
+    carries a writing marker, and sources are not rendered until the frame
+    carrying them has arrived. A sentence on screen may be about to be qualified
+    by the next one.
+18. **An aborted turn says the agent will not remember it.** The API appends a
+    turn to the [session](/data-model/sessions.md) only after `done`, so a
+    question stopped mid-answer is absent from the history the *next* question
+    is answered against. Showing it as an ordinary turn would imply a continuity
+    that does not exist.
+19. **An empty source list is stated, not implied.** Both a search that found
+    nothing and a turn that needed no search at all send `sources: []`.
+    Rendering nothing there would leave the reader to assume the prose was
+    sourced; it says the answer rests on no cited decision.
+20. **The two identifier spaces stay apart.** The chat contract carries a
+    `case_number` and no `decision_number`, so a source labels its ärendenummer
+    as one and invents no beslutsnummer — the same distinction rule 8 makes on a
+    decision card, where `2025-0035` is decided as `14/2026`.
+
+One more thing the interface shows for a reason rather than for polish: each
+finished turn prints its `X-Interaction-Id`. That id spans everything the turn
+cost, so "this answer was wrong" becomes a lookup in the [trace
+stream](/observability.md) rather than a guess from timestamps.

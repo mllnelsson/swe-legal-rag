@@ -1,20 +1,29 @@
 ---
 type: Concept
 title: Frontend
-description: The React SPA at frontend/ — a filtered, browsable, traversable interface over the deterministic retrieval API only. No chat, no SSE, no LLM call from the browser; chat is a deferred phase.
-tags: [frontend, ui, search, react, spa]
-timestamp: 2026-08-13T00:00:00Z
+description: The React SPA at frontend/ — two surfaces over the same corpus: deterministic search, and agent mode, an SSE client for the conversational agent. No LLM call is made from the browser; both surfaces go through the API.
+tags: [frontend, ui, search, agent, sse, react, spa]
+timestamp: 2026-08-15T00:00:00Z
 ---
 
 # Frontend
 
-A React single-page app at `frontend/` in this repo. It calls only the
-deterministic [retrieval API](/api/index.md) — search, filters, documents,
-concepts, keywords. **It does not call [`POST /api/chat`](/api/chat-endpoint.md)
-at all**: no SSE connection, no session, no LLM-synthesized answer anywhere in
-the frontend. The forward-looking note that used to sit in this concept —
-"a future UI would call search/documents/concepts directly rather than through
-the chat agent" — is what this frontend is.
+A React single-page app at `frontend/` in this repo, with **two surfaces over
+the same corpus**:
+
+* **Search** (`/`, `/sok`) — the deterministic [retrieval
+  API](/api/index.md): filters, documents, concepts, keywords. Every word on
+  screen is either the nämnd's own text or a label this app wrote.
+* **Agent mode** (`/agent`) — an SSE client for
+  [`POST /api/chat`](/api/chat-endpoint.md), described below.
+
+They are separate surfaces because they make different promises to the reader,
+and which one runs is the reader's explicit choice rather than something
+inferred from how a question is worded.
+
+**The browser makes no LLM call and holds no agent logic.** Agent mode POSTs a
+question and renders what comes back; the decomposition, the retrieval, the
+tool loop and the writing all happen behind the API.
 
 ## Stack
 
@@ -28,8 +37,9 @@ just `react`, `react-dom`, `react-router`, `@tanstack/react-query`.
 
 | Path | Page |
 |---|---|
-| `/` | Search home |
+| `/` | Search home — carries the **Sök / Agent** mode toggle |
 | `/sok` | Search results |
+| `/agent` | Agent mode; `?q=` hands over a question from the home page and is dropped on arrival |
 | `/beslut/:documentId` | Decision detail |
 | `/sokord` | Keyword (Sökord) index |
 | `/sokord/:entityId` | Decisions carrying one keyword |
@@ -44,10 +54,63 @@ Swedish param names (`q`, `sokord`, `kategori`, `utfall`, `fran`, `tom`,
 shareable, bookmarkable URL and nothing about the current search lives only in
 React state.
 
+## Agent mode
+
+`/agent` is the client for [`POST /api/chat`](/api/chat-endpoint.md). Three
+files carry it:
+
+| File | Job |
+|---|---|
+| `src/api/chat-events.ts` | The event contract, as TypeScript |
+| `src/api/chat-stream.ts` | `openChatStream` — fetch, then an SSE parser over the response body |
+| `src/features/agent/` | The hook, the reducer and the components |
+
+**Why fetch and not `EventSource`.** The question travels in a request body and
+`EventSource` only issues GETs. Doing it by hand is also what lets the client
+abort mid-answer and read the `X-Interaction-Id` response header.
+
+`openChatStream` awaits the response before returning, so a pre-stream refusal
+(HTTP 422 on an over-long message) raises `ApiError` like any other API call.
+Everything after that arrives in band, failures included.
+
+**Frames are dispatched by SSE event name, not by `data.type`.** The route dumps
+whole models for `tool_call`/`tool_result`/`sql`, which therefore carry `type`,
+and reshapes `token`/`sources`/`done`/`error`, which do not. An unrecognised
+event name is skipped rather than thrown on — the contract says new event types
+may be added.
+
+### The progress labels are the client's to translate
+
+`ProgressLabel` is a closed enum the API owns, and the Swedish words for it live
+in `src/features/agent/progress-text.ts`. Nothing type-checks that pairing
+across the language boundary, so `progress-labels.test.ts` reads
+`packages/agents/src/agents/chat/_dtos.py` as text and fails when the backend
+adds a label the client has no words for. A label that reaches the client
+unrecognised anyway renders neutral prose, never the raw key.
+
+### Conversation state
+
+`session_id` is held in React state for the length of the visit: `null` on the
+first message, then whatever the `done` frame returned. **The client never
+re-sends the history** — the server holds it and the request carries one
+message. A reload starts a new conversation; listing and reopening earlier ones
+needs read endpoints the API does not have.
+
+An **aborted turn is not persisted**, because the API appends a turn only after
+`done`. The transcript says so rather than showing a turn the agent has no
+memory of.
+
 ## Generated API types
 
 The TypeScript types the frontend builds against are generated, never hand
 written — see [generated API types](/frontend/generated-types.md).
+
+**The chat events are the one exception, and deliberately so.** `/api/chat`
+returns a `StreamingResponse`, so FastAPI publishes its request body and nothing
+about what comes back; there is nothing for the generator to read. `chat-events.ts`
+is therefore written by hand against
+[the chat endpoint contract](/api/chat-endpoint.md), which is the authority for
+it, and a mismatch there is caught by tests rather than by the compiler.
 
 ## Query expansion
 
@@ -92,9 +155,14 @@ Criticized) fields do not exist here. `Badge` tones are renamed
 ## The honesty rules
 
 The interface makes a set of deliberate, tested claims about what the corpus
-data does and does not support — described in full at [search result honesty
+data does and does not support — described in full at [honesty
 rules](/frontend/honesty-rules.md). They are the domain-specific part of this
 app; everything else is fairly generic search UI.
+
+Agent mode adds a harder version of the same question, because the words on
+screen are written by a language model rather than lifted from a decision. Rules
+13–20 cover it: what a source may be presented as, when a count may be shown,
+and how a reader can tell a finished answer from a half-written one.
 
 ## Where relevance comes from
 
@@ -137,18 +205,15 @@ costs time rather than money, but the API still constructs the `structured`/
 Not in this version: saved matters or bookmarks, a marketing site, auth, and a
 mobile layout.
 
-Chat is a **deferred phase, not a rejected one** — and the deferral is now only on
-this side. The backend serves it: [`POST /api/chat`](/api/chat-endpoint.md) is live and
-no longer deprecated, backed by the [conversational agent](/retrieval/chat-agent.md). The
-[PRD](/prd.md) still specifies a chat interface (S3), a synthesized answer citing case
-numbers (S6) and conversational follow-ups (S8); what remains is a UI for the stream.
+**Earlier conversations.** Agent mode holds one conversation per visit. The
+[sessions table](/data-model/sessions.md) already carries everything a list
+would need — `id`, `created_at`, `last_active_at`, `history` — but there is no
+endpoint to read it, so listing and reopening past conversations is a separate
+piece of work. `/agent` leaves the room for a rail beside the transcript.
 
-Two things about that contract were shaped for a client that does not exist yet, so
-building one should not require changing it. Progress events carry a **`label` key from
-a closed enum, never a sentence** — the client holds the Swedish strings and maps them,
-which is why no translation lives in the backend. And SSE clients dispatch by event
-name, so a first implementation may listen only for `token`/`sources`/`done` and add the
-progress UI later without a contract change.
+A reopened conversation would show text without citations: the API persists the
+question and the answer only, never the evidence a turn gathered, which is what
+stops turn two re-sending turn one's documents.
 
 ## Deployment
 

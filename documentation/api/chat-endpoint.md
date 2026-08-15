@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-13T01:00:00Z
+timestamp: 2026-08-15T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -18,8 +18,10 @@ framing and nothing else.
 All LLM interaction is streamed end to end: the API streams from the provider
 and re-streams to the client. The answer is never buffered server-side.
 
-There is no client for this contract in this repository — the
-[frontend](/frontend/overview.md) calls only the deterministic retrieval API.
+The client is [agent mode](/frontend/overview.md) in the frontend. Its event
+types are hand-written rather than generated: this endpoint returns a
+`StreamingResponse`, so nothing about the frames below appears in the OpenAPI
+document, which makes this page their authority.
 
 ## Request
 
@@ -54,6 +56,29 @@ Ordering: `tool_call`/`tool_result` pairs (with `sql` among them) → `token`* �
 `sources` → `done`. A run that finds nothing still emits `token`, `sources` (an
 empty list) and `done` — the corpus not addressing a question is an answer.
 
+### Not every turn is a research question
+
+A greeting, a thank-you, or a question about the previous answer — "förklara det
+enklare" — has nothing to retrieve. Such a turn ends on `reply_from_context`
+instead of `answer` and looks like this:
+
+```
+event: tool_call     {"tool":"reply_from_context","label":"answer.direct",…}
+event: tool_result   {"tool":"reply_from_context","label":"answer.direct","status":"ok",…}
+event: token         …
+event: sources       {"sources":[]}
+event: done          {"session_id":…}
+```
+
+One step, no search, and an empty `sources` list that is the truthful one: the
+answer rests on the conversation, not on a decision. It arrives token by token
+like any other answer, so a client has one shape to handle rather than two.
+
+The empty `sources` list therefore means two different things depending on the
+turn, and both are real answers — "I looked and found nothing" and "there was
+nothing to look for". See [the conversational
+agent](/retrieval/chat-agent.md#two-ways-a-turn-can-end).
+
 ### The API emits keys; the client owns the words
 
 `label` is a **closed enum owned by the API**. A client maps it to a static
@@ -75,6 +100,13 @@ more than one kind of step:
 | `decision.read` | `read_decision` | Reading one decision in full |
 | `decision.inspect` | `inspect_decision` | Following entities and citations |
 | `answer.compose` | `answer` | Selecting the evidence and finishing |
+| `answer.direct` | `reply_from_context` | Answering from the conversation, without retrieving |
+
+**A result may report a different label from its call.** A `search_decisions`
+call goes out as `search.broad` or `search.filtered`; if the filter is declined,
+its result comes back as `search.refused`, because `search.filtered` would name
+a search that never ran. The result's label is the one that describes what
+happened, so a client renders that.
 
 `status` on a `tool_result` is `ok`, `refused` or `error`. **`refused` is not a
 failure** — it is a policy decline (an ungrounded filter, a spent reading
@@ -142,7 +174,8 @@ data: {"message": "human-readable summary"}
 
 `event: done` is **absent** on error — a client treats `error` as terminal and
 never waits for a `done` after it. The failed turn is not saved to session
-history. The message is deliberately generic; the cause is logged server-side.
+history. The message is deliberately generic and in Swedish, whether it
+originated in the agent or in the route; the cause is logged server-side.
 
 **Pre-stream validation.** An empty or over-long `message`, or an unparseable
 `session_id`, returns **HTTP 422** and no stream is opened.

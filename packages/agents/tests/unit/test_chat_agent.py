@@ -51,8 +51,9 @@ _FULL_DECISION_TEXT = "Beslutets fullständiga lydelse. " * 400
 class ScriptedProvider:
     """Replays a fixed sequence of assistant turns, one per loop iteration."""
 
-    def __init__(self, *turns: Message) -> None:
+    def __init__(self, *turns: Message, stream: tuple[str, ...] | None = None) -> None:
         self._turns = list(turns)
+        self._stream = stream if stream is not None else ("Nämnden ", "avslog.")
         self.seen_messages: list[list[Message]] = []
 
     async def generate(self, messages, *, tools=None, response_schema=None):
@@ -63,10 +64,11 @@ class ScriptedProvider:
 
     async def generate_stream(self, messages):
         self.seen_messages.append(list(messages))
+        streamed = self._stream
 
         async def chunks():
-            yield StreamChunk(text="Nämnden ")
-            yield StreamChunk(text="avslog.")
+            for text in streamed:
+                yield StreamChunk(text=text)
 
         return chunks()
 
@@ -280,7 +282,11 @@ async def test_filtering_on_free_text_is_refused_until_grounded() -> None:
 
     results = [e for e in events if isinstance(e, ToolResultEvent)]
     assert results[0].status is ToolStatus.REFUSED
-    assert results[0].label is ProgressLabel.SEARCH_FILTERED
+    # The call went out as a filtered search; the result says a search was
+    # declined. `search.filtered` here would name a search that never ran.
+    assert results[0].label is ProgressLabel.SEARCH_REFUSED
+    calls = [e for e in events if isinstance(e, ToolCallEvent)]
+    assert calls[0].label is ProgressLabel.SEARCH_FILTERED
 
     # The refused search never reached the toolset; the grounded one did.
     assert len(toolset.searches) == 1
@@ -499,6 +505,101 @@ async def test_no_evidence_says_so_rather_than_improvising() -> None:
     assert len(provider.seen_messages) == 2
 
 
+class TestConversationalTurn:
+    """A message that is not a research question.
+
+    A greeting, a thank-you, or "förklara det enklare" has nothing to retrieve.
+    Before `reply_from_context` existed, such a turn reached the evidence gate
+    empty-handed and was answered with "jag hittade inget i besluten" — which is
+    a report on a search that was never worth running.
+    """
+
+    @staticmethod
+    def _run(*, history: list[dict] | None = None, question: str = "Tack!"):
+        provider = ScriptedProvider(
+            _tool_call(
+                ChatTool.REPLY_FROM_CONTEXT,
+                notes="Användaren tackar för föregående svar.",
+            ),
+            stream=("Varsågod!",),
+        )
+        toolset = FakeToolset()
+        return (
+            provider,
+            toolset,
+            run_chat_agent(
+                ChatAgentRequest(question=question, history=history or []),
+                toolset,
+                llm_provider=provider,
+                settings=_settings(),
+            ),
+        )
+
+    async def test_it_answers_without_touching_the_corpus(self) -> None:
+        provider, toolset, agent = self._run()
+
+        events = await _collect(agent)
+
+        assert [event.type for event in events] == [
+            "tool_call",
+            "tool_result",
+            "token",
+            "sources",
+            "done",
+        ]
+        assert "".join(e.text for e in events if isinstance(e, TokenEvent)) == (
+            "Varsågod!"
+        )
+        # Not one search, not one vocabulary read, not one reading.
+        assert toolset.searches == []
+        assert toolset.vocabulary_calls == 0
+        assert toolset.read_calls == []
+
+    async def test_it_is_not_the_no_evidence_message(self) -> None:
+        """The bug this path exists to fix, stated as an assertion."""
+        _, _, agent = self._run()
+
+        events = await _collect(agent)
+
+        tokens = "".join(e.text for e in events if isinstance(e, TokenEvent))
+        assert "hittade inget" not in tokens
+
+    async def test_it_reports_a_label_of_its_own(self) -> None:
+        """A client must be able to say "svarar direkt", not "söker"."""
+        _, _, agent = self._run()
+
+        events = await _collect(agent)
+
+        call = next(e for e in events if isinstance(e, ToolCallEvent))
+        result = next(e for e in events if isinstance(e, ToolResultEvent))
+        assert call.label is ProgressLabel.ANSWER_DIRECT
+        assert result.label is ProgressLabel.ANSWER_DIRECT
+        assert result.status is ToolStatus.OK
+
+    async def test_sources_are_empty_because_the_answer_cites_nothing(self) -> None:
+        _, _, agent = self._run()
+
+        events = await _collect(agent)
+
+        assert next(e for e in events if isinstance(e, SourcesEvent)).sources == []
+
+    async def test_the_previous_turn_reaches_the_writing_step(self) -> None:
+        """ "Förklara det enklare" is answerable only from what was already said."""
+        history = [
+            {"role": "user", "content": "Vad gäller vid jäv?"},
+            {"role": "assistant", "content": "Enligt beslut 12/2024 gäller..."},
+        ]
+        provider, _, agent = self._run(
+            history=history, question="Förklara det enklare."
+        )
+
+        await _collect(agent)
+
+        reply_prompt = provider.seen_messages[-1][-1].content
+        assert "Enligt beslut 12/2024 gäller..." in reply_prompt
+        assert "Förklara det enklare." in reply_prompt
+
+
 async def test_exhausted_loop_ends_with_a_terminal_error() -> None:
     provider = ScriptedProvider(
         *[_tool_call(ChatTool.SEARCH_DECISIONS, query="jäv") for _ in range(3)]
@@ -625,6 +726,26 @@ class TestCorrelation:
             "agents.chat",
             "agents.chat.read",
             "ai.synthesize_answer",
+        }
+
+    async def test_a_direct_reply_is_traced_as_its_own_kind_of_call(self) -> None:
+        """It is a billed call like any other, and a different one from synthesis."""
+        provider = ScriptedProvider(
+            _tool_call(ChatTool.REPLY_FROM_CONTEXT, notes="hälsning"),
+            stream=("Hej!",),
+        )
+        await _collect(
+            run_chat_agent(
+                ChatAgentRequest(question="Hej!"),
+                FakeToolset(),
+                llm_provider=provider,
+                settings=_settings(),
+            )
+        )
+
+        assert {r.context["source"] for r in self.records} == {
+            "agents.chat",
+            "ai.reply_from_context",
         }
 
     async def test_a_run_without_a_caller_mints_its_own_interaction_id(self) -> None:

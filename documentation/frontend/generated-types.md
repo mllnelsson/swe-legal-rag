@@ -3,7 +3,7 @@ type: Concept
 title: Generated API types
 description: How src/api/schema.d.ts is generated from the FastAPI app's OpenAPI schema, and why a backend contract change surfaces as a TypeScript error rather than a runtime surprise.
 tags: [frontend, typescript, openapi, codegen]
-timestamp: 2026-08-05T00:00:00Z
+timestamp: 2026-08-15T00:00:00Z
 ---
 
 # Generated API types
@@ -18,6 +18,24 @@ than calling a running server, and pipes the resulting OpenAPI schema through
 `src/api/{client,queries,types}.ts` build on top of that generated file: typed
 `fetch` wrappers, TanStack Query hooks, and the DTO aliases the rest of the
 app imports.
+
+## The one exception: the chat stream
+
+[`POST /api/chat`](/api/chat-endpoint.md) returns a `StreamingResponse`, so
+FastAPI publishes its request body and **nothing about the frames that come
+back**. There is nothing for the generator to read, and no amount of
+regeneration will produce these types.
+
+`src/api/chat-events.ts` is therefore written by hand against the endpoint
+contract, which is its authority. Two consequences follow, and both are handled
+rather than tolerated:
+
+* A contract change there is not a compile error. `src/features/agent/progress-labels.test.ts`
+  reads `packages/agents/src/agents/chat/_dtos.py` as raw text and asserts the
+  client has Swedish words for every `ProgressLabel` the API can emit — so an
+  added label fails the build instead of reaching a reader as `decision.audit`.
+* An unrecognised event name is skipped by the parser rather than thrown on,
+  because the contract states that new event types may be added.
 
 ## Why importing the app, not calling it
 

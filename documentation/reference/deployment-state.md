@@ -42,9 +42,9 @@ changes into imagined migrations.
   back-compat shim. Removing `LLM_PROVIDER=berget` as an accepted value was such a
   change and was correct to make outright.
 - **The API and SSE contracts need no versioning.** See the
-  [chat endpoint](/api/chat-endpoint.md); nothing outside this repository calls it,
-  and the [frontend](/frontend/overview.md) in this repository does not call it either
-  — it consumes only the deterministic retrieval API.
+  [chat endpoint](/api/chat-endpoint.md). Nothing outside this repository calls it, and
+  its only client is [agent mode](/frontend/overview.md) in this repository — which
+  ships in the same commit as any change to it.
 
 ## What does not follow
 

@@ -37,12 +37,15 @@ professionals.
 - **S6:** Agent synthesizes an answer in Swedish, citing specific decisions with case
   numbers.
 - **S7:** User can access the original PDF from cited references.
-- **S8:** System supports conversational follow-ups within a session.
+- **S8:** System supports conversational follow-ups within a session — including
+  the ones that need no retrieval at all. A greeting, a thank-you or "förklara
+  det enklare" is answered from the conversation, without a search; see [the two
+  ways a turn can end](/retrieval/chat-agent.md#two-ways-a-turn-can-end).
 
 ## Non-Functional Requirements
 
 - **NFR1a:** Deterministic search (`POST /api/search`) responds in **< 5s**. This is the
-  latency-sensitive path and the frontend's only backend — a search box that takes
+  latency-sensitive path, and the frontend's search surface — a search box that takes
   longer is a broken search box.
 - **NFR1b:** A [conversational agent](/retrieval/chat-agent.md) turn completes in
   **< 1 min**, first token well before that. It is a considered answer the user waits

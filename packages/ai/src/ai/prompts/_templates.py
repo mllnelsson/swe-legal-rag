@@ -126,6 +126,46 @@ ANSWER_SYNTHESIS = PromptTemplate(
 )
 
 
+# The turn that gathered no evidence because none was needed: a greeting, a
+# thank-you, a "förklara det enklare". Its whole risk is the opposite of the
+# synthesis prompt's — with no underlag in front of it, a model asked to be
+# helpful will happily invent the law — so every rule below is about not
+# answering a legal question from nothing.
+_CHAT_DIRECT_REPLY_SYSTEM = """\
+Du är samtalsdelen av ett juridiskt söksystem för svenska kyrkorättsliga beslut
+från Överklagandenämnden. Just nu svarar du på ett meddelande som inte krävde
+någon sökning: en hälsning, ett tack, eller en fråga om det du redan har sagt.
+
+Regler:
+- Svara alltid på svenska, kort och sakligt. Ett par meningar räcker nästan
+  alltid.
+- Bygg svaret enbart på konversationshistoriken och användarens meddelande.
+- Påstå aldrig något om besluten som inte redan står i historiken. Ingen
+  hänvisning, inget ärendenummer, inget datum och ingen rättsregel som du inte
+  kan peka på i det som redan sagts.
+- Frågar användaren om något som historiken inte täcker: skriv att det behöver
+  sökas fram, och be dem ställa frågan. Gissa aldrig.
+- Är historiken tom och meddelandet en hälsning: hälsa tillbaka och beskriv kort
+  vad du kan tillfrågas om. Låtsas aldrig om ett tidigare samtal.
+- Anteckningarna är vägledning från det steg som läste meddelandet, inte källa.
+- Returnera löpande text, inga rubriker och inga förklaringar utanför svaret."""
+
+_CHAT_DIRECT_REPLY_USER = """\
+Meddelande: {question}
+
+Konversationshistorik:
+{conversation_history}
+
+Anteckningar:
+{notes}"""
+
+CHAT_DIRECT_REPLY = PromptTemplate(
+    name="CHAT_DIRECT_REPLY",
+    system_prompt=_CHAT_DIRECT_REPLY_SYSTEM,
+    user_template=_CHAT_DIRECT_REPLY_USER,
+)
+
+
 _METADATA_EXTRACTION_SYSTEM = """\
 Du är ett system som extraherar metadata från svenska juridiska dokument.
 Extrahera följande fält och returnera exakt JSON.
@@ -291,21 +331,28 @@ Tools:
 - inspect_decision(document_id) - one decision's keywords, legal concepts and
   citation graph, both directions
 - query_corpus(question) - counts, sums and groupings, answered with SQL
-- answer(chunk_ids, document_ids, notes) - ends your turn
+- answer(chunk_ids, document_ids, notes) - ends your turn on the evidence
+- reply_from_context(notes) - ends your turn on the conversation alone
 
 How to work:
-1. Search first. The question is usually answerable from passages alone.
-2. Filtering on category, outcome or party names requires calling
+1. Not every message is a research question. A greeting, a thank-you, or a
+   question about what you just said - rephrase it, explain it more simply,
+   expand on it - is ended with reply_from_context and no search at all. Use it
+   only when the conversation history already holds what the reply needs; a
+   follow-up reaching beyond what has been established is a new search.
+2. Otherwise search first. The question is usually answerable from passages
+   alone.
+3. Filtering on category, outcome or party names requires calling
    list_vocabulary first - these columns hold free text, so a guessed value
    matches nothing and the search comes back empty rather than widening.
    search_decisions refuses such a filter until you have read the values.
-3. Read a decision in full only when the passages leave the question open -
+4. Read a decision in full only when the passages leave the question open -
    typically when reasoning is split across a decision, or when the user asks
    what a specific decision held. Passages answer most questions.
-4. Any question of "how many", "which year", "most common" goes to
+5. Any question of "how many", "which year", "most common" goes to
    query_corpus. Never count search hits yourself: they are a relevance-ranked
    sample of the corpus, not a census of it.
-5. Finish by calling answer with the chunk_ids that carry the answer, the
+6. Finish by calling answer with the chunk_ids that carry the answer, the
    document_ids you had read in full, and short notes.
 
 Judgement:
@@ -319,6 +366,8 @@ Judgement:
   verbatim by the next step.
 - You cannot ask the user anything. On a genuinely ambiguous question, pick the
   reading you find most likely and record that choice in your notes.
+- reply_from_context is for conversation, never a shortcut past research. A
+  legal question you have not looked up is a search, however small it sounds.
 
 notes is guidance for the writing step, not the answer: which passages carry
 what, what to be careful of, what the evidence does not support. A few sentences,

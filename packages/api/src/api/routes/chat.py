@@ -47,14 +47,21 @@ MAX_MESSAGE_CHARS = 4000
 # itself; inner calls override it.
 _SOURCE = "api.chat"
 
+# What a client shows when the route itself fails rather than the agent. Swedish
+# for the same reason the agent's message is: it reaches the person who asked.
+_ROUTE_FAILURE_MESSAGE = "Ett fel uppstod när frågan besvarades."
+
 
 class ChatRequest(BaseModel):
     session_id: uuid.UUID | None = None
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
 
 
+# The answer, the sources and the error message are all Swedish. Escaping them
+# to \uXXXX triples the size of every token frame for no reader's benefit — SSE
+# is UTF-8 by definition.
 def _format_sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _pdf_url(document_id: uuid.UUID) -> str:
@@ -162,10 +169,7 @@ async def chat_endpoint(
                     logger.exception(
                         "Error during query for session %s", chat_session.id
                     )
-                    yield _format_sse(
-                        "error",
-                        {"message": "An error occurred while processing your request."},
-                    )
+                    yield _format_sse("error", {"message": _ROUTE_FAILURE_MESSAGE})
                     return
                 logger.exception(
                     "Error persisting turn for session %s", chat_session.id

@@ -9,6 +9,13 @@ Carrying the evidence in a single synthesis prompt rather than in the loop is
 what keeps it affordable: a passage placed in the loop is re-sent on every later
 iteration, while one placed here is sent once.
 
+The loop has two ways to end, because a conversation has two kinds of message in
+it. `answer` ends a turn on evidence and hands it to synthesis;
+`reply_from_context` ends a turn that needed no evidence — a greeting, a
+thank-you, "förklara det enklare" — and hands it to a prompt that may build only
+on what has already been said. Both stream, so a caller has one shape to
+forward.
+
 The loop runs as a task pushing to a queue this generator drains, because
 `tool_loop`'s progress callbacks are awaited inside it and so cannot yield.
 """
@@ -24,7 +31,12 @@ from typing import Any
 
 import ai
 from ai import agent_run_scope, interaction_scope
-from ai.dtos import ChunkContext, SynthesizeRequest, TabularEvidence
+from ai.dtos import (
+    ChunkContext,
+    DirectReplyRequest,
+    SynthesizeRequest,
+    TabularEvidence,
+)
 from ai.prompts import CHAT_ORCHESTRATION, render
 from llm_core import (
     LLMProvider,
@@ -42,6 +54,7 @@ from agents.chat._dtos import (
     ChatTool,
     DoneEvent,
     ErrorEvent,
+    ProgressLabel,
     SourceReference,
     SourcesEvent,
     SqlEvent,
@@ -116,6 +129,20 @@ def _status_for_result(result: Any) -> ToolStatus:
     if not isinstance(result, dict) or "error" not in result:
         return ToolStatus.OK
     return ToolStatus.REFUSED if result.get("refused") else ToolStatus.ERROR
+
+
+def _label_for_result(
+    tool: ChatTool, arguments: dict[str, Any], status: ToolStatus
+) -> ProgressLabel:
+    """The label a finished call reports under.
+
+    Only search differs from its call label: a declined filter is a step of its
+    own to a reader — the agent is about to go and read the vocabulary — and
+    `search.filtered` would describe a search that never ran.
+    """
+    if tool is ChatTool.SEARCH_DECISIONS and status is ToolStatus.REFUSED:
+        return ProgressLabel.SEARCH_REFUSED
+    return label_for_call(tool, arguments)
 
 
 def _sql_event(result: dict[str, Any], state: ChatState) -> SqlEvent:
@@ -253,12 +280,13 @@ async def _drive_loop(
             # Before the result event, so a client that renders the query can
             # do so while the label is still on screen.
             await queue.put(_sql_event(result, state))
+        status = _status_for_result(result)
         await queue.put(
             ToolResultEvent(
                 id=call.id,
                 tool=tool,
-                label=label_for_call(tool, call.arguments),
-                status=_status_for_result(result),
+                label=_label_for_result(tool, call.arguments, status),
+                status=status,
                 detail=_detail_for_result(tool, result),
             )
         )
@@ -279,7 +307,7 @@ async def _drive_loop(
             executors,
             provider=provider,
             max_iterations=settings.chat_agent_max_iterations,
-            terminal_tools={ChatTool.ANSWER},
+            terminal_tools={ChatTool.ANSWER, ChatTool.REPLY_FROM_CONTEXT},
             on_tool_call=on_tool_call,
             on_tool_result=on_tool_result,
         )
@@ -358,6 +386,30 @@ async def run_chat_agent(
         finally:
             if not loop_task.done():
                 loop_task.cancel()
+
+        if state.direct_reply is not None:
+            # The turn gathered nothing because nothing was needed — a greeting,
+            # a thank-you, a question about the previous answer. Checked before
+            # the evidence gate, which would otherwise answer "tack" with "I
+            # found nothing in the decisions".
+            reply = DirectReplyRequest(
+                question=request.question,
+                conversation_history=request.history,
+                notes=state.direct_reply.notes,
+            )
+            try:
+                async for token in ai.reply_from_context(reply, provider=llm_provider):
+                    yield TokenEvent(text=token)
+            except Exception:
+                logger.exception("Chat agent %s direct reply failed", interaction_id)
+                yield ErrorEvent(message=_FAILURE_MESSAGE)
+                return
+
+            # An empty sources list, and it is the truthful one: this answer
+            # rests on the conversation, not on any decision.
+            yield SourcesEvent(sources=[])
+            yield DoneEvent()
+            return
 
         if not _has_evidence(state):
             # The honest answer to a question the corpus does not address. Said

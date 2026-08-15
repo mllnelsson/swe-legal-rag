@@ -5,7 +5,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "types": ["vitest/globals", "@testing-library/jest-dom"],
+    /* `vite/client` is here for one thing: the `?raw` import declaration, which
+       the label-parity test uses to read the backend enum straight out of its
+       Python source. It ships with Vite — no new dependency. */
+    "types": ["vitest/globals", "@testing-library/jest-dom", "vite/client"],
 
     "strict": true,
     "noUncheckedIndexedAccess": true,

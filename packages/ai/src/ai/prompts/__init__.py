@@ -1,6 +1,7 @@
 from ai.prompts._renderer import PromptTemplate, render
 from ai.prompts._templates import (
     ANSWER_SYNTHESIS,
+    CHAT_DIRECT_REPLY,
     CHAT_ORCHESTRATION,
     DECISION_READING,
     DOCUMENT_SUMMARIZATION,
@@ -17,6 +18,7 @@ __all__ = [
     "QUERY_DECOMPOSITION",
     "QUERY_EXPANSION",
     "ANSWER_SYNTHESIS",
+    "CHAT_DIRECT_REPLY",
     "CHAT_ORCHESTRATION",
     "DECISION_READING",
     "METADATA_EXTRACTION",

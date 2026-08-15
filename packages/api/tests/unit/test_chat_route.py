@@ -120,6 +120,12 @@ class TestFormatSse:
         parsed = json.loads(data_line[len("data: ") :])
         assert parsed["text"] == swedish
 
+    def test_swedish_travels_as_swedish(self):
+        """SSE is UTF-8; escaping every å to \\u00e5 triples a token frame."""
+        result = _format_sse("token", {"text": "åäö"})
+        assert "åäö" in result
+        assert "\\u00e5" not in result
+
 
 class TestChatEndpointValidation:
     def setup_method(self):
@@ -287,6 +293,52 @@ class TestChatEndpointSseStream:
         assert source["pdf_url"] == f"/api/documents/{_DOCUMENT_ID}/pdf"
         assert source["section"] == "appendix"
         assert source["appendix_label"] == "Bilaga A"
+
+    def test_a_direct_reply_is_a_turn_of_its_own_shape(self):
+        """A greeting: one step, prose, no sources, done — and no search frame."""
+        response = self._post(
+            _agent_emitting(
+                ToolCallEvent(
+                    id="tc-1",
+                    tool=ChatTool.REPLY_FROM_CONTEXT,
+                    label=ProgressLabel.ANSWER_DIRECT,
+                ),
+                ToolResultEvent(
+                    id="tc-1",
+                    tool=ChatTool.REPLY_FROM_CONTEXT,
+                    label=ProgressLabel.ANSWER_DIRECT,
+                ),
+                TokenEvent(text="Varsågod!"),
+                SourcesEvent(sources=[]),
+                DoneEvent(),
+            ),
+            message="Tack!",
+        )
+
+        events = _parse_sse(response.text)
+        assert events[0]["data"]["label"] == "answer.direct"
+        assert events[0]["data"]["tool"] == "reply_from_context"
+        assert events[1]["data"]["status"] == "ok"
+        assert events[-2]["data"]["sources"] == []
+        assert events[-1]["event"] == "done"
+
+    def test_a_refused_search_says_so_in_its_label(self):
+        """`search.filtered` on the result would name a search that never ran."""
+        response = self._post(
+            _agent_emitting(
+                ToolResultEvent(
+                    id="tc-1",
+                    tool=ChatTool.SEARCH_DECISIONS,
+                    label=ProgressLabel.SEARCH_REFUSED,
+                    status=ToolStatus.REFUSED,
+                ),
+                DoneEvent(),
+            )
+        )
+
+        payload = _parse_sse(response.text)[0]["data"]
+        assert payload["label"] == "search.refused"
+        assert payload["status"] == "refused"
 
     def test_done_carries_the_session_id(self):
         response = self._post(_agent_emitting(DoneEvent()))

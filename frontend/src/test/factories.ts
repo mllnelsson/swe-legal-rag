@@ -9,6 +9,7 @@
  * the beslutsnummer year disagree (2025-0035 decided as 14/2026).
  */
 
+import type { SourceReference, SqlEvent } from "../api/chat-events";
 import type { SearchChunk, SearchDiagnostics, SearchHit } from "../api/types";
 
 export function makeChunk(overrides: Partial<SearchChunk> = {}): SearchChunk {
@@ -41,6 +42,40 @@ export function makeHit(overrides: Partial<SearchHit> = {}): SearchHit {
     score: 0.01639,
     matched_chunk_count: 2,
     chunks: [makeChunk()],
+    ...overrides,
+  };
+}
+
+/* The chat stream's frames are hand-typed rather than generated — the endpoint
+ * streams, so its events are absent from the OpenAPI document. See
+ * `api/chat-events.ts`. */
+
+export function makeSource(overrides: Partial<SourceReference> = {}): SourceReference {
+  return {
+    document_id: "22222222-2222-2222-2222-222222222222",
+    case_number: "2025-0035",
+    decision_date: "2026-03-16",
+    decision_outcome: "Överklagandenämnden upphäver domkapitlets beslut.",
+    category: "Obehörighet att utöva kyrkans vigningstjänst",
+    excerpt: "Överklagandenämnden avslår överklagandet.",
+    section: "body",
+    appendix_label: null,
+    pdf_url: "/api/documents/22222222-2222-2222-2222-222222222222/pdf",
+    ...overrides,
+  };
+}
+
+export function makeSqlEvent(overrides: Partial<SqlEvent> = {}): SqlEvent {
+  return {
+    kind: "sql",
+    answered: true,
+    sql: "SELECT count(*) FROM documents WHERE decision_outcome ILIKE '%avslag%'",
+    columns: ["antal"],
+    rows: [[12]],
+    row_count: 1,
+    truncated: false,
+    assumptions: [],
+    attempts: [],
     ...overrides,
   };
 }

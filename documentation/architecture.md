@@ -19,14 +19,15 @@ Three major subsystems, all running on GCP, scale-to-zero where possible:
    Swedish answer over an SSE stream.
 
 The backend is a uv workspace of [packages](/packages/overview.md); the
-[frontend](/frontend/overview.md) is a search UI over the deterministic
-retrieval API — it does not call the [chat endpoint](/api/chat-endpoint.md).
+[frontend](/frontend/overview.md) has a surface for each of the first two — a
+search UI over the deterministic retrieval API, and agent mode, an SSE client
+for the [chat endpoint](/api/chat-endpoint.md).
 
 ## Three ways to query the corpus
 
 - **[Deterministic search](/retrieval/deterministic-search.md)** (`/api/search`) — hybrid
-  vector + full-text retrieval, no LLM unless expansion is requested. Finds passages; the
-  frontend's only backend.
+  vector + full-text retrieval, no LLM unless expansion is requested. Finds passages;
+  the frontend's search surface.
 - **[The conversational agent](/retrieval/chat-agent.md)** (`/api/chat`) — a tool loop
   over the two paths below plus a document reader, ending in a cited
   natural-language answer streamed over SSE. It reimplements neither: its search tool

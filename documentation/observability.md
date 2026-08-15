@@ -236,7 +236,8 @@ and its own directory.
 `source` says **what the call is**, not who asked for it — *who* is
 `interaction_id` or `document_id`. Values: `ai.decompose_query`,
 `ai.expand_query`, `ai.extract_metadata`, `ai.extract_entities`,
-`ai.summarize_document`, `ai.synthesize_answer`, `ai.embed`, `agents.sql`,
+`ai.summarize_document`, `ai.synthesize_answer`, `ai.reply_from_context`,
+`ai.embed`, `agents.sql`,
 `agents.chat`, `agents.chat.read`, `api.chat`, `api.search`, `worker-chunk`,
 `worker-embed`, `worker-extract`, `worker-metadata`, `scripts.run_step`,
 `scripts.run_agent`. Contexts nest and merge; on a key collision the innermost
@@ -249,7 +250,11 @@ wins" means in practice — the outer value is the one a nested call replaces.
 `agents.chat` appears **once per tool-loop iteration**, because each is its own
 billed call — a five-step run produces five records under that source, plus one
 `ai.synthesize_answer` for the streamed answer, plus `agents.sql` and
-`agents.chat.read` for whichever sub-agents it reached for. All of them carry
+`agents.chat.read` for whichever sub-agents it reached for. A turn that needed
+no retrieval is two records: one `agents.chat` iteration and one
+`ai.reply_from_context`. That shape is itself diagnostic — a greeting costing
+five iterations and an embedding pass means the orchestrator is searching when
+it should be replying. All of them carry
 the same `interaction_id`: `run_chat_agent` and `run_sql_agent` both open an
 `interaction_scope`, which **inherits** the id the API already put in context
 rather than minting a second one. A run started outside the API — from

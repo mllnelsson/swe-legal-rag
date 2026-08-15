@@ -35,6 +35,7 @@ export function AppShell() {
         </Link>
 
         <nav style={{ display: "flex", gap: "var(--space-6)" }}>
+          <ShellLink to="/agent">Agent</ShellLink>
           <ShellLink to="/sokord">Sökord</ShellLink>
           <ShellLink to="/begrepp">Begrepp</ShellLink>
         </nav>

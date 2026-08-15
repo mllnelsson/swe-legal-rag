@@ -24,9 +24,10 @@ export type AskBoxProps = {
 /** The product's one hero control, and deliberately the dumbest thing in the app.
  *
  *  It takes text and hands it to the caller. It does not decompose the question,
- *  plan filters, call a model, or stream anything back. What the user types goes
- *  to POST /api/search verbatim; every word they read afterwards is either the
- *  nämnd's own text or a label we wrote.
+ *  plan filters, call a model, or stream anything back — and it does not decide
+ *  where the text goes. The home page offers two destinations for it, search and
+ *  the agent, and which one runs is the reader's explicit choice; this box knows
+ *  about neither.
  *
  *  One per screen. */
 export function AskBox({

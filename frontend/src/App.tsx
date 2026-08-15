@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router";
 
+import { AgentPage } from "./features/agent/AgentPage";
 import { AppShell } from "./components/layout/AppShell";
 import {
   ConceptDocumentsRoute,
@@ -30,6 +31,7 @@ export function App() {
           <Route element={<AppShell />}>
             <Route index element={<SearchHomePage />} />
             <Route path="sok" element={<ResultsPage />} />
+            <Route path="agent" element={<AgentPage />} />
             <Route path="beslut/:documentId" element={<DecisionPage />} />
             <Route path="sokord" element={<KeywordIndexRoute />} />
             <Route path="sokord/:entityId" element={<KeywordDocumentsRoute />} />

@@ -38,6 +38,7 @@ class ChatTool(StrEnum):
     INSPECT_DECISION = "inspect_decision"
     QUERY_CORPUS = "query_corpus"
     ANSWER = "answer"
+    REPLY_FROM_CONTEXT = "reply_from_context"
 
 
 class ProgressLabel(StrEnum):
@@ -59,6 +60,10 @@ class ProgressLabel(StrEnum):
     DECISION_READ = "decision.read"
     DECISION_INSPECT = "decision.inspect"
     ANSWER_COMPOSE = "answer.compose"
+    # The turn needed no retrieval at all — a greeting, a thank-you, a question
+    # about the previous answer. Distinct from `answer.compose` because a client
+    # showing "söker i besluten" for it would be describing work never done.
+    ANSWER_DIRECT = "answer.direct"
 
 
 class ToolStatus(StrEnum):

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import { AskBox } from "../../components/research/AskBox";
+import { Tabs } from "../../components/navigation/Tabs";
 import { Tag } from "../../components/display/Tag";
 import { useFacets } from "../../api/queries";
 import { formatCount } from "../../lib/format";
@@ -10,14 +11,45 @@ import { EMPTY_SEARCH, toSearchParams } from "./search-params";
 /** How many of the nämnd's own Sökord to offer as a starting point. */
 const SUGGESTED_KEYWORDS = 8;
 
+/** The two things the box can do with a question, and they are not the same
+ *  promise. Search returns the nämnd's own text, ranked; the agent researches
+ *  and writes prose. Which one runs is the reader's choice, made before they
+ *  type — not something inferred from the wording. */
+type Mode = "search" | "agent";
+
+const MODES = [
+  { value: "search", label: "Sök" },
+  { value: "agent", label: "Agent" },
+];
+
+const PLACEHOLDER: Record<Mode, string> = {
+  search: "Sök i Överklagandenämndens beslut",
+  agent: "Fråga om Överklagandenämndens beslut",
+};
+
+const SUBMIT_LABEL: Record<Mode, string> = { search: "Sök", agent: "Fråga" };
+
 export function SearchHomePage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<Mode>("search");
   const facets = useFacets();
+
+  function submit(text: string) {
+    if (mode === "agent") return askAgent(text);
+    return runSearch(text);
+  }
 
   function runSearch(text: string) {
     if (text.trim() === "") return;
     navigate(`/sok?${toSearchParams({ ...EMPTY_SEARCH, query: text }).toString()}`);
+  }
+
+  /** The question travels in the URL so the agent page can start on arrival; it
+   *  drops the param immediately, so a reload never re-asks. */
+  function askAgent(text: string) {
+    if (text.trim() === "") return;
+    navigate(`/agent?${new URLSearchParams({ q: text }).toString()}`);
   }
 
   function searchKeyword(keyword: string) {
@@ -59,14 +91,40 @@ export function SearchHomePage() {
           Vad vill du veta?
         </h1>
 
-        <AskBox
-          value={query}
-          onChange={setQuery}
-          onSubmit={runSearch}
-          size="lg"
-          autoFocus
-          placeholder="Sök i Överklagandenämndens beslut"
-        />
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          <Tabs
+            tabs={MODES}
+            value={mode}
+            onChange={(value) => setMode(value as Mode)}
+            variant="pill"
+            label="Sökläge"
+            style={{ alignSelf: "flex-start" }}
+          />
+
+          <AskBox
+            value={query}
+            onChange={setQuery}
+            onSubmit={submit}
+            size="lg"
+            autoFocus
+            placeholder={PLACEHOLDER[mode]}
+            submitLabel={SUBMIT_LABEL[mode]}
+          />
+
+          {mode === "agent" && (
+            <p
+              style={{
+                margin: 0,
+                fontFamily: "var(--font-sans)",
+                fontSize: "var(--text-small-size)",
+                color: "var(--text-muted)",
+              }}
+            >
+              Agenten söker, läser och skriver ett svar med hänvisningar. Det tar
+              upp till en minut.
+            </p>
+          )}
+        </div>
 
         {facets.data !== undefined && (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>

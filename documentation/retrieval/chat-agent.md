@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Conversational Agent
-description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set, a terminal answer tool that doubles as the reranking, two Mistral sub-agents for reading and counting, and one streamed synthesis call.
+description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set, two terminal tools for the two kinds of message a conversation holds, two Mistral sub-agents for reading and counting, and one streamed writing call.
 tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-13T01:00:00Z
+timestamp: 2026-08-15T00:00:00Z
 ---
 
 # Conversational Agent
@@ -21,16 +21,19 @@ against a fake toolset with no database at all.
 
 ```
 run_chat_agent(request, toolset)
-  ├─ tool_loop(..., terminal_tools={"answer"})      GLM-5.2, blocking
+  ├─ tool_loop(..., terminal_tools={"answer", "reply_from_context"})
+  │                                                 GLM-5.2, blocking
   │    list_vocabulary()          → tool_call / tool_result
   │    search_decisions(...)      → tool_call / tool_result
   │    query_corpus(...)          → tool_call / sql / tool_result   [Mistral-M]
   │    read_decision(...)         → tool_call / tool_result         [Mistral-M]
-  │    answer(chunk_ids, document_ids, notes)
-  │                                 └─ terminal, loop returns
+  │    answer(chunk_ids, document_ids, notes)       ─┐ terminal,
+  │    reply_from_context(notes)                    ─┘ loop returns
   │
-  └─ ai.synthesize_answer(evidence bundle)          GLM-5.2, streaming
-       → token* → sources → done
+  ├─ ai.synthesize_answer(evidence bundle)          GLM-5.2, streaming
+  │    → token* → sources → done
+  └─ ai.reply_from_context(conversation)            GLM-5.2, streaming
+       → token* → sources(empty) → done
 ```
 
 **Two phases, and the split is the point.** `LLMProvider.generate_stream` takes
@@ -56,7 +59,8 @@ See [LLM configuration](/reference/llm-config.md).
 
 ## Tools
 
-Ten callable services collapse to six. `list_concepts`/`list_keywords` and their
+Ten callable services collapse to five, plus two terminal tools that call
+nothing. `list_concepts`/`list_keywords` and their
 document traversals are *filter values* —
 `search_decisions(document_filter={"keywords": […]})` does the traversal.
 Metadata browsing goes through `query_corpus`. `get_document_pdf` is useless to
@@ -70,6 +74,7 @@ a model.
 | `inspect_decision(document_id)` | `document_service.get_document_detail` |
 | `query_corpus(question)` | `agents.run_sql_agent` |
 | `answer(chunk_ids, document_ids, notes)` | — terminal |
+| `reply_from_context(notes)` | — terminal |
 
 Search results carry `vector_similarity` and the search diagnostics, not just
 the fused `score`. That is deliberate: RRF derives `score` from rank alone, so
@@ -84,6 +89,43 @@ Passages and decisions are addressed as `c1`, `d2`. A mid-tier model transcribes
 a short handle reliably and a UUID unreliably, and an unknown handle is
 *detectable*: it comes back as a refusal listing the valid ones, rather than
 silently selecting nothing.
+
+## Two ways a turn can end
+
+A conversation holds two kinds of message, and collapsing them was a real
+defect rather than a missing nicety. Before `reply_from_context` existed, every
+turn entered the tool loop with "Search first" as its first instruction, so
+"tack" either spent an embedding pass and ~18 seconds searching for nothing, or
+called `answer` with no chunks and fell through the evidence gate to the canned
+*"Jag hittade inget i besluten som besvarar frågan"* — a report on a search
+nobody wanted. [PRD S8](/prd.md), conversational follow-ups, was not actually
+met.
+
+| Terminal tool | For | Written by |
+|---|---|---|
+| `answer(chunk_ids, document_ids, notes)` | A question the corpus answers | `ANSWER_SYNTHESIS`, from the selected evidence |
+| `reply_from_context(notes)` | A greeting, a thank-you, a question about the previous answer | `CHAT_DIRECT_REPLY`, from the conversation alone |
+
+Both stream, so the API forwards one shape either way. Both end with `sources`
+— empty for a direct reply, and truthfully so.
+
+**The direct-reply prompt's whole risk is the opposite of the synthesis
+prompt's.** With no underlag in front of it, a model asked to be helpful will
+invent the law, so `CHAT_DIRECT_REPLY` may build only on the conversation
+history and the user's message: no case number, no date, no rule that is not
+already in what has been said. Asked something the history does not cover, it
+says the question needs looking up rather than guessing. The tool description
+carries the same rule for the orchestrator — a legal question it has not
+researched is a search, however small it sounds.
+
+The check is ordered before the evidence gate, so the three empty-handed
+endings stay distinct:
+
+| State | What the user gets |
+|---|---|
+| `direct_reply` set | A conversational reply, streamed |
+| No evidence, no direct reply | "Jag hittade inget i besluten…" — no model call |
+| Loop exhausted | A terminal `ErrorEvent`, no `done` |
 
 ### The terminal `answer` tool is the reranking
 
@@ -186,7 +228,8 @@ Search itself runs under [`SearchSettings`](/packages/api.md), the same bounds
 Traced with `source="agents.chat"` — one record per loop iteration, since each
 is its own billed call — plus `agents.chat.read` for the reader,
 [`agents.sql`](/api/sql-agent.md#observability) for counting, and
-`ai.synthesize_answer` for the streamed answer. All of them share one
+`ai.synthesize_answer` for the streamed answer, or
+`ai.reply_from_context` when the turn ended on the conversation instead. All of them share one
 `interaction_id`, which is what makes "what did this question cost" a sum over
 one key: `run_chat_agent` opens an `interaction_scope` that **inherits** the id
 the API already put in the trace context rather than minting its own, so

@@ -213,7 +213,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/chat": {
+    "/api/sql": {
         parameters: {
             query?: never;
             header?: never;
@@ -223,9 +223,34 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Chat Endpoint
-         * @deprecated
+         * Sql Endpoint
+         * @description Answer a Swedish question with a SQL query and its rows.
+         *
+         *     Complements `POST /api/search`, which finds passages but cannot count. The
+         *     response carries the generated query alongside the result **and consumers are
+         *     obliged to surface it** — a count reads as authoritative and, unlike a search
+         *     hit, carries no excerpt to check it against. See /api/sql-agent.md.
+         *
+         *     Never 500s on a question it cannot answer: an ungroundable or out-of-schema
+         *     question comes back `answered: false` with the reason in `note`.
          */
+        post: operations["sql_endpoint_api_sql_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Chat Endpoint */
         post: operations["chat_endpoint_api_chat_post"];
         delete?: never;
         options?: never;
@@ -717,6 +742,83 @@ export interface components {
             effective_queries: string[];
             diagnostics: components["schemas"]["SearchDiagnostics"];
         };
+        /** SqlAgentRequest */
+        SqlAgentRequest: {
+            /** Question */
+            question: string;
+        };
+        /**
+         * SqlAgentResult
+         * @description The query and its rows — never a natural-language answer.
+         *
+         *     Reasoning about what the rows *mean* is the caller's job. This agent
+         *     provides; interpreting is a separate responsibility, and merging the two
+         *     would hide a wrong query behind fluent prose.
+         */
+        SqlAgentResult: {
+            /** Answered */
+            answered: boolean;
+            /** Sql */
+            sql: string | null;
+            /**
+             * Columns
+             * @default []
+             */
+            columns: string[];
+            /**
+             * Rows
+             * @default []
+             */
+            rows: components["schemas"]["SqlValue"][][];
+            /**
+             * Row Count
+             * @default 0
+             */
+            row_count: number;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Assumptions
+             * @default []
+             */
+            assumptions: string[];
+            /**
+             * Attempts
+             * @default []
+             */
+            attempts: components["schemas"]["SqlAttempt"][];
+            /**
+             * Iterations
+             * @default 0
+             */
+            iterations: number;
+        };
+        /**
+         * SqlAttempt
+         * @description One `run_sql` call the agent made, successful or not.
+         *
+         *     Kept for every iteration, not just the last: the trail is what lets a reader
+         *     see that the agent grounded its predicates before committing to a query.
+         */
+        SqlAttempt: {
+            /** Sql */
+            sql: string;
+            /** Ok */
+            ok: boolean;
+            /** Error */
+            error?: string | null;
+            /** Row Count */
+            row_count?: number | null;
+        };
+        SqlValue: string | number | boolean | null;
         /**
          * UnresolvedCitation
          * @description A citation to a decision the corpus does not hold — text, not a link.
@@ -1063,6 +1165,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_EntityDocumentRef_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sql_endpoint_api_sql_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SqlAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SqlAgentResult"];
                 };
             };
             /** @description Validation Error */
