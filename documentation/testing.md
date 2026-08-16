@@ -341,11 +341,14 @@ frontend's own concept page:
   reaching a reader as a raw key like `decision.audit`. This cross-language import is
   why `vitest.config.ts` sets `server.fs.allow: [".."]`: Vite refuses by default to
   serve a file outside the project root it is configured against.
-- **The two honesty-rule suites** (`src/components/research/honesty-rules.test.tsx`,
-  `src/features/agent/agent-honesty-rules.test.tsx`) are the tested form of [the
-  honesty rules](/frontend/honesty-rules.md) — one test per rule, asserting the claim
-  the UI is and is not allowed to make about a search result or an agent-written
-  answer.
+- **The honesty-rule suites** (`src/components/research/honesty-rules.test.tsx`,
+  `src/features/agent/agent-honesty-rules.test.tsx`, and rule 6 in
+  `src/features/browse/VocabularyPage.test.tsx`) are the tested form of [the honesty
+  rules](/frontend/honesty-rules.md) — one `describe("rule N — …")` block per rule,
+  asserting the claim the UI is and is not allowed to make about a search result or
+  an agent-written answer. All 21 are covered, and [the page says how to
+  check](/frontend/honesty-rules.md#checking-the-mapping) rather than asking a
+  reader to take it on trust.
 
 ### Why this matters more here than in a typical SPA
 

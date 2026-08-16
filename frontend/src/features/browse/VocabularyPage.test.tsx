@@ -10,7 +10,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { VocabularyPage } from "./VocabularyPage";
 
@@ -53,18 +53,20 @@ function renderPage(ui: React.ReactElement) {
   );
 }
 
-test("the Sökord vocabulary is attributed to the nämnd", async () => {
-  renderPage(<VocabularyPage kind="keywords" />);
-  expect(await screen.findByText("avvisning")).toBeInTheDocument();
-  expect(screen.getByText("Nämndens egna")).toBeInTheDocument();
-  expect(screen.queryByText("Härledda ur texten")).not.toBeInTheDocument();
-});
+describe("rule 6 — declared and inferred vocabularies are never presented alike", () => {
+  test("the Sökord vocabulary is attributed to the nämnd", async () => {
+    renderPage(<VocabularyPage kind="keywords" />);
+    expect(await screen.findByText("avvisning")).toBeInTheDocument();
+    expect(screen.getByText("Nämndens egna")).toBeInTheDocument();
+    expect(screen.queryByText("Härledda ur texten")).not.toBeInTheDocument();
+  });
 
-test("the concept vocabulary is marked as inferred, not declared", async () => {
-  renderPage(<VocabularyPage kind="concepts" entityType="regulation" />);
-  expect(await screen.findByText("57 kap. 10 § kyrkoordningen")).toBeInTheDocument();
-  expect(screen.getByText("Härledda ur texten")).toBeInTheDocument();
-  expect(screen.queryByText("Nämndens egna")).not.toBeInTheDocument();
+  test("the concept vocabulary is marked as inferred, not declared", async () => {
+    renderPage(<VocabularyPage kind="concepts" entityType="regulation" />);
+    expect(await screen.findByText("57 kap. 10 § kyrkoordningen")).toBeInTheDocument();
+    expect(screen.getByText("Härledda ur texten")).toBeInTheDocument();
+    expect(screen.queryByText("Nämndens egna")).not.toBeInTheDocument();
+  });
 });
 
 test("document counts are singular-aware", async () => {

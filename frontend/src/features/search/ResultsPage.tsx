@@ -9,7 +9,6 @@ import { Tag } from "../../components/display/Tag";
 import { FacetRail } from "./FacetRail";
 import { useSearch } from "../../api/queries";
 import {
-  PAGE_SIZE,
   clearFilters,
   countActiveFilters,
   describeFilters,
@@ -39,7 +38,12 @@ export function ResultsPage() {
 
   const activeFilters = describeFilters(state);
   const filterCount = countActiveFilters(state);
-  const maxPage = search.data === undefined ? 1 : Math.ceil(search.data.total / PAGE_SIZE);
+  // The page size is whatever the API echoed back, never what the client asked
+  // for: `/api/search` clamps an out-of-range `limit` silently (`clamp_limit`,
+  // bounded by `search_max_limit`), so dividing by `PAGE_SIZE` would promise
+  // pages the response cannot fill. `limit` is always at least 1.
+  const maxPage =
+    search.data === undefined ? 1 : Math.ceil(search.data.total / search.data.limit);
 
   return (
     <main

@@ -8,26 +8,29 @@ timestamp: 2026-08-16T00:00:00Z
 
 # Honesty rules
 
-Twenty-one constraints the frontend enforces on what it puts on screen. Most are
-backed by a named test; a few are asserted in code but not (yet) directly tested,
-and are called out as such below rather than left to imply coverage they do not
-have. They are not generic UI polish — each exists because the corpus or an API's
-response shape does not support the more convenient alternative, and getting one
-wrong would put a claim on screen the data cannot back up.
+Twenty-one constraints the frontend enforces on what it puts on screen, each
+backed by a `describe` block that names its rule number. They are not generic UI
+polish — each exists because the corpus or an API's response shape does not
+support the more convenient alternative, and getting one wrong would put a claim
+on screen the data cannot back up.
 
-Two groups, roughly two test files:
+Two groups, three test files:
 
 | Rules | Surface | Test |
 |---|---|---|
-| 1–5, 7, 8, 12 | [Search](/api/search.md) results and decisions | `src/components/research/honesty-rules.test.tsx`, one named `describe` block per rule |
+| 1–5, 7–12 | [Search](/api/search.md) results and decisions | `src/components/research/honesty-rules.test.tsx`, one named `describe` block per rule |
 | 6 | Vocabulary index (declared vs. inferred entities) | `src/features/browse/VocabularyPage.test.tsx` — **not** `honesty-rules.test.tsx` |
-| 9, 10, 11 | Search results and decisions | Asserted in code; no test names them — see [below](#rules-with-no-direct-test) |
 | 13–21 | [Agent mode](/frontend/overview.md) | `src/features/agent/agent-honesty-rules.test.tsx` |
 
 The second group is the harder one. In search, every word on screen is either
 the nämnd's own text or a label this app wrote; in agent mode the prose is
 written by a language model, and these are the rules that keep a reader able to
 tell what it rests on.
+
+Most tests render a single component against a hand-built prop. Rules 9 and 10
+cannot: they are about values *the API chose*, so their tests put a stubbed
+`fetch` and the query layer under a real `ResultsPage` / `FacetRail` and read
+what the component did with the response it actually received.
 
 ## Search results (1–12)
 
@@ -86,26 +89,32 @@ tell what it rests on.
    another — e.g. case `2025-0035` decided as `14/2026` — so a decision card
    always shows "Ärendenummer" and "Beslut" as two separate, labelled values.
 9. **`limit` is read from the response, never assumed from the request.**
-   [`/api/search`](/api/search.md) silently clamps an out-of-range `limit`,
-   so pagination reads the echoed value back rather than trusting what the
-   client sent. No test names this rule — see [below](#rules-with-no-direct-test).
+   [`/api/search`](/api/search.md) silently clamps an out-of-range `limit` into
+   `[1, search_max_limit]` and echoes what it actually served, so the page count
+   divides `total` by `search.data.limit` rather than by the client's own
+   `PAGE_SIZE`. The two agree today — `PAGE_SIZE` is 10 and so is
+   `search_default_limit` — which is exactly why the request is the tempting
+   thing to divide by, and why the rule needs a test rather than a reading.
 10. **`category` and `decision_outcome` are opaque free text, rendered
     exactly as returned.** They are lifted off the source PDFs by regex, not
     a controlled vocabulary — see [`/api/filters`](/api/filters.md) — and the
     corpus contains near-duplicate values (e.g. "Utlämnande av handling" and
-    "Utlämnande av handlingar") that the frontend does not merge or
-    normalize. Asserted in a comment at the call site
-    (`src/features/search/FacetRail.tsx`); no test names this rule — see
-    [below](#rules-with-no-direct-test).
+    "Utlämnande av handlingar") that the frontend does not merge or normalize —
+    they almost certainly mean the same thing, and nothing here is entitled to
+    decide that they do. `decision_outcome` values are the verbatim holding,
+    running 41–378 characters, so the filter control shortens the *label* it
+    displays — display truncation, not normalisation: the value it sends back
+    stays byte-identical to what `/api/filters` published, which is what the
+    test pins.
 11. **A note about "träffarna nedan" is not shown when there are none.** Both
     summary notes — the appendix-widening banner and the matched-by-meaning
     note — make a claim about the result list, so each is gated on `total > 0`.
     Since the [similarity
     floor](/retrieval/deterministic-search.md#the-similarity-floor) landed, a
     widened search can come back empty too, which is what makes the gate
-    necessary rather than theoretical. The substance is exercised by an
-    unnamed test in `honesty-rules.test.tsx` ("neither note claims anything
-    about a list that is empty") — see [below](#rules-with-no-direct-test).
+    necessary rather than theoretical. Its test asserts both directions: the
+    same diagnostics render neither note at `total: 0` and both at `total: 4`,
+    so what silences them is provably the empty list and not the diagnostics.
 12. **Phrasings the user did not type are attributed to the model.** With
     [query expansion](/retrieval/query-expansion.md) on, the summary's
     prominent line is `effective_queries` — the original question followed by
@@ -116,35 +125,6 @@ tell what it rests on.
     the results are real, but the search that ran is not the search that was
     asked for, and without the note it is indistinguishable from a plain
     search.
-
-`decision_outcome` facet values are also worth recording here: they are
-verbatim holdings running 41–378 characters long, so the filter control
-shortens the *label* it displays while still sending the underlying value
-byte-identical to what `/api/filters` published.
-
-### Rules with no direct test
-
-Grepping `src/components/research/honesty-rules.test.tsx` for a `describe`/`test`
-naming each rule finds explicit blocks for 1, 2, 3, 4, 5, 7, 8 and 12. Rules 9 and
-10 are asserted only in the component code itself (a clamped-`limit` read, and a
-comment at `FacetRail.tsx`'s free-text rendering) — no test in this file or
-elsewhere names either claim. Treat both as **asserted-but-not-directly-tested**:
-true of the code today, but not guarded against regressing the way the named
-rules are.
-
-Rule 11 is a partial case: the file has two *unnamed* `describe` blocks — "summary
-is optional, and its absence is not a hole" (unrelated to any numbered rule) and
-"a query whose words appear nowhere is flagged as matched by meaning" — and the
-second one's last test, "neither note claims anything about a list that is
-empty", exercises exactly rule 11's claim (`total: 0` shows neither summary
-note). The behavior is tested; the test just does not say "rule 11" anywhere, so
-it would not surface in a search for the rule number.
-
-A doc claiming test coverage that does not exist is exactly the kind of claim
-these rules exist to catch the app itself making — recorded here rather than
-smoothed over. Writing the missing tests (naming rules 9, 10 and 11 explicitly,
-the way 1–8 and 12 already are) is a code change, not a doc change, and is not
-done as part of this pass.
 
 ## Agent mode (13–21)
 
@@ -217,3 +197,21 @@ One more thing the interface shows for a reason rather than for polish: each
 finished turn prints its `X-Interaction-Id`. That id spans everything the turn
 cost, so "this answer was wrong" becomes a lookup in the [trace
 stream](/observability.md) rather than a guess from timestamps.
+
+## Checking the mapping
+
+Every rule on this page is a `describe` block whose name begins `rule N —`, so
+the table at the top is verifiable rather than asserted:
+
+```bash
+cd frontend && grep -rho 'describe("rule [0-9]*' src | sort -t' ' -k2 -n -u
+```
+
+Twenty-one blocks, 1 through 21, across the three files. A gap in that sequence
+is a rule this page claims and the suite does not hold.
+
+The tests that carry no rule number are not missing one — "summary is optional,
+and its absence is not a hole", "a query whose words appear nowhere is flagged as
+matched by meaning", "the turn's reference is recoverable for a bad answer" and
+"document counts are singular-aware" cover ordinary behaviour on the same
+components, which is not what this page is about.

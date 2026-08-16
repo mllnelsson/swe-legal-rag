@@ -6,10 +6,11 @@
  * does not support.
  */
 
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { DecisionCard } from "./DecisionCard";
 import { MatchBadge } from "./MatchBadge";
@@ -17,12 +18,62 @@ import { SearchEmpty } from "./SearchEmpty";
 import { SearchSummary } from "./SearchSummary";
 import { SectionBadge } from "./SectionBadge";
 import { CitationGraph } from "../../features/decision/CitationGraph";
+import { FacetRail } from "../../features/search/FacetRail";
+import { ResultsPage } from "../../features/search/ResultsPage";
+import { EMPTY_SEARCH } from "../../features/search/search-params";
+import type { DocumentFacets, SearchResponse } from "../../api/types";
 import { makeChunk, makeDiagnostics, makeHit } from "../../test/factories";
 
 /** A decision card's title is a router `Link`, which needs a router around it. */
 function renderCard(card: ReactElement) {
   return render(<MemoryRouter>{card}</MemoryRouter>);
 }
+
+/* Rules 9 and 10 are about values the API chooses, so they cannot be checked on a
+ * hand-built prop: they need the response the component actually read. These two
+ * helpers put the query layer and a stubbed API under a render. */
+
+function renderWithApi(ui: ReactElement, path = "/") {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+const FACETS: DocumentFacets = {
+  categories: [],
+  decision_outcomes: [],
+  entity_types: [],
+  keywords: [],
+  earliest_decision_date: "2024-11-13",
+  latest_decision_date: "2026-06-09",
+  document_count: 184,
+};
+
+function stubApi(search: Partial<SearchResponse> = {}, facets: DocumentFacets = FACETS) {
+  const response: SearchResponse = {
+    items: [makeHit()],
+    total: 1,
+    limit: 10,
+    offset: 0,
+    effective_queries: ["jäv"],
+    diagnostics: makeDiagnostics(),
+    ...search,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: string) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(input === "/api/search" ? response : facets),
+      } as Response),
+    ),
+  );
+}
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("rule 1 — appendix text is not the nämnd's words", () => {
   test("body excerpts are attributed to the nämnd", () => {
@@ -183,6 +234,76 @@ describe("rule 8 — the two identifier spaces are labelled, never conflated", (
   });
 });
 
+describe("rule 9 — the page size is the one the API echoed, not the one asked for", () => {
+  test("pagination divides the total by the response's limit", async () => {
+    // `/api/search` clamps `limit` into `[1, search_max_limit]` and echoes what
+    // it actually served. Here it served 5 where the client asked for
+    // `PAGE_SIZE` (10): 12 hits is three pages of five, and only two if the
+    // request is trusted over the response.
+    stubApi({
+      items: Array.from({ length: 5 }, (_, index) =>
+        makeHit({ document_id: `2222222${index}-2222-2222-2222-222222222222` }),
+      ),
+      total: 12,
+      limit: 5,
+    });
+    renderWithApi(<ResultsPage />, "/sok?q=j%C3%A4v");
+    expect(await screen.findByText("Sida 1 av 3")).toBeInTheDocument();
+  });
+
+  test("no pager at all when one echoed page holds everything", async () => {
+    // The clamp in the other direction: 40 hits served in one page of 50 is one
+    // page. Counted against the request it would be four, three of them empty.
+    stubApi({ total: 40, limit: 50 });
+    renderWithApi(<ResultsPage />, "/sok?q=j%C3%A4v");
+    expect(await screen.findByText("40 träffar")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Sidnavigering")).not.toBeInTheDocument();
+  });
+});
+
+describe("rule 10 — category and outcome are free text, rendered exactly as returned", () => {
+  test("near-duplicate categories stay two options, never merged", async () => {
+    // Both of these are in the live corpus. They almost certainly mean the same
+    // thing; nothing here is entitled to decide that they do.
+    stubApi(
+      {},
+      {
+        ...FACETS,
+        categories: [
+          { value: "Utlämnande av handling", count: 6 },
+          { value: "Utlämnande av handlingar", count: 2 },
+        ],
+      },
+    );
+    renderWithApi(<FacetRail state={EMPTY_SEARCH} onChange={vi.fn()} />);
+
+    const kategori = await screen.findByLabelText("Kategori");
+    expect(
+      within(kategori).getByRole("option", { name: "Utlämnande av handling (6)" }),
+    ).toBeInTheDocument();
+    expect(
+      within(kategori).getByRole("option", { name: "Utlämnande av handlingar (2)" }),
+    ).toBeInTheDocument();
+  });
+
+  test("a long holding is shortened for display and sent back byte-identical", async () => {
+    // `decision_outcome` values are the holding itself, 41–378 characters in the
+    // live corpus. Shortening the label is display truncation; the value the
+    // filter sends must still be the string `/api/filters` published, or it
+    // matches nothing.
+    const holding =
+      "Överklagandenämnden upphäver domkapitlets beslut och återförvisar ärendet " +
+      "till domkapitlet för ny handläggning.";
+    stubApi({}, { ...FACETS, decision_outcomes: [{ value: holding, count: 3 }] });
+    renderWithApi(<FacetRail state={EMPTY_SEARCH} onChange={vi.fn()} />);
+
+    const utfall = await screen.findByLabelText("Utfall");
+    const option = within(utfall).getByRole("option", { name: /…/ }) as HTMLOptionElement;
+    expect(option.value).toBe(holding);
+    expect(option.textContent).not.toBe(holding);
+  });
+});
+
 describe("summary is optional, and its absence is not a hole", () => {
   test("the card falls back to the holding when there is no summary", () => {
     renderCard(
@@ -216,26 +337,45 @@ describe("a query whose words appear nowhere is flagged as matched by meaning", 
     );
     expect(screen.getByText(/närmast i betydelse/)).toBeInTheDocument();
   });
+});
+
+describe("rule 11 — a note about the list below is not shown when there is no list", () => {
+  // `zzzqqq xylofon` used to return a full page: the vector arm had no similarity
+  // floor, so a nearest-neighbour scan always had a nearest neighbour. It now
+  // returns nothing, which makes `total: 0` with no filter reachable — and both
+  // notes speak about "träffarna nedan".
+  const NOTHING_MATCHED = makeDiagnostics({
+    text_hit_counts: { "zzzqqq xylofon": 0 },
+    vector_hit_count: 0,
+    top_vector_similarity: null,
+    widened_to_appendices: true,
+  });
 
   test("neither note claims anything about a list that is empty", () => {
-    // `zzzqqq xylofon` used to return a full page: the vector arm had no
-    // similarity floor, so a nearest-neighbour scan always had a nearest
-    // neighbour. It now returns nothing, which makes `total: 0` with no filter
-    // reachable — and both notes speak about "träffarna nedan".
     render(
       <SearchSummary
         effectiveQueries={["zzzqqq xylofon"]}
         total={0}
-        diagnostics={makeDiagnostics({
-          text_hit_counts: { "zzzqqq xylofon": 0 },
-          vector_hit_count: 0,
-          top_vector_similarity: null,
-          widened_to_appendices: true,
-        })}
+        diagnostics={NOTHING_MATCHED}
       />,
     );
     expect(screen.queryByText(/närmast i betydelse/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Inget matchade i besluten själva/)).not.toBeInTheDocument();
+  });
+
+  test("the same diagnostics with results do show both notes", () => {
+    // The control: what silences the notes is the empty list, not the
+    // diagnostics — otherwise the test above would pass on a component that
+    // never renders them at all.
+    render(
+      <SearchSummary
+        effectiveQueries={["zzzqqq xylofon"]}
+        total={4}
+        diagnostics={NOTHING_MATCHED}
+      />,
+    );
+    expect(screen.getByText(/närmast i betydelse/)).toBeInTheDocument();
+    expect(screen.getByText(/Inget matchade i besluten själva/)).toBeInTheDocument();
   });
 });
 
