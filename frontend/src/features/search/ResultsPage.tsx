@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 
 import { AskBox } from "../../components/research/AskBox";
 import { DecisionCard } from "../../components/research/DecisionCard";
@@ -24,7 +24,6 @@ const BOTTOM_GUTTER = "var(--space-13)";
 
 export function ResultsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
 
   const state = parseSearchState(searchParams);
   const search = useSearch(toSearchQuery(state));
@@ -44,22 +43,19 @@ export function ResultsPage() {
 
   return (
     <main
+      className="layout-columns"
       style={{
         maxWidth: "var(--content-max)",
         margin: "0 auto",
         padding: `var(--space-8) var(--gutter-page) ${BOTTOM_GUTTER}`,
-        display: "flex",
-        gap: "var(--space-8)",
-        alignItems: "flex-start",
         fontFamily: "var(--font-sans)",
       }}
     >
       <FacetRail state={state} onChange={apply} />
 
       <div
+        className="layout-main"
         style={{
-          flex: 1,
-          minWidth: 0,
           display: "flex",
           flexDirection: "column",
           gap: "var(--space-6)",
@@ -129,7 +125,7 @@ export function ResultsPage() {
                 <DecisionCard
                   key={hit.document_id}
                   hit={hit}
-                  onOpen={(documentId) => navigate(`/beslut/${documentId}`)}
+                  to={`/beslut/${hit.document_id}`}
                 />
               ))}
             </div>
@@ -179,16 +175,15 @@ export function ResultsPage() {
         {/* Mirrors the page grid so the box sits over the results column rather
             than straddling the filter rail. */}
         <div
+          className="layout-columns"
           style={{
             maxWidth: "var(--content-max)",
             margin: "0 auto",
             padding: "var(--space-8) var(--gutter-page) var(--space-6)",
-            display: "flex",
-            gap: "var(--space-8)",
           }}
         >
-          <div style={{ width: "var(--sidebar-w)", flex: "none" }} aria-hidden />
-          <div style={{ flex: 1, minWidth: 0, pointerEvents: "auto" }}>
+          <div className="layout-rail-spacer" aria-hidden />
+          <div className="layout-main" style={{ pointerEvents: "auto" }}>
             <AskBox
               value={draft}
               onChange={setDraft}

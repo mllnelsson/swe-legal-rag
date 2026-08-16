@@ -1,14 +1,18 @@
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { Icon } from "../display/Icon";
-import { RankBadges } from "./RankBadges";
+import { MatchBadge } from "./MatchBadge";
 import { SectionBadge } from "./SectionBadge";
 import { decisionIdentityParts, decisionTitle } from "../../lib/format";
 import type { SearchHit } from "../../api/types";
 
 export type DecisionCardProps = {
   hit: SearchHit;
-  onOpen: (documentId: string) => void;
+  /** Where the title goes. A real `href` rather than a click handler, so the
+   *  title behaves like the link it looks like: middle-click and Cmd+click open
+   *  a decision in its own tab, and the browser shows where it leads on hover. */
+  to: string;
 };
 
 /** Enough excerpt to judge relevance, few enough that ten results fit a page. */
@@ -22,7 +26,7 @@ const EXCERPT_LINES = 5;
  * decision's — is carried by SectionBadge instead. Also dropped: onSave, since no
  * backend surface exists for saved matters. */
 
-export function DecisionCard({ hit, onOpen }: DecisionCardProps) {
+export function DecisionCard({ hit, to }: DecisionCardProps) {
   const [hover, setHover] = useState(false);
 
   const identity = decisionIdentityParts({
@@ -65,21 +69,16 @@ export function DecisionCard({ hit, onOpen }: DecisionCardProps) {
               margin: 0,
             }}
           >
-            <button
-              type="button"
-              onClick={() => onOpen(hit.document_id)}
+            <Link
+              to={to}
               style={{
-                border: "none",
-                background: "transparent",
-                padding: 0,
-                font: "inherit",
                 color: "inherit",
-                textAlign: "left",
-                cursor: "pointer",
+                textDecoration: hover ? "underline" : "none",
+                textUnderlineOffset: "0.12em",
               }}
             >
               {decisionTitle(hit.headline, hit.category)}
-            </button>
+            </Link>
           </h3>
 
           <div
@@ -105,7 +104,7 @@ export function DecisionCard({ hit, onOpen }: DecisionCardProps) {
           </div>
         </div>
 
-        <RankBadges vectorRank={bestChunk?.vector_rank ?? null} textRank={bestChunk?.text_rank ?? null} />
+        <MatchBadge vectorRank={bestChunk?.vector_rank ?? null} textRank={bestChunk?.text_rank ?? null} />
       </div>
 
       {lede !== null && (

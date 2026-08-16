@@ -64,18 +64,44 @@ export function DecisionPage() {
 
   return (
     <main
+      className="layout-columns"
       style={{
         maxWidth: "var(--content-max)",
         margin: "0 auto",
         padding: "var(--space-8) var(--gutter-page) var(--space-11)",
-        display: "flex",
-        gap: "var(--space-8)",
-        alignItems: "flex-start",
         fontFamily: "var(--font-sans)",
       }}
     >
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
+      <div
+        className="layout-main"
+        style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}
+      >
         <header style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+          {/* A decision is arrived at from a search, and going back to that search
+              is the next thing a reader wants. `-1` rather than a link to `/sok`:
+              the whole search — query, filters, page — lives in the URL that was
+              left, and no reconstruction here could be as faithful. */}
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              width: "fit-content",
+              padding: 0,
+              border: "none",
+              background: "transparent",
+              fontFamily: "var(--font-sans)",
+              fontSize: "var(--text-small-size)",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+            }}
+          >
+            <Icon name="arrow-left" size={14} color="var(--text-muted)" />
+            Tillbaka
+          </button>
+
           <h1
             style={{
               margin: 0,
@@ -222,9 +248,8 @@ export function DecisionPage() {
       </div>
 
       <aside
+        className="layout-rail"
         style={{
-          width: "var(--sidebar-w)",
-          flex: "none",
           display: "flex",
           flexDirection: "column",
           gap: "var(--space-7)",

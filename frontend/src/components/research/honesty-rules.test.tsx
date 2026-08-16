@@ -7,15 +7,22 @@
  */
 
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, test, vi } from "vitest";
 
 import { DecisionCard } from "./DecisionCard";
-import { RankBadges } from "./RankBadges";
+import { MatchBadge } from "./MatchBadge";
 import { SearchEmpty } from "./SearchEmpty";
 import { SearchSummary } from "./SearchSummary";
 import { SectionBadge } from "./SectionBadge";
 import { CitationGraph } from "../../features/decision/CitationGraph";
 import { makeChunk, makeDiagnostics, makeHit } from "../../test/factories";
+
+/** A decision card's title is a router `Link`, which needs a router around it. */
+function renderCard(card: ReactElement) {
+  return render(<MemoryRouter>{card}</MemoryRouter>);
+}
 
 describe("rule 1 — appendix text is not the nämnd's words", () => {
   test("body excerpts are attributed to the nämnd", () => {
@@ -33,7 +40,7 @@ describe("rule 1 — appendix text is not the nämnd's words", () => {
     const hit = makeHit({
       chunks: [makeChunk({ section: "appendix", appendix_label: "Bilaga A" })],
     });
-    render(<DecisionCard hit={hit} onOpen={vi.fn()} />);
+    renderCard(<DecisionCard hit={hit} to="/beslut/x" />);
     expect(screen.getByText(/överklagat beslut/)).toBeInTheDocument();
   });
 });
@@ -85,20 +92,20 @@ describe("rule 3 — two different empty results are told apart", () => {
 });
 
 describe("rule 4 — the fusion score is never shown as a rating", () => {
-  test("ranks are shown instead of the score", () => {
-    render(<RankBadges vectorRank={3} textRank={1} />);
-    expect(screen.getByText("Vektor #3")).toBeInTheDocument();
-    expect(screen.getByText("Text #1")).toBeInTheDocument();
+  test("how the decision was found is said in words, with no rank number", () => {
+    const { container } = render(<MatchBadge vectorRank={3} textRank={1} />);
+    expect(screen.getByText("Innehåller dina ord")).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/#|\d/);
   });
 
-  test("an arm that did not return the chunk is simply absent", () => {
-    render(<RankBadges vectorRank={1} textRank={null} />);
-    expect(screen.getByText("Vektor #1")).toBeInTheDocument();
-    expect(screen.queryByText(/Text #/)).not.toBeInTheDocument();
+  test("a chunk the text arm never returned says so, rather than claiming the words", () => {
+    render(<MatchBadge vectorRank={1} textRank={null} />);
+    expect(screen.getByText("Träff på betydelse")).toBeInTheDocument();
+    expect(screen.queryByText("Innehåller dina ord")).not.toBeInTheDocument();
   });
 
   test("the raw score never reaches the card", () => {
-    const { container } = render(<DecisionCard hit={makeHit({ score: 0.01639 })} onOpen={vi.fn()} />);
+    const { container } = renderCard(<DecisionCard hit={makeHit({ score: 0.01639 })} to="/beslut/x" />);
     // Anchor first: a card that rendered nothing would satisfy the negatives below
     // without proving anything.
     expect(screen.getByText("2025-0035")).toBeInTheDocument();
@@ -163,10 +170,10 @@ describe("rule 7 — unresolved citations are text, never links", () => {
 describe("rule 8 — the two identifier spaces are labelled, never conflated", () => {
   test("ärendenummer and beslutsnummer are both shown, each labelled", () => {
     // The live corpus contains exactly this: a case opened in 2025, decided in 2026.
-    render(
+    renderCard(
       <DecisionCard
         hit={makeHit({ case_number: "2025-0035", decision_number: "14/2026" })}
-        onOpen={vi.fn()}
+        to="/beslut/x"
       />,
     );
     expect(screen.getByText("Ärendenummer")).toBeInTheDocument();
@@ -178,10 +185,10 @@ describe("rule 8 — the two identifier spaces are labelled, never conflated", (
 
 describe("summary is optional, and its absence is not a hole", () => {
   test("the card falls back to the holding when there is no summary", () => {
-    render(
+    renderCard(
       <DecisionCard
         hit={makeHit({ summary: null, decision_outcome: "Nämnden avslår överklagandet." })}
-        onOpen={vi.fn()}
+        to="/beslut/x"
       />,
     );
     expect(screen.getByText("Nämnden avslår överklagandet.")).toBeInTheDocument();

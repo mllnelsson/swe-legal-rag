@@ -83,9 +83,9 @@ function ExpandToggle({ state, onChange }: FacetRailProps) {
   );
 }
 
+/* Width and flex come from the `layout-rail` class, which is what lets the rail
+   go full width when the columns stack. */
 const RAIL_STYLE = {
-  width: "var(--sidebar-w)",
-  flex: "none",
   display: "flex",
   flexDirection: "column",
   gap: "var(--space-7)",
@@ -97,7 +97,7 @@ export function FacetRail({ state, onChange }: FacetRailProps) {
 
   if (facets.data === undefined) {
     return (
-      <aside style={RAIL_STYLE}>
+      <aside className="layout-rail" style={RAIL_STYLE}>
         <ExpandToggle state={state} onChange={onChange} />
       </aside>
     );
@@ -114,7 +114,7 @@ export function FacetRail({ state, onChange }: FacetRailProps) {
   }
 
   return (
-    <aside style={RAIL_STYLE}>
+    <aside className="layout-rail" style={RAIL_STYLE}>
       {/* Above "Avgränsa" and outside it, because it is not a filter: everything
           below narrows the corpus, this widens the query. */}
       <ExpandToggle state={state} onChange={onChange} />

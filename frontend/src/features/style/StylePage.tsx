@@ -21,7 +21,7 @@ import { Input } from "../../components/forms/Input";
 import { Select } from "../../components/forms/Select";
 import { Tabs } from "../../components/navigation/Tabs";
 import { AskBox } from "../../components/research/AskBox";
-import { RankBadges } from "../../components/research/RankBadges";
+import { MatchBadge } from "../../components/research/MatchBadge";
 import { SectionBadge } from "../../components/research/SectionBadge";
 
 const COLOR_RAMPS: { name: string; steps: string[] }[] = [
@@ -206,8 +206,8 @@ export function StylePage() {
         <Row>
           <SectionBadge section="body" />
           <SectionBadge section="appendix" appendixLabel="Bilaga A" />
-          <RankBadges vectorRank={3} textRank={1} />
-          <RankBadges vectorRank={1} textRank={null} />
+          <MatchBadge vectorRank={3} textRank={1} />
+          <MatchBadge vectorRank={1} textRank={null} />
         </Row>
       </Section>
 

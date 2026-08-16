@@ -13,3 +13,58 @@
 *::after {
   box-sizing: border-box;
 }
+
+/* The two-column page shape — a rail beside a content column — used by the
+   results page, the decision page and agent mode.
+
+   These live in CSS rather than in the inline styles beside them because they
+   are the one thing an inline style cannot express: a media query. Below the
+   breakpoint the rail stops being a column and becomes a band above the
+   content, which is the whole of this app's small-screen story. A full phone
+   layout is still out of scope; not being unreadable is not. */
+.layout-columns {
+  display: flex;
+  gap: var(--space-8);
+  align-items: flex-start;
+}
+
+.layout-rail {
+  width: var(--sidebar-w);
+  flex: none;
+}
+
+.layout-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The invisible column that keeps a fixed-position box aligned with the content
+   column rather than straddling the rail. It has nothing to align to once the
+   columns stack. */
+.layout-rail-spacer {
+  width: var(--sidebar-w);
+  flex: none;
+}
+
+@media (max-width: 900px) {
+  .layout-columns {
+    flex-direction: column;
+  }
+
+  /* Content first, rail after. Stacked, a rail that keeps its source order puts
+     six controls between the reader and the first result — the opposite of the
+     order the page is meant to read in, where narrowing is something you reach
+     for once you have seen what came back. */
+  .layout-rail {
+    width: 100%;
+    order: 2;
+  }
+
+  .layout-main {
+    width: 100%;
+  }
+
+  .layout-rail-spacer {
+    display: none;
+  }
+}

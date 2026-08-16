@@ -29,6 +29,17 @@ const PLACEHOLDER: Record<Mode, string> = {
 
 const SUBMIT_LABEL: Record<Mode, string> = { search: "Sök", agent: "Fråga" };
 
+/* One line for each mode, in the same place, because the choice between them is
+ * the only thing this page asks the reader to decide and the words "Sök" and
+ * "Agent" do not settle it. A note on the agent alone left search unexplained —
+ * and moved the box every time the mode changed. */
+const MODE_NOTE: Record<Mode, string> = {
+  search:
+    "Söker i besluten och visar nämndens egna ord, med utdrag ur de beslut som matchar.",
+  agent:
+    "Agenten söker, läser och skriver ett svar med hänvisningar. Det tar upp till en minut.",
+};
+
 export function SearchHomePage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -111,19 +122,16 @@ export function SearchHomePage() {
             submitLabel={SUBMIT_LABEL[mode]}
           />
 
-          {mode === "agent" && (
-            <p
-              style={{
-                margin: 0,
-                fontFamily: "var(--font-sans)",
-                fontSize: "var(--text-small-size)",
-                color: "var(--text-muted)",
-              }}
-            >
-              Agenten söker, läser och skriver ett svar med hänvisningar. Det tar
-              upp till en minut.
-            </p>
-          )}
+          <p
+            style={{
+              margin: 0,
+              fontFamily: "var(--font-sans)",
+              fontSize: "var(--text-small-size)",
+              color: "var(--text-muted)",
+            }}
+          >
+            {MODE_NOTE[mode]}
+          </p>
         </div>
 
         {facets.data !== undefined && (

@@ -71,24 +71,32 @@ function SqlBlock({ event }: { event: SqlEvent }) {
           color: "var(--text-faint)",
         }}
       >
-        Frågan bakom siffran
+        Siffrorna i svaret
       </h3>
 
-      <pre
-        style={{
-          margin: 0,
-          overflowX: "auto",
-          fontFamily: "var(--font-mono)",
-          fontSize: "var(--text-caption-size)",
-          lineHeight: "var(--text-cite-lh)",
-          color: "var(--text-strong)",
-          whiteSpace: "pre-wrap",
-        }}
-      >
-        {event.sql}
-      </pre>
-
+      {/* The rows first, the query under them. Both are on screen and neither is
+          collapsed — the obligation is that the reader can check the number, and
+          it is the rows they can read. A block that opens on SQL reads as
+          machinery to anyone who does not write SQL, and machinery is what a
+          reader skips. */}
       {event.columns.length > 0 && <ResultTable event={event} />}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        <span style={noteStyle}>Så räknades de fram:</span>
+        <pre
+          style={{
+            margin: 0,
+            overflowX: "auto",
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--text-caption-size)",
+            lineHeight: "var(--text-cite-lh)",
+            color: "var(--text-body)",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {event.sql}
+        </pre>
+      </div>
 
       {event.truncated && (
         <p style={{ margin: 0, ...noteStyle }}>

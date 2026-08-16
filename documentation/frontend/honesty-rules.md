@@ -3,7 +3,7 @@ type: Concept
 title: Honesty rules
 description: The frontend's tested constraints on what it claims — twelve about a search result, nine more about an answer a language model wrote. Each exists because the data does not support the more convenient alternative.
 tags: [frontend, ui, honesty, search, agent, appendix, rrf]
-timestamp: 2026-08-15T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Honesty rules
@@ -53,9 +53,12 @@ tell what it rests on.
    value, observed in the range 0.016–0.033 on the live corpus — not a
    confidence percentage a reader could sensibly interpret. Because RRF works
    on rank, the top hit of *any* search scores 0.01639 regardless of how good
-   the match was. `vector_rank` and `text_rank` badges are shown instead, and
-   an arm that did not return a chunk (`null`) is simply omitted rather than
-   shown as a zero. The field that does carry relevance is
+   the match was. What a card shows instead is **how the decision was found**,
+   in words: "Innehåller dina ord" when the full-text arm returned it, "Träff
+   på betydelse" when only the vector arm did. The rank *numbers* are not shown
+   either — the list is already in rank order, so a "#3" beside the third card
+   restates the position and reads as a score to a reader who does not know
+   what a retrieval arm is. The field that does carry relevance is
    `vector_similarity` — see [`/api/search`](/api/search.md).
 5. **`total` reads as a bare count, never a fraction of a corpus.** It is the
    size of the fused candidate pool (bounded by the search arm limit), not a
@@ -130,6 +133,12 @@ screen.
     decoration. The attempt trail may collapse; the query that produced the
     answer may not. A `query_corpus` that could not build a query says so rather
     than rendering nothing.
+
+    The block leads with the **rows**, and the SQL follows under "Så räknades de
+    fram". Both are on screen and neither is collapsed; the order is what
+    changed, because the reader this rule protects is the non-technical one, and
+    a block that opens on `SELECT` reads as machinery — which is what a reader
+    skips. The rows are the part they can actually check the number against.
 15. **`error` is terminal.** The contract sends no `done` after one, so the UI
     stops on it: the failed turn is marked, whatever tokens arrived are kept —
     they are what the agent actually said — and nothing goes on claiming the

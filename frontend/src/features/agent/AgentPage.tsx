@@ -65,21 +65,19 @@ export function AgentPage() {
       }}
     >
       <div
+        className="layout-columns"
         style={{
           width: "100%",
           maxWidth: "var(--content-max)",
-          display: "flex",
-          gap: "var(--space-8)",
         }}
       >
-        <div style={{ width: "var(--sidebar-w)", flex: "none" }}>
+        <div className="layout-rail">
           <ConversationRail openSessionId={routeSessionId} />
         </div>
 
         <div
+          className="layout-main"
           style={{
-            flex: 1,
-            minWidth: 0,
             maxWidth: "var(--measure-prose)",
             display: "flex",
             flexDirection: "column",
@@ -88,13 +86,11 @@ export function AgentPage() {
         >
           {failedToLoad && <LoadFailure />}
           {loading && !failedToLoad && <Loading />}
-          {turns.length === 0 && !loading && !failedToLoad ? <EmptyState /> : null}
+          {turns.length === 0 && !loading && !failedToLoad ? <EmptyState onPick={ask} /> : null}
 
           {turns.map((turn) => (
             <TurnView key={turn.key} turn={turn} />
           ))}
-
-          <div ref={end} />
 
           <Composer
             onSubmit={ask}
@@ -102,6 +98,13 @@ export function AgentPage() {
             busy={busy}
             autoFocus={turns.length === 0}
           />
+
+          {/* The scroll anchor sits *after* the composer, not before it. A finished
+              turn runs well past a screen, and an anchor above the composer scrolls
+              the newest text to the bottom edge with the box the reader needs next
+              just below the fold. Anchoring past it keeps the composer on screen
+              through the whole turn without a sticky box overlapping the answer. */}
+          <div ref={end} />
         </div>
       </div>
     </main>
@@ -122,7 +125,19 @@ function LoadFailure() {
   );
 }
 
-function EmptyState() {
+/* Three questions the corpus can actually answer, and three different shapes of
+ * question: one about a rule, one that counts, one about a single decision. They
+ * are here because a blank box asks the reader to guess both what this holds and
+ * how to address it, and neither guess is one a first-time reader should have to
+ * make. Written by hand, not drawn from the corpus: a suggestion that changed with
+ * the data would be a claim about what the data contains. */
+const EXAMPLE_QUESTIONS = [
+  "Vad krävs för att ett beslut ska upphävas på formell grund?",
+  "Hur ofta bifaller nämnden ett överklagande?",
+  "Vad har nämnden sagt om jäv i kyrkoråd?",
+];
+
+function EmptyState({ onPick }: { onPick: (question: string) => void }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
       <h1
@@ -152,9 +167,43 @@ function EmptyState() {
         skriver ett svar med hänvisningar. Ett svar tar upp till en minut — du
         ser vad den gör under tiden. Följdfrågor besvaras i samma samtal.
       </p>
+
+      <ul
+        style={{
+          listStyle: "none",
+          margin: "var(--space-4) 0 0",
+          padding: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--space-3)",
+        }}
+      >
+        {EXAMPLE_QUESTIONS.map((question) => (
+          <li key={question}>
+            <button type="button" onClick={() => onPick(question)} style={exampleStyle}>
+              {question}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
+
+const exampleStyle = {
+  width: "fit-content",
+  maxWidth: "100%",
+  textAlign: "left",
+  padding: "var(--space-3) var(--space-5)",
+  borderRadius: "var(--radius-pill)",
+  border: "1px solid var(--border-default)",
+  background: "var(--surface-card)",
+  fontFamily: "var(--font-sans)",
+  fontSize: "var(--text-small-size)",
+  color: "var(--text-body)",
+  cursor: "pointer",
+  transition: "var(--transition-control)",
+} as const;
 
 const mutedStyle = {
   margin: 0,

@@ -40,7 +40,20 @@ export function TurnView({ turn }: TurnViewProps) {
 
       {turn.origin === "restored" && <RestoredNotice />}
 
-      {turn.status === "error" && <TurnNotice tone="error" text={turn.error} />}
+      {/* The API's message is deliberately generic — the cause is logged server-side
+          rather than shown — so the next step is added here. Without it the reader
+          is told something failed and left to work out whether asking again is
+          worth trying. */}
+      {turn.status === "error" && (
+        <TurnNotice
+          tone="error"
+          text={
+            turn.error === null
+              ? null
+              : `${turn.error} Frågan sparades inte — ställ den gärna igen.`
+          }
+        />
+      )}
 
       {turn.status === "aborted" && (
         <TurnNotice

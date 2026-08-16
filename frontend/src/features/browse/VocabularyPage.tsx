@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router";
+import { Link } from "react-router";
 
 import { Badge } from "../../components/display/Badge";
 import { Tabs } from "../../components/navigation/Tabs";
@@ -30,7 +30,6 @@ export type VocabularyPageProps = {
 };
 
 export function VocabularyPage({ kind, entityType, onEntityTypeChange }: VocabularyPageProps) {
-  const navigate = useNavigate();
   const isKeywords = kind === "keywords";
 
   const keywords = useKeywords(isKeywords ? { limit: PAGE_SIZE } : {});
@@ -102,24 +101,24 @@ export function VocabularyPage({ kind, entityType, onEntityTypeChange }: Vocabul
         >
           {query.data.items.map((entity: EntityWithCount) => (
             <li key={entity.id}>
-              <button
-                type="button"
-                onClick={() => navigate(`${isKeywords ? "/sokord" : "/begrepp"}/${entity.id}`)}
+              {/* A row is a link, not a button that navigates: it goes somewhere,
+                  so it should behave like it — hoverable URL, middle-click, and a
+                  new tab for a reader comparing two vocabularies. */}
+              <Link
+                to={`${isKeywords ? "/sokord" : "/begrepp"}/${entity.id}`}
+                // The target page's API call returns decisions and nothing about
+                // the entity, so the name travels with the navigation instead.
+                state={{ name: entity.name }}
                 style={{
-                  width: "100%",
                   display: "flex",
                   alignItems: "baseline",
                   justifyContent: "space-between",
                   gap: "var(--space-5)",
                   padding: "var(--space-4) var(--space-3)",
-                  border: "none",
                   borderBottom: "1px solid var(--border-hairline)",
-                  background: "transparent",
-                  font: "inherit",
                   fontSize: "var(--text-body-size)",
                   color: "var(--text-strong)",
-                  textAlign: "left",
-                  cursor: "pointer",
+                  textDecoration: "none",
                 }}
               >
                 <span>{entity.name}</span>
@@ -128,7 +127,7 @@ export function VocabularyPage({ kind, entityType, onEntityTypeChange }: Vocabul
                     ? "1 beslut"
                     : `${formatCount(entity.document_count)} beslut`}
                 </span>
-              </button>
+              </Link>
             </li>
           ))}
         </ul>
