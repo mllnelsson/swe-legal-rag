@@ -4,7 +4,7 @@ title: api Package
 description: The FastAPI application and the deterministic search/browse/traversal REST API — search/document/concept/keyword services, the session service, the chat toolset the conversational agent is driven through, and their routes.
 resource: packages/api
 tags: [package, api, fastapi, retrieval, sse, search, rest]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # api Package (`packages/api/`)
@@ -30,6 +30,8 @@ tools one of them runs on and the SSE framing both reach a client through.
 [conversational agent](/retrieval/chat-agent.md) searches under, since its search tool
 wraps the same path; see [deterministic
 search](/retrieval/deterministic-search.md#settings) for the full table of defaults.
+`DevSettings` — `CHAT_SCRIPT` (`off`), typed as the `ChatScript` enum so a
+misspelt value fails at startup rather than falling through to the real agent.
 Each exposes an `@lru_cache` singleton getter.
 
 The agent's own bounds — iterations, reading budget, citation cap — are
@@ -116,6 +118,10 @@ search](/retrieval/deterministic-search.md) for why.
   embedding_provider, settings, llm_provider=None) -> SearchResponse` and
   `get_filters(session) -> DocumentFacets`. Implements
   [`POST /api/search`](/api/search.md) and [`GET /api/filters`](/api/filters.md).
+  Every repository call here awaits in sequence: one `AsyncSession` serves the
+  whole request and permits one operation at a time, so gathering the search arms
+  raises `InvalidRequestError` rather than saving time. This holds for any service
+  in this package, not just this one.
 - **`document_service.py`** — `list_documents`, `get_document_detail`,
   `get_document_chunks`, `get_document_pdf`. Implements
   [`GET /api/documents`](/api/documents.md),
@@ -171,6 +177,30 @@ Request flow: validate `ChatRequest` (422 on empty/long/bad `session_id`) →
 (`text/event-stream`, headers `Cache-Control: no-cache`, `X-Accel-Buffering: no`); the
 `done` frame carries the `session_id`, and the turn is persisted after it. The DB
 session comes from `api/dependencies.get_db`, shared with every other router.
+
+The one branch in it: when `CHAT_SCRIPT` names a script, `run_chat_agent` is
+replaced by `replay(SCRIPTS[…])` from `api/dev/chat_scripts.py` and neither the
+toolset nor the LLM providers are built. Nothing downstream of that assignment
+changes, which is the point — see below.
+
+## Scripted chat (`api/dev/chat_scripts.py`)
+
+Development-only fixtures for [agent mode](/frontend/overview.md): canned event
+sequences with the pauses between them, replayed in place of the agent so the
+client can be looked at without a model run.
+
+| Symbol | Kind | Purpose |
+|---|---|---|
+| `ScriptedFrame` | frozen dataclass | One `AgentEvent` and the delay before it |
+| `stream_text(text)` | pure function | Splits prose into one token frame per word, spaces kept |
+| `select_script(setting, message)` | pure function | Which script this turn plays, or `None` for the real agent. Exhaustive `match` over `ChatScript` |
+| `SCRIPTS` | dict | `research`, `direct`, `error` |
+| `replay(frames)` | async generator | `AsyncIterator[AgentEvent]` — the same type `run_chat_agent` returns |
+
+The frames are built from the DTOs in `agents.chat`, not from dicts, so a
+renamed `ProgressLabel` breaks them at import rather than letting a fixture
+drift from the contract it stands in for. Between them the three scripts cover
+every `ProgressLabel` member, which a unit test asserts.
 
 ## Sessions routes (`api/routes/sessions.py`)
 

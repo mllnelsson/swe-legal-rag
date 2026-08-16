@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-13T01:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -404,6 +404,72 @@ uv run --package api uvicorn api.main:app --reload --port 8000
 
 Exposes `GET /health` and the chat endpoint [`POST /api/chat`](/api/chat-endpoint.md)
 (SSE).
+
+## Driving the UI without a model
+
+A live agent turn costs a chat model, a read sub-agent and a SQL sub-agent, and
+takes about a minute. `CHAT_SCRIPT` makes the endpoint replay a canned event
+sequence instead — the same seven event types, the same pauses between them, no
+model call:
+
+```bash
+LLM_PROVIDER=none CHAT_SCRIPT=auto EMBEDDING_DIMENSION=1024 \
+  uv run --package api uvicorn api.main:app --reload --port 8000
+npm run dev        # in frontend/
+```
+
+| Value | What a turn does |
+|---|---|
+| `auto` | Picks per turn: a message of three words or fewer plays `direct`, anything longer plays `research`. Both shapes without a restart |
+| `research` | Seven steps over ~20 s — including a refused filter and an `event: sql` — then a streamed answer and three sources |
+| `direct` | One `answer.direct` step, ~1.5 s, an empty `sources` list |
+| `error` | Two steps, then `event: error` and **no** `done` |
+| `off` | The real agent. The default |
+
+`LLM_PROVIDER=none` is what lets the server start with no `BERGET_API_KEY`; it
+is a separate switch, and scripting the route does not disable the role
+construction at startup. Embeddings are `local`, so deterministic search still
+works — against whatever is ingested.
+
+Three things about a scripted turn are deliberate:
+
+* **The answers say they are fabricated, in their own first sentence**, and the
+  case numbers read `DEMO-2024-001`. A scripted turn is written to
+  [`sessions`](/data-model/sessions.md) by the same `append_turn` as a real one,
+  and nothing in the row would otherwise distinguish them a month later.
+* **The `pdf_url`s 404.** The document ids are invented. Making them resolve
+  means querying for real ids or shipping a PDF fixture, and neither is what a
+  layout check needs.
+* **Every request logs at WARNING** that it was scripted. A server answering
+  from a fixture while someone believes it is answering from the corpus is the
+  one real hazard here.
+
+The frames and the selection rule live in
+`packages/api/src/api/dev/chat_scripts.py`; the events are the real
+`agents.chat` DTOs, so a renamed `ProgressLabel` breaks the fixtures rather than
+letting them drift.
+
+### Walking the whole frontend on one server
+
+Only `/api/chat` is scripted. Everything else on that server answers from the
+database as usual, so with a corpus ingested this one command drives every
+surface at once — and it is the setup to use when reviewing the UI rather than
+the agent:
+
+| Surface | What to check |
+|---|---|
+| `/` | Both modes of the **Sök / Agent** toggle carry a line of prose; the keyword chips run a real search |
+| `/sok?q=jäv` | Real results; cards say "Innehåller dina ord" or "Träff på betydelse"; titles are links |
+| `/sok?q=rymdfarkoster på mars` | The no-match empty state — reachable because of [the similarity floor](/retrieval/deterministic-search.md#the-similarity-floor) |
+| `/sok?q=jäv&kategori=Kyrkoval` | The *other* empty state: filters excluded everything before any search ran |
+| `/beslut/{id}` | Tabs, the sticky appendix marker, the PDF pane, "← Tillbaka" |
+| `/agent` | The three example questions; a long question plays `research`, "tack" plays `direct` |
+| `/sokord`, `/begrepp` | Vocabulary indexes; a row names the entity on the page it opens |
+| `/stil` | Every ported component on one page |
+
+Narrow the window past 900px to see the [stacked
+layout](/frontend/overview.md#small-screens): rails move below the content, and
+results come before filters.
 
 ## Verifying the Pipeline
 

@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-15T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -235,3 +235,21 @@ Sessions outlive the request that made them and are readable: [`/api/sessions`](
 lists, reopens and deletes them. A `session_id` a client got from that list is
 just a `session_id` here — the agent cannot tell a conversation that was
 reopened from one that was never left.
+
+## Development: a scripted stream
+
+`CHAT_SCRIPT` (default `off`) replaces the agent with a canned sequence of these
+same events, played with sleeps between them — for looking at the client without
+paying for a model run. **Nothing else about the request changes**: the SSE
+framing, the `pdf_url` the route attaches, the `X-Interaction-Id` header, the
+session row and the persisted turn are all the real ones, which is what makes it
+worth doing at this seam rather than mocking in the browser.
+
+`auto` picks per turn from the message length, so both the research shape and
+the `reply_from_context` shape are reachable without a restart; `error` is
+reachable only by name. The fixtures live in
+`packages/api/src/api/dev/chat_scripts.py` and are built from the DTOs in
+`agents.chat`, so they cannot drift from this contract silently. Every scripted
+request logs at WARNING, the answers state that they are fabricated, and the
+fake `document_id`s make `pdf_url` 404. See [live
+testing](/playbooks/live-testing.md#driving-the-ui-without-a-model).

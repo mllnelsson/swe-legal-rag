@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Deterministic Search
-description: The LLM-free hybrid search path behind POST /api/search and the agent's search tool — filter narrowing with no fallback, parallel vector/text arms under a similarity floor and fused by RRF, appendix widening, and document-level ranking that never fetches metadata for documents it will not return.
+description: The LLM-free hybrid search path behind POST /api/search and the agent's search tool — filter narrowing with no fallback, sequential vector/text arms under a similarity floor and fused by RRF, appendix widening, and document-level ranking that never fetches metadata for documents it will not return.
 tags: [retrieval, search, rrf, hybrid-search, rest, relevance]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Deterministic Search
@@ -58,8 +58,14 @@ wrapper.
    applied. Only the original query is embedded for the vector arm unless
    `search_expand_vector_arm` is `true` (default `false`) — see [query
    expansion](/retrieval/query-expansion.md) for why.
-4. **Hybrid arms, in parallel.** `chunk_repo.vector_search` and `chunk_repo.text_search`
-   run via `asyncio.gather` for every query, each capped at `search_arm_limit`. Body-only
+4. **Hybrid arms, one after another.** `chunk_repo.vector_search` and
+   `chunk_repo.text_search` run once per query, each capped at `search_arm_limit`.
+   They are **sequential, not gathered**: every arm takes the request's
+   `AsyncSession`, and a session permits exactly one operation at a time —
+   overlapping them raises `InvalidRequestError` rather than going faster.
+   Running them concurrently would mean a session per arm, which is a
+   connection-pool decision rather than a search one. The same applies to the
+   per-page `document_repo.get_by_id` lookups in step 8. Body-only
    `sections` scoping applies by default, same mechanism as [body-first
    retrieval](/decisions/body-first-retrieval.md). The vector arm applies
    `search_min_vector_similarity` as a floor — see [the similarity

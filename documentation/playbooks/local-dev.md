@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-09T12:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Local Development Environment
@@ -299,6 +299,7 @@ one level to match.
 | `SEARCH_MIN_VECTOR_SIMILARITY` | `0.78` | Cosine similarity a chunk must reach before `/api/search`'s vector arm returns it — what decides "no match". Model- and corpus-specific; re-measure when the [embedding model](/decisions/embedding-model.md) changes. `0` disables the floor. See [the similarity floor](/retrieval/deterministic-search.md#the-similarity-floor) (`api`) |
 | `API_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins for the API server; Vite dev server default |
 | `SESSION_MAX_HISTORY_TURNS` | `10` | Max conversation turns passed to LLM; full history stays in DB |
+| `CHAT_SCRIPT` | `off` | **Development only.** Replays a canned event stream on [`POST /api/chat`](/api/chat-endpoint.md) instead of running the agent: `auto` (picks per message length), `research`, `direct`, `error`, `off`. See [driving the UI without a model](/playbooks/live-testing.md#driving-the-ui-without-a-model) (`api`) |
 | `LLM_TRACE_ENABLED` | `true` | Capture every LLM/embedding call to a file — see [observability](/observability.md). Off means no recorder and no files |
 | `LLM_TRACE_KEY_PREFIX` | `llm-traces` | Directory under `LOCAL_STORAGE_PATH` holding the daily trace tree |
 | `LLM_STREAM_USAGE` | `true` | Ask the provider for token usage on streamed responses. Turn off only if a host rejects the parameter |

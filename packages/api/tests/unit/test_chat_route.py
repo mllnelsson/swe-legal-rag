@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import replace
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -34,8 +35,10 @@ from shared.dtos.session import SessionRead
 from shared.enums import ChunkSection
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import ChatScript, DevSettings, get_dev_settings
 from api.correlation import INTERACTION_ID_HEADER
 from api.dependencies import get_db
+from api.dev.chat_scripts import SCRIPTS
 from api.main import create_app
 from api.routes.chat import _format_sse
 
@@ -582,3 +585,97 @@ class TestInteractionIdHeader:
             append.await_args.kwargs["interaction_id"]
             == (response.headers[INTERACTION_ID_HEADER])
         )
+
+
+class TestScriptedChat:
+    """`CHAT_SCRIPT` replaces the agent and nothing else.
+
+    The value of the switch is that the *rest* of the request stays real — the
+    SSE framing, the session row, the persisted turn — so these check the seam
+    rather than the fixtures, which `test_chat_scripts.py` covers.
+    """
+
+    def setup_method(self):
+        self.chat_session = _make_session()
+        self.app, self.client = _make_client()
+
+    def teardown_method(self):
+        self.app.dependency_overrides.clear()
+
+    def _post(self, script: ChatScript, message: str = "Vad gäller vid jäv?"):
+        # The delays are what a script is for and the last thing a test suite
+        # wants; every frame fires at once here.
+        instant = {
+            name: [replace(frame, delay=0.0) for frame in frames]
+            for name, frames in SCRIPTS.items()
+        }
+        self.app.dependency_overrides[get_dev_settings] = lambda: DevSettings(
+            chat_script=script
+        )
+
+        with (
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch("api.routes.chat.append_turn", new=AsyncMock()) as append,
+            patch("api.routes.chat.SCRIPTS", instant),
+            patch("api.routes.chat.run_chat_agent") as agent,
+        ):
+            response = self.client.post("/api/chat", json={"message": message})
+        return response, append, agent
+
+    def test_the_agent_is_never_called(self):
+        """The whole point: no model, no toolset, no bill."""
+        _, _, agent = self._post(ChatScript.DIRECT)
+
+        agent.assert_not_called()
+
+    def test_the_direct_script_streams_a_whole_turn(self):
+        response, _, _ = self._post(ChatScript.DIRECT)
+
+        names = [event["event"] for event in _parse_sse(response.text)]
+        assert names[0] == "tool_call"
+        assert "token" in names
+        assert names[-1] == "done"
+
+    def test_the_research_script_carries_sql_and_sources(self):
+        response, _, _ = self._post(ChatScript.RESEARCH)
+
+        events = _parse_sse(response.text)
+        names = [event["event"] for event in events]
+        assert names.index("sql") < names.index("token")
+        assert names[-1] == "done"
+
+        sources = [e for e in events if e["event"] == "sources"][0]["data"]["sources"]
+        assert len(sources) == 3
+        # Attached by the route, so the scripted stream goes through the same
+        # shaping a real one does.
+        assert all(s["pdf_url"].startswith("/api/documents/") for s in sources)
+
+    def test_a_scripted_turn_is_persisted_like_a_real_one(self):
+        """So the conversation rail is something the switch lets you feel too."""
+        _, append, _ = self._post(ChatScript.DIRECT)
+
+        append.assert_awaited_once()
+        assert append.await_args.args[2].startswith("Det här är ett skriptat")
+
+    def test_the_error_script_ends_without_done_and_persists_nothing(self):
+        response, append, _ = self._post(ChatScript.ERROR)
+
+        names = [event["event"] for event in _parse_sse(response.text)]
+        assert names[-1] == "error"
+        assert "done" not in names
+        append.assert_not_awaited()
+
+    def test_auto_picks_the_script_from_the_message(self):
+        short, _, _ = self._post(ChatScript.AUTO, message="Tack!")
+        long, _, _ = self._post(ChatScript.AUTO, message="Vad gäller vid jäv i val?")
+
+        assert "answer.direct" in short.text
+        assert "answer.compose" in long.text
+
+    def test_off_runs_the_real_agent(self):
+        """The default must be indistinguishable from before this switch existed."""
+        _, _, agent = self._post(ChatScript.OFF)
+
+        agent.assert_called_once()

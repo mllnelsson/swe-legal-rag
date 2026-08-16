@@ -8,7 +8,6 @@ it usable as a tool an agent can reason about.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import date
@@ -215,9 +214,16 @@ async def _run_arms(
     arm_limit: int,
     min_vector_similarity: float,
 ) -> _ArmOutcome:
-    """Every arm of the hybrid search, in parallel, as rankings to fuse."""
-    vector_calls = [
-        chunk_repo.vector_search(
+    """Every arm of the hybrid search, as rankings to fuse.
+
+    The arms run one after another because they share the request's
+    `AsyncSession`, and a session permits exactly one operation at a time —
+    issuing them concurrently raises `InvalidRequestError` rather than going
+    faster. Overlapping them would mean a session per arm, which is a
+    connection-pool decision rather than a search one.
+    """
+    vector_results = [
+        await chunk_repo.vector_search(
             session,
             embedding,
             candidate_ids,
@@ -227,15 +233,12 @@ async def _run_arms(
         )
         for embedding in query_embeddings
     ]
-    text_calls = [
-        chunk_repo.text_search(
+    text_results = [
+        await chunk_repo.text_search(
             session, query, candidate_ids, limit=arm_limit, sections=sections
         )
         for query in queries
     ]
-    results = await asyncio.gather(*vector_calls, *text_calls)
-    vector_results = list(results[: len(vector_calls)])
-    text_results = list(results[len(vector_calls) :])
 
     rankings: list[list[uuid.UUID]] = []
     chunks: dict[uuid.UUID, ChunkSearchResult] = {}
@@ -467,10 +470,11 @@ async def search_documents(
     ranked_document_ids = _rank_documents(grouped)
     page_ids = ranked_document_ids[query.offset : query.offset + limit]
 
-    # Metadata is fetched for the page only; ranking never needed it.
-    documents = await asyncio.gather(
-        *[document_repo.get_by_id(session, document_id) for document_id in page_ids]
-    )
+    # Metadata is fetched for the page only; ranking never needed it. Sequential
+    # for the same reason the arms are: one session, one operation at a time.
+    documents = [
+        await document_repo.get_by_id(session, document_id) for document_id in page_ids
+    ]
 
     items = [
         _make_hit(document, grouped[document.id], chunks_per_document)

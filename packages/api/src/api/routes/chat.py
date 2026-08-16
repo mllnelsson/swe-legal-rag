@@ -23,13 +23,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import (
+    DevSettings,
     SearchSettings,
     SessionSettings,
+    get_dev_settings,
     get_search_settings,
     get_session_settings,
 )
 from api.correlation import INTERACTION_ID_HEADER, resolve_interaction_id
 from api.dependencies import get_db
+from api.dev.chat_scripts import SCRIPTS, replay, select_script
 from api.services.chat_toolset import build_chat_toolset
 from api.services.session_service import (
     append_turn,
@@ -87,16 +90,8 @@ async def chat_endpoint(
     db: AsyncSession = Depends(get_db),
     search_settings: SearchSettings = Depends(get_search_settings),
     session_settings: SessionSettings = Depends(get_session_settings),
+    dev_settings: DevSettings = Depends(get_dev_settings),
 ) -> StreamingResponse:
-    toolset = build_chat_toolset(
-        db,
-        embedding_provider=request.app.state.embedding_provider,
-        search_settings=search_settings,
-        sql_llm_provider=request.app.state.sql_llm_provider,
-    )
-    chat_llm_provider = request.app.state.chat_llm_provider
-    read_llm_provider = request.app.state.read_llm_provider
-
     chat_session = await get_or_create_session(body.session_id, db)
     history = history_for_llm(chat_session, session_settings.session_max_history_turns)
 
@@ -105,6 +100,35 @@ async def chat_endpoint(
     # reach them.
     interaction_id = resolve_interaction_id(request.headers.get(INTERACTION_ID_HEADER))
     logger.info("Chat interaction %s for session %s", interaction_id, chat_session.id)
+
+    # A development switch, off by default. When on, the events are canned and
+    # nothing else about the request changes — same SSE framing, same session
+    # row, same persisted turn. The toolset and the LLM providers are the
+    # expensive half of this request and are provably unused here, so building
+    # them would only be a way to fail. See `api.dev.chat_scripts`.
+    scripted = select_script(dev_settings.chat_script, body.message)
+    if scripted is None:
+        agent_events = run_chat_agent(
+            ChatAgentRequest(question=body.message, history=history),
+            build_chat_toolset(
+                db,
+                embedding_provider=request.app.state.embedding_provider,
+                search_settings=search_settings,
+                sql_llm_provider=request.app.state.sql_llm_provider,
+            ),
+            llm_provider=request.app.state.chat_llm_provider,
+            reader_provider=request.app.state.read_llm_provider,
+        )
+    else:
+        # A server answering from a script while someone believes it is
+        # answering from the corpus is the one real hazard here, so it is said
+        # loudly and on every request rather than once at startup.
+        logger.warning(
+            "Chat interaction %s is SCRIPTED (%s) — no model was called",
+            interaction_id,
+            scripted,
+        )
+        agent_events = replay(SCRIPTS[scripted])
 
     async def generate() -> AsyncIterator[str]:
         # The trace context, unlike the id itself, is entered here inside the
@@ -123,12 +147,7 @@ async def chat_endpoint(
             source=_SOURCE,
         ):
             try:
-                async for event in run_chat_agent(
-                    ChatAgentRequest(question=body.message, history=history),
-                    toolset,
-                    llm_provider=chat_llm_provider,
-                    reader_provider=read_llm_provider,
-                ):
+                async for event in agent_events:
                     match event:
                         case ToolCallEvent():
                             yield _format_sse(

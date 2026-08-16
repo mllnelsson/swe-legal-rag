@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -756,3 +757,55 @@ class TestRelevanceSignal:
         assert result.diagnostics.top_vector_similarity is None
         assert result.items[0].chunks[0].vector_similarity is None
         assert result.items[0].chunks[0].text_score == 0.31
+
+
+class TestSessionUse:
+    async def test_repository_calls_never_overlap_on_the_shared_session(self):
+        """One `AsyncSession` serves the whole search, and it permits one
+        operation at a time.
+
+        Every arm and every metadata lookup takes the request's session. Issuing
+        two of them concurrently raises `InvalidRequestError` from SQLAlchemy —
+        which no test with instantly-resolving mocks can see, because nothing
+        ever suspends between the calls. This one suspends on purpose, and fails
+        if a second call starts while another is open.
+        """
+        document_id = uuid.uuid4()
+        open_calls = 0
+        overlaps = 0
+
+        async def _tracked(result):
+            nonlocal open_calls, overlaps
+            open_calls += 1
+            if open_calls > 1:
+                overlaps += 1
+            # Yield control the way a real database round trip does; a gathered
+            # sibling would start here.
+            await asyncio.sleep(0)
+            open_calls -= 1
+            return result
+
+        with (
+            patch("api.services.search_service.chunk_repo") as mock_chunk,
+            patch("api.services.search_service.document_repo") as mock_doc,
+        ):
+
+            async def _search(*_args, **_kwargs):
+                return await _tracked([_chunk(document_id)])
+
+            async def _get(*_args, **_kwargs):
+                return await _tracked(_doc(document_id))
+
+            mock_chunk.vector_search = _search
+            mock_chunk.text_search = _search
+            mock_doc.get_by_id = _get
+
+            result = await search_documents(
+                SearchQuery(query="jäv", queries=["jäv", "opartiskhet", "närstående"]),
+                MagicMock(),
+                embedding_provider=_embedding_provider(),
+                settings=_settings(search_expand_vector_arm=True),
+            )
+
+        assert overlaps == 0
+        assert len(result.items) == 1
