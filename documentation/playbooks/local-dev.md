@@ -185,19 +185,31 @@ in a second instead of at deploy.
 These have no native equivalent set up and are only reachable through Docker. Both are
 optional, and neither is needed for ordinary development.
 
-### MinIO (optional)
+**Both are aspirational — nothing in this repo wires them up today.** Storage
+selects between the filesystem and GCS through `STORAGE_BACKEND`, and the queue
+between in-process and Pub/Sub through `QUEUE_BACKEND`; neither has a MinIO or
+Redis case. Grepping across `packages/`, `scripts/` and `alembic/` for
+`MINIO_ENDPOINT` or `REDIS_URL` finds no reads — these are compose services a
+future S3- or Redis-backed implementation could point at, not something running
+now uses. Starting either buys nothing until that code exists.
 
-S3-compatible object storage. Only needed if you want GCS API parity. For most
-development, local filesystem storage is simpler and sufficient.
+### MinIO (aspirational)
+
+S3-compatible object storage. Would only matter for GCS API parity if a MinIO
+`StorageBackend` were implemented; none exists — `STORAGE_BACKEND` accepts
+`local` or `gcs`, not a MinIO/S3 option. For all current development, local
+filesystem storage is simpler and is what actually runs.
 
 - Image: `minio/minio`
 - Ports: `9000` (API), `9001` (console)
 - Single bucket pre-created on startup
 
-### Redis (optional)
+### Redis (aspirational)
 
-Only needed if testing async queue behavior. For most development, the in-process
-synchronous queue implementation is faster to work with and easier to debug.
+Would only matter for testing async queue behavior if a Redis-backed queue
+existed; none does — `QUEUE_BACKEND` accepts `sync` or `pubsub`, not Redis. For
+all current development, the in-process synchronous queue is what actually
+runs.
 
 - Image: `redis:7-alpine`
 - Port: `6379`

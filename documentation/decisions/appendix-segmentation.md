@@ -3,7 +3,7 @@ type: Decision
 title: Appendices are labelled, not dropped
 description: Why appended lower-instance decisions stay in the index with a section marker rather than being discarded or left undistinguished.
 tags: [segmentation, appendix, bilaga, chunking, extraction]
-timestamp: 2026-08-04T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Appendices are labelled, not dropped
@@ -36,13 +36,14 @@ overturned — was retrievable and citable as the nämnd's own.
 ## What went wrong in practice
 
 The label anchor that makes this decision workable was, until recently, case-sensitive
-and matched only `Bilaga`. 22 of the corpus's 25 decisions write it `BILAGA A` — upper
-case — so the anchor never matched them. With no appendix label found, `_split_appendices`
+and matched only `Bilaga`. On the 25-document sample the corpus stood at when this was
+measured (2026-08-04), 22 of 25 decisions wrote it `BILAGA A` — upper case — so the
+anchor never matched them. With no appendix label found, `_split_appendices`
 fell back to treating the whole remaining text as unappendixed, which pushed the appendix
 start to `len(text)`; the trailer then ran from its own start anchor all the way to the end
 of the document, swallowing the appended lower-instance decision whole. That text was
 never mis-attributed to the nämnd — the trailer is neither chunked nor entity-scanned — it
-was **absent from the index entirely**: 98 983 of 230 550 characters across the corpus,
+was **absent from the index entirely**: 98 983 of 230 550 characters across that sample,
 43% of it, retrievable by nobody. See [decision document
 structure](/reference/document-structure.md) for the fix (the word is matched
 case-insensitively; the emitted `Appendix.label` is a canonical `Bilaga <id>`, never

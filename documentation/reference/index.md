@@ -7,4 +7,4 @@
 * [semantic_model.yaml — The SQL Agent's Semantic Model](semantic-model.md) - The checked-in file format for what the SQL agent is told about the corpus — column notes, free-text/selectable flags, worked examples — the two-way ORM check that keeps it honest, the fatal startup check, and how to add a column.
 * [LLM Pricing Prerequisites](llm-pricing.md) - Verified per-token rates and the rules for applying them when analyzing LLM trace records. Reference data, not implemented anywhere in the repo.
 * [Decision Document Structure](document-structure.md) - The anatomy of an Överklagandenämnden decision PDF — header, holding, trailer and appendices — and the anchors the pipeline segments it with.
-* [Deployment and Data State](deployment-state.md) - What is actually deployed and ingested right now — nothing — and which classes of change are therefore free rather than breaking.
+* [Deployment and Data State](deployment-state.md) - What is actually deployed (nothing) versus what is actually ingested (a real local corpus) — and which classes of change are therefore free, which now carry a real cost, and which never depended on either.

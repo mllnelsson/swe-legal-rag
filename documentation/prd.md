@@ -3,7 +3,7 @@ type: Spec
 title: Product Requirements
 description: Product requirements for a Swedish-language semantic search and chat tool over Överklagandenämnden legal decisions.
 tags: [product, requirements, scope]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Product Requirements
@@ -27,8 +27,11 @@ professionals.
   idempotent and resumable.
 - **S2:** System extracts structured metadata (date, case number, decision outcome,
   category/topic) from each document during ingestion.
-- **S3:** System exposes a chat interface. User asks questions in natural Swedish. No
-  manual filters in V1.
+- **S3:** System exposes two surfaces: deterministic search at `/` and `/sok`, with
+  manual structured filters — category, outcome, a date range, Sökord chips, and a
+  references toggle, all carried in the `/sok` query string (`kategori`, `utfall`,
+  `fran`, `tom`, `sokord`, `refs`) — and [agent mode](/frontend/overview.md) at
+  `/agent`, where the user asks questions in natural Swedish.
 - **S4:** On query, an [agent](/retrieval/chat-agent.md) decomposes the user's question —
   extracting implicit structured filters (date, topic, decision type) and semantic
   intent.
@@ -65,13 +68,17 @@ professionals.
 
 ## Future Enhancements (V2)
 
-- User-facing structured filters (date picker, category dropdown) alongside chat
-- Mobile-optimized UI
+- Mobile-optimized UI — only a 900px stacking breakpoint exists today; a
+  designed-for-mobile layout is still out of scope
 
 ## Acceptance Criteria
 
 - User can ask a Swedish legal question and receive a synthesized answer citing
-  relevant decisions
-- Agent correctly narrows retrieval using implicit filters from the query
+  relevant decisions — **met**
+- Agent correctly narrows retrieval using implicit filters from the query — **met**
 - Ingestion pipeline processes full corpus with checkpointing, no duplicates on re-run
-- System deployed and accessible via URL
+  — **met**
+- System deployed and accessible via URL — **not met**; see [deployment
+  state](/reference/deployment-state.md). No human has yet tested the complete system
+  end-to-end either — that gap is deliberate and recorded, along with the checks that
+  close it, in the [acceptance walkthrough](/playbooks/acceptance.md).

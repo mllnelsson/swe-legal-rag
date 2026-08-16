@@ -4,7 +4,7 @@ title: Decision Document Structure
 description: The anatomy of an Överklagandenämnden decision PDF — header, holding, trailer and appendices — and the anchors the pipeline segments it with.
 resource: packages/shared/src/shared/segmentation.py
 tags: [segmentation, parsing, appendix, bilaga, corpus]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Decision Document Structure
@@ -36,7 +36,7 @@ Sökord: Utlämnande av handlingar.   -.
 Ärendenummer: ÖN 2025-0017           |- trailer
 Beslut: 1/2026                      -'
 …………………………………………………………              <- trailer rule (ellipsis, dots or dashes)
-BILAGA A                            <- label; 22/25 corpus decisions write it upper case
+BILAGA A                            <- label; 22/25 on the 25-document sample (2026-08-04) wrote it upper case
 <the prior instance's own document, verbatim>
 ```
 
@@ -77,7 +77,8 @@ Resolved most-reliable-first:
    `^[ \t]*(?i:bilaga)[ \t]+(\d{1,2}|[A-ZÅÄÖ])[ \t]*$`. Case-insensitive on the word
    alone — the identifier itself stays upper case, so a stray `bilaga a` in prose still
    cannot masquerade as a label. The corpus writes the word both ways: `BILAGA A` in
-   22 of 25 decisions, `Bilaga A` in the rest. `Appendix.label` is **built** from a
+   22 of 25 decisions on the 25-document sample the corpus stood at on 2026-08-04,
+   `Bilaga A` in the rest. `Appendix.label` is **built** from a
    canonical `Bilaga <id>` prefix rather than echoed from the source, so it is always one
    spelling regardless of which the source used — this is what keeps
    `chunks.appendix_label` a stable join key. The end anchor is essential. Decision prose
@@ -243,8 +244,8 @@ matching — the class of defect every fix on this page used to produce with no 
 all, either `None` or a plausible wrong value. `worker-metadata` is the only caller,
 logging it once at the metadata step since [extract](/pipeline/extract.md) and
 [chunk](/pipeline/chunk.md) segment the same text again (see [metadata
-worker](/pipeline/metadata.md)). Verified steady state across the corpus: zero warnings on
-all 25 documents.
+worker](/pipeline/metadata.md)). Verified steady state on the 25-document sample the
+corpus stood at on 2026-08-04: zero warnings across all 25.
 
 ## Why the split matters
 

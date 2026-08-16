@@ -4,7 +4,7 @@ title: Documents Endpoint (GET /api/documents)
 description: The GET /api/documents paginated metadata-only browse contract — filters spelled out as query parameters, mirroring DocumentFilter, so a filtered view is a plain shareable link.
 resource: GET /api/documents
 tags: [api, documents, rest, browse]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Documents Endpoint (`GET /api/documents`)
@@ -60,3 +60,14 @@ values these accept.
 Implemented by `api/services/document_service.list_documents` →
 `shared.repositories.search.list_filtered_documents`/`count_filtered_documents`, served
 through the [api package](/packages/api.md).
+
+## No UI consumer
+
+This endpoint is implemented, typed and reachable from the frontend —
+`frontend/src/api/client.ts` exports `fetchDocuments`/`useDocuments` against it —
+but no page calls either function. The [frontend](/frontend/overview.md) has no
+document-browse page: [`/api/search`](/api/search.md) covers query-driven
+discovery, and the vocabulary indexes (`/sokord`, `/begrepp`) cover
+entity-driven traversal, so a plain metadata-filtered list has not had a route
+built for it. Do not assume a page exists here without checking `frontend/src/`
+directly — this contract has a client wrapper and no reader ever reaches it.

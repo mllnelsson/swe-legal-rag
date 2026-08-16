@@ -32,8 +32,10 @@ CRAWL_API_KEY=<api-key>
 # Which decision years to crawl: current (default) | all | 2019 | 2019-2021
 CRAWL_YEARS=current
 
-# Must set — Berget is the default LLM + embedding provider. Used by the metadata LLM
-# fallback, worker-chunk summaries, and worker-embed.
+# Must set — Berget is the default provider for the LLM roles (metadata's LLM
+# fallback, worker-chunk summaries, chat/SQL agents). The embedder is a separate
+# role: llm_config.yaml ships embedding.provider: local (sentence-transformers,
+# in-process, no key, no network), so worker-embed does not need this key.
 BERGET_API_KEY=<your-key>
 
 # Defaults are fine for local dev
@@ -402,7 +404,7 @@ matching trace records instead.
 uv run --package api uvicorn api.main:app --reload --port 8000
 ```
 
-Exposes `GET /health` and the chat endpoint [`POST /api/chat`](/api/chat-endpoint.md)
+Exposes `GET /healthz` and the chat endpoint [`POST /api/chat`](/api/chat-endpoint.md)
 (SSE).
 
 ## Driving the UI without a model
@@ -604,6 +606,43 @@ query that previously returned a known document should still return it. A change
 `embedding.dimension` additionally requires a migration recreating the `chunks.embedding`
 column at the new width — see
 [embedding dimension](/decisions/embedding-dimension.md).
+
+## Reprocessing the corpus after a metadata or extract fix
+
+A fix to `worker-metadata`'s identifier parsing or `worker-extract`'s rule-based
+extraction has to be re-applied to a corpus already ingested under the old rules.
+Two rules govern any such reprocessing, corpus-wide:
+
+1. **Reprocess per step, across the whole corpus — never interleaved per
+   document.** Run metadata for every document first, then extract for every
+   document. A citation can only resolve against identifiers that already exist:
+   if a document's `case_number`/`decision_number` has not yet been corrected by
+   the metadata pass, an extract run against another document that cites it will
+   resolve against the stale value.
+
+   ```bash
+   for id in $(psql "$DATABASE_URL" -At -c "select id from documents order by decision_date;"); do
+     uv run python scripts/run_step.py metadata "$id"
+   done
+   for id in $(psql "$DATABASE_URL" -At -c "select id from documents order by decision_date;"); do
+     uv run python scripts/run_step.py extract "$id"
+   done
+   ```
+
+2. **Truncate `document_references` and `unresolved_references` before the
+   extract re-run.** Both tables are populated by upsert only — there is no
+   delete path — so when the metadata pass corrects an identifier, every
+   citation that previously resolved against the wrong target keeps that wrong
+   edge forever unless the tables are cleared first:
+
+   ```bash
+   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "TRUNCATE document_references, unresolved_references;"
+   ```
+
+   No equivalent step is needed for entity links: `persist_entities()` already
+   deletes a document's missing links on every re-extract (see [extract
+   worker](/pipeline/extract.md)), so a stale entity edge does not survive a
+   reprocessing pass the way a stale reference edge would.
 
 ## Running Tests
 

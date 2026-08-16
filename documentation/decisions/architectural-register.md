@@ -3,10 +3,12 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-08-04T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Architectural Decision Register
+
+**Status:** Accepted
 
 A consolidated register of the system-shaping decisions. Model and embedding decisions
 have their own records: [per-task LLM model and provider
@@ -125,3 +127,26 @@ window](/decisions/embedding-window.md); the mandatory crawl
   structured-output schema. See [data model design notes](/data-model/design-notes.md).
 - **pypdfium2 over PyMuPDF for parsing** — pypdfium2 is Apache 2.0 licensed; PyMuPDF /
   pymupdf4llm is AGPL. See [parse worker](/pipeline/parse.md).
+
+## Frontend
+
+- **Two surfaces, chosen by the reader, over one surface that infers intent from
+  wording** — [search](/api/search.md) at `/`/`/sok` and [agent
+  mode](/api/chat-endpoint.md) at `/agent` are separate routes rather than one box
+  that decides which path a question takes. They make different promises about
+  where the words on screen come from — the nämnd's own text and labels this app
+  wrote, versus prose a language model wrote — and collapsing them into one
+  surface would blur that promise rather than simplify it. See [the
+  frontend](/frontend/overview.md) (prose lives there; this entry only records
+  that the choice was made).
+- **The honesty rules are a tested contract, not a style guide** — the
+  domain-specific core of the app is a set of 21 constraints on what the UI is
+  allowed to claim about a search result or an agent-written answer, most of them
+  enforced by a named test rather than left to convention. See [honesty
+  rules](/frontend/honesty-rules.md).
+- **No CSS framework** — plain CSS against a token system ported from the
+  project's `.claude/skills/design-tools/` skill, no Tailwind, no shadcn/ui. Four
+  runtime dependencies total (`react`, `react-dom`, `react-router`,
+  `@tanstack/react-query`); fonts and icons are vendored so no third-party
+  request leaves the page at runtime. See [the frontend's design
+  system](/frontend/overview.md#design-system).

@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Testing Strategy
-description: The two-level (unit + integration) testing approach — what to test, what to mock, how the split is enforced, and the separate database integration tests run against.
+description: The backend's two-level (unit + integration) testing approach — what to test, what to mock, how the split is enforced, the separate database integration tests run against — plus the frontend suite and the two tests that check the contract across the language boundary.
 tags: [testing, pytest, strategy]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Testing Strategy
@@ -79,11 +79,12 @@ cache to run.
 **Regex-based parsers must be tested against observed corpus variants, not one idealised
 spelling.** `shared.segmentation` and `worker-extract`'s rule-based extractor both had
 fixtures that used the *minority* spelling for the exact thing that later turned out
-broken: the appendix-label test used `Bilaga A` while 22 of 25 real decisions write
-`BILAGA A`, and the kyrkoordningen fixture used `kyrkoordningen kapitel 32 § 5`, a phrasing
-that occurs **zero** times in the real corpus, while the majority form
-(`58 kap. 1 § kyrkoordningen`, lagrum before the statute's name) occurs 213 times and
-matched nothing. Both defects were invisible to their own test suites for exactly that
+broken: on the 25-document sample the corpus stood at on 2026-08-04, the appendix-label
+test used `Bilaga A` while 22 of 25 real decisions wrote `BILAGA A`, and the
+kyrkoordningen fixture used `kyrkoordningen kapitel 32 § 5`, a phrasing that occurred
+**zero** times in that sample, while the majority form (`58 kap. 1 § kyrkoordningen`,
+lagrum before the statute's name) occurred 213 times and matched nothing. Both defects
+were invisible to their own test suites for exactly that
 reason — the fixture and the code agreed with each other, just not with the documents. A
 parser test suite for this pipeline should pin every spelling variant known to occur in
 `data/store/documents.json` (or a representative sample of it), not just the one that was
@@ -310,3 +311,49 @@ A `-m` on the command line overrides the one in `addopts`, which is what makes
 
 **Agents and scripted runs should use the bare `uv run pytest`.** It cannot reach a
 database, so it cannot destroy one.
+
+## Frontend
+
+Everything above is the Python backend. The [frontend](/frontend/overview.md) has its
+own suite: 9 Vitest files under `frontend/src/**/*.test.ts{,x}`, run from `frontend/`
+with `npm test` (`vitest run`) or watched with `npm run test:watch`.
+
+**Tooling:** Vitest + Testing Library + jsdom. Global setup lives in
+`frontend/src/test-setup.ts` (jest-dom matchers, `cleanup` after each test, a
+`scrollIntoView` stub jsdom does not implement). Shared fixtures live in
+`frontend/src/test/factories.ts` — not stand-ins for the API, since the app talks to
+the live API at runtime, but one-field-at-a-time test data typed off the generated
+`schema.d.ts` (see [generated types](/frontend/generated-types.md)), so a backend
+contract change breaks a fixture at compile time rather than letting a test pass
+against a shape the API no longer returns.
+
+### The two load-bearing cross-boundary tests
+
+Most of the suite is ordinary component/hook testing. Two files are not, and are the
+real reason this section belongs in a testing *strategy* doc rather than only in the
+frontend's own concept page:
+
+- **`features/agent/progress-labels.test.ts`** `?raw`-imports
+  `packages/agents/src/agents/chat/_dtos.py` and parses `ProgressLabel` out of the
+  Python source as text, then asserts the client has a Swedish word for every label
+  the API can emit. A label added on the backend with no matching entry in
+  `progress-text.ts` fails this test — and therefore the frontend build — instead of
+  reaching a reader as a raw key like `decision.audit`. This cross-language import is
+  why `vitest.config.ts` sets `server.fs.allow: [".."]`: Vite refuses by default to
+  serve a file outside the project root it is configured against.
+- **The two honesty-rule suites** (`src/components/research/honesty-rules.test.tsx`,
+  `src/features/agent/agent-honesty-rules.test.tsx`) are the tested form of [the
+  honesty rules](/frontend/honesty-rules.md) — one test per rule, asserting the claim
+  the UI is and is not allowed to make about a search result or an agent-written
+  answer.
+
+### Why this matters more here than in a typical SPA
+
+`src/api/chat-events.ts` — the SSE event contract for [`POST
+/api/chat`](/api/chat-endpoint.md) — is hand-maintained, not generated: a
+`StreamingResponse` publishes nothing to OpenAPI, so there is no schema for
+`openapi-typescript` to read (see [generated types](/frontend/generated-types.md)).
+For that one contract, `chat-stream.test.ts` and the agent-mode test files are the
+**only** check that exists that the client's understanding of the SSE frames still
+matches the backend's. Everything else the frontend depends on is compiler-checked
+against the generated `schema.d.ts`, with no equivalent test required to catch drift.

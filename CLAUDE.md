@@ -35,10 +35,18 @@ Unless stated otherwise in the atm skill a task is done when:
 - impact is explained (what changed, where, why)
 
 ## Project state
-Nothing is deployed and no corpus has been ingested — see
-[deployment state](documentation/reference/deployment-state.md). Breaking changes,
-schema recreation and embedding-model changes are all free right now. Do not plan
-around migrations, re-embeds or deployed consumers unless that doc says otherwise.
+Nothing is deployed, but a corpus **has** been ingested — see
+[deployment state](documentation/reference/deployment-state.md). Those are two
+separate facts and only the first one still buys you freedom:
+
+- **Free**, because nothing outside this repo consumes the system: breaking API,
+  SSE and config changes, with no versioning and no deprecation window.
+- **Not free**, because the data is real and the crawl does not reproduce it:
+  dropping or rebuilding a table costs the corpus, and an embedding-model,
+  dimension or prefix change costs a genuine re-embed of every stored chunk.
+
+Check the current counts before trusting any claim about corpus size; the
+numbers live in that doc and go stale.
 
 ## Local database
 Assume Postgres + pgvector is already running on `localhost:5432` with the schema

@@ -282,3 +282,64 @@ conclude "nothing changed."
   path fixed but **no** timestamp bump — the meaning of the doc didn't change, only an
   example command's literal string, which the skill's "cosmetic edits don't bump
   timestamp" rule covers even though the change came from a real code default change.
+
+## Tier-1 "documentation drift" pass — corpus went from empty to real (2026-08-16)
+- This repo runs explicit, numbered "documentation drift" passes as slash-command
+  invocations that hand over **pre-measured facts** (SQL counts already run against
+  `overklagan`, specific line numbers, specific wrong strings) rather than a diff to
+  interpret. When the invocation says "these facts are already measured — do not
+  re-derive them," trust them and don't re-run the same `psql` queries; the ask is
+  "fold this fact into the prose correctly," not "go verify it yourself." Different
+  mode from the usual "map a diff to reader impact" flow — still ends in the same
+  Edited/Skipped/Uncertain report.
+- **A corpus-size change (25 → 185 → 184 documents) is a two-treatment problem, not one
+  find-and-replace.** Numbers that describe *current* reader-facing state (e.g.
+  honesty-rules.md's appendix-chunk fraction) get overwritten with the fresh
+  measurement. Numbers that are *evidence a past decision was made on* (before/after
+  deltas cited in a Decision doc, or restated in a Service/Reference doc that shares the
+  same before/after episode) get dated in place instead — add "on the N-document sample
+  the corpus stood at on <date>" and leave the number alone, because rewriting it would
+  falsify the historical record of why the decision was made. `pipeline/extract.md` is
+  the tricky case: it's a `Service` doc, not a `Decision` doc, but most of its "Measured
+  on the live corpus: X went from A to B" sentences are before/after deltas from a
+  specific code fix (regulation-pattern rewrite, subsumption, parish cleanup,
+  citation-list anchor+list scanning) — treat those as historical/dated too, even though
+  nothing in the task instructions named `extract.md` in the explicit "these four files
+  are historical evidence" list. The tell: the sentence has an arrow ("X went from A to
+  B") rather than a flat count ("X chunks in the corpus").
+- `documentation/reference/deployment-state.md`'s invalidation condition firing (`SELECT
+  count(*) FROM documents` going non-trivial) doesn't mean deleting the "what follows"
+  section — each bullet has to be **re-earned individually**. Split it into "what
+  follows from nothing being deployed" (still true — no API/SSE versioning, no
+  deprecation window, because those were always about *consumers*, not data) versus
+  "what no longer follows from an empty corpus" (schema recreation, embedding-model
+  changes — these were about *data*, and the data stopped being empty). Silently
+  deleting the section, or leaving it as one undifferentiated list, both lose this
+  distinction.
+- A stale one-off runbook at the repo root (`rerun_command.md`, sibling to `CLAUDE.md`)
+  that predicts numbers matching current `overklagan` state exactly is evidence the
+  branch it documents already ran — its *durable operational rules* (not its
+  narrative) get folded into the relevant playbook as a new subsection
+  (`playbooks/live-testing.md` gained "Reprocessing the corpus after a metadata or
+  extract fix", sibling to the existing "Re-embedding after an embedding-config change"
+  section) rather than the file being read as a TODO. The instructing prompt owns
+  deleting the root file itself — never delete a file outside `documentation/` on your
+  own initiative even when its own content says it's stale.
+- The PRD (`documentation/prd.md`) being "deliberately left alone" in an earlier pass
+  (see the note above this one) is **not a standing rule** — it was a judgment call for
+  *that* pass, made explicit as "unless a future instruction explicitly asks for the PRD
+  itself to be brought current." A later invocation prompt that gives line-by-line PRD
+  edits (which spec line, what it should say, which V2 item to remove) is exactly that
+  explicit ask, and overrides the earlier caution. Don't re-apply "leave the PRD alone"
+  as a reflex; check whether *this* invocation asked for PRD edits specifically.
+- `GET /healthz` (not `/health`) is the API's health route, defined inline in
+  `create_app` in `packages/api/src/api/main.py`. It has no concept doc of its own.
+- `llm_config.yaml` ships `embedding.provider: local` (sentence-transformers,
+  in-process, no key, no network) — `BERGET_API_KEY` is required for the LLM roles
+  (metadata fallback, chunk summaries, chat/SQL agents), not for `worker-embed`. This
+  exact drift (docs claiming Berget is the default embedder) has recurred at least
+  twice — once fixed in `reference/llm-pricing.md` and `packages/ai.md` in an earlier
+  pass, then found still-wrong in `playbooks/live-testing.md`'s env-var block in this
+  one. Worth grep'ing `embedding.*[Bb]erget\|default.*[Ee]mbedding.*provider` across the
+  whole bundle next time this class of task comes up, rather than trusting a previous
+  pass got every instance.

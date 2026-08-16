@@ -8,16 +8,20 @@ timestamp: 2026-08-16T00:00:00Z
 
 # Honesty rules
 
-Twenty-one constraints the frontend enforces on what it puts on screen, each backed
-by a test. They are not generic UI polish — each exists because the corpus or an
-API's response shape does not support the more convenient alternative, and
-getting one wrong would put a claim on screen the data cannot back up.
+Twenty-one constraints the frontend enforces on what it puts on screen. Most are
+backed by a named test; a few are asserted in code but not (yet) directly tested,
+and are called out as such below rather than left to imply coverage they do not
+have. They are not generic UI polish — each exists because the corpus or an API's
+response shape does not support the more convenient alternative, and getting one
+wrong would put a claim on screen the data cannot back up.
 
-Two groups, in two test files:
+Two groups, roughly two test files:
 
 | Rules | Surface | Test |
 |---|---|---|
-| 1–12 | [Search](/api/search.md) results and decisions | `src/components/research/honesty-rules.test.tsx` |
+| 1–5, 7, 8, 12 | [Search](/api/search.md) results and decisions | `src/components/research/honesty-rules.test.tsx`, one named `describe` block per rule |
+| 6 | Vocabulary index (declared vs. inferred entities) | `src/features/browse/VocabularyPage.test.tsx` — **not** `honesty-rules.test.tsx` |
+| 9, 10, 11 | Search results and decisions | Asserted in code; no test names them — see [below](#rules-with-no-direct-test) |
 | 13–21 | [Agent mode](/frontend/overview.md) | `src/features/agent/agent-honesty-rules.test.tsx` |
 
 The second group is the harder one. In search, every word on screen is either
@@ -29,8 +33,8 @@ tell what it rests on.
 
 1. **Appendix text is not the nämnd's own words.** A chunk with
    `section: "appendix"` is the appealed lower-instance decision — often the
-   very decision Överklagandenämnden overturned — and appendix chunks are 99
-   of 206 chunks in the ingested corpus, not a rare edge case. Every appendix
+   very decision Överklagandenämnden overturned — and appendix chunks are 845
+   of 1610 chunks in the ingested corpus, not a rare edge case. Every appendix
    excerpt carries a marker naming it, and on the [decision
    page](/frontend/overview.md) that marker is sticky so it cannot be
    scrolled past unnoticed. See [appendices are labelled, not
@@ -69,7 +73,10 @@ tell what it rests on.
    `regulation`/`legal_concept`/`role`/`parish` entities are inferred by
    extraction from the decision's prose. `Badge` tone is `declared` for the
    former and `inferred` for the latter — see [document
-   detail](/api/document-detail.md) for the keyword/concept split.
+   detail](/api/document-detail.md) for the keyword/concept split. Tested in
+   `src/features/browse/VocabularyPage.test.tsx`, not in the search honesty-rules
+   file — the vocabulary index is where declared (`Sökord`) and inferred
+   (`begrepp`) values sit side by side as two separate indexes.
 7. **`unresolved_references` render as plain text, never as links.** A
    citation to a case the corpus does not hold has nothing to link to, and in
    the current corpus these outnumber resolved citation edges — treating them
@@ -81,20 +88,24 @@ tell what it rests on.
 9. **`limit` is read from the response, never assumed from the request.**
    [`/api/search`](/api/search.md) silently clamps an out-of-range `limit`,
    so pagination reads the echoed value back rather than trusting what the
-   client sent.
+   client sent. No test names this rule — see [below](#rules-with-no-direct-test).
 10. **`category` and `decision_outcome` are opaque free text, rendered
     exactly as returned.** They are lifted off the source PDFs by regex, not
     a controlled vocabulary — see [`/api/filters`](/api/filters.md) — and the
     corpus contains near-duplicate values (e.g. "Utlämnande av handling" and
     "Utlämnande av handlingar") that the frontend does not merge or
-    normalize.
+    normalize. Asserted in a comment at the call site
+    (`src/features/search/FacetRail.tsx`); no test names this rule — see
+    [below](#rules-with-no-direct-test).
 11. **A note about "träffarna nedan" is not shown when there are none.** Both
     summary notes — the appendix-widening banner and the matched-by-meaning
     note — make a claim about the result list, so each is gated on `total > 0`.
     Since the [similarity
     floor](/retrieval/deterministic-search.md#the-similarity-floor) landed, a
     widened search can come back empty too, which is what makes the gate
-    necessary rather than theoretical.
+    necessary rather than theoretical. The substance is exercised by an
+    unnamed test in `honesty-rules.test.tsx` ("neither note claims anything
+    about a list that is empty") — see [below](#rules-with-no-direct-test).
 12. **Phrasings the user did not type are attributed to the model.** With
     [query expansion](/retrieval/query-expansion.md) on, the summary's
     prominent line is `effective_queries` — the original question followed by
@@ -110,6 +121,30 @@ tell what it rests on.
 verbatim holdings running 41–378 characters long, so the filter control
 shortens the *label* it displays while still sending the underlying value
 byte-identical to what `/api/filters` published.
+
+### Rules with no direct test
+
+Grepping `src/components/research/honesty-rules.test.tsx` for a `describe`/`test`
+naming each rule finds explicit blocks for 1, 2, 3, 4, 5, 7, 8 and 12. Rules 9 and
+10 are asserted only in the component code itself (a clamped-`limit` read, and a
+comment at `FacetRail.tsx`'s free-text rendering) — no test in this file or
+elsewhere names either claim. Treat both as **asserted-but-not-directly-tested**:
+true of the code today, but not guarded against regressing the way the named
+rules are.
+
+Rule 11 is a partial case: the file has two *unnamed* `describe` blocks — "summary
+is optional, and its absence is not a hole" (unrelated to any numbered rule) and
+"a query whose words appear nowhere is flagged as matched by meaning" — and the
+second one's last test, "neither note claims anything about a list that is
+empty", exercises exactly rule 11's claim (`total: 0` shows neither summary
+note). The behavior is tested; the test just does not say "rule 11" anywhere, so
+it would not surface in a search for the rule number.
+
+A doc claiming test coverage that does not exist is exactly the kind of claim
+these rules exist to catch the app itself making — recorded here rather than
+smoothed over. Writing the missing tests (naming rules 9, 10 and 11 explicitly,
+the way 1–8 and 12 already are) is a code change, not a doc change, and is not
+done as part of this pass.
 
 ## Agent mode (13–21)
 

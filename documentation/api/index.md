@@ -1,5 +1,9 @@
 # API
 
+## Health
+
+* [Health Endpoint (GET /healthz)](healthz.md) - The GET /healthz liveness check — always {"status": "ok"} when the process is up, with no dependency probe behind it.
+
 ## Chat
 
 * [Chat Endpoint (POST /api/chat)](chat-endpoint.md) - The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
@@ -8,12 +12,12 @@
 ## Search
 
 * [Search Endpoint (POST /api/search)](search.md) - The POST /api/search hybrid search contract — free-text query plus explicit filters, document-grouped hits with full chunk text, per-arm ranks and similarity scores, and a diagnostics block that makes ranking auditable.
-* [Filters Endpoint (GET /api/filters)](filters.md) - The GET /api/filters facet-vocabulary contract — the category, decision-outcome and entity-type values a search filter will actually match, plus the corpus's date range and size.
+* [Filters Endpoint (GET /api/filters)](filters.md) - The GET /api/filters facet-vocabulary contract — the category, decision-outcome, entity-type and keyword values a search filter will actually match, plus the corpus's date range and size.
 
 ## Documents
 
 * [Documents Endpoint (GET /api/documents)](documents.md) - The GET /api/documents paginated metadata-only browse contract — filters spelled out as query parameters, mirroring DocumentFilter, so a filtered view is a plain shareable link.
-* [Document Detail Endpoint (GET /api/documents/{id})](document-detail.md) - The GET /api/documents/{id} contract — one decision's identity, section counts, legal concepts/regulations/roles/parishes, and both directions of its citation graph, in one call.
+* [Document Detail Endpoint (GET /api/documents/{id})](document-detail.md) - The GET /api/documents/{id} contract — one decision's identity, section counts, declared keywords, legal concepts/regulations/roles/parishes, and both directions of its citation graph, in one call.
 * [Document Chunks Endpoint (GET /api/documents/{id}/chunks)](document-chunks.md) - The GET /api/documents/{id}/chunks contract — a decision's full text in reading order, chunk by chunk, optionally scoped to one section.
 * [Document PDF Endpoint (GET /api/documents/{id}/pdf)](document-pdf.md) - The GET /api/documents/{id}/pdf contract — the original PDF streamed inline as application/pdf, proxied through the API rather than a signed storage URL.
 

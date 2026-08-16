@@ -3,7 +3,7 @@ type: Reference
 title: Indexes
 description: The index catalog across all tables — HNSW/GIN for retrieval, btree for constraints and lookups.
 tags: [data-model, indexes, pgvector, performance]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Indexes
@@ -27,3 +27,13 @@ timestamp: 2026-08-08T00:00:00Z
 | [document_references](/data-model/document-references.md) | btree | target_document_id | Find all decisions that cite a given decision |
 | [unresolved_references](/data-model/unresolved-references.md) | btree | target_case_number | Reconciliation lookup when a new document is ingested |
 | unresolved_references | btree | source_document_id | Find all pending refs for a given source document |
+
+## The one table with no secondary index
+
+[`sessions`](/data-model/sessions.md) is absent from the table above deliberately,
+not by omission. It carries its primary key and nothing else: a conversation is
+always reached by its own id, and [the rail's
+listing](/api/sessions.md) is an unfiltered ordering of a table
+that holds one row per conversation held on a single-user, undeployed system. There
+is no predicate to index. Should the listing ever grow a filter — a date range, a
+per-user scope — `last_active_at` is the column that would earn one.

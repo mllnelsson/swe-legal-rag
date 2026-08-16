@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -24,8 +24,8 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `llm_config.py` | Reads `llm_config.yaml` — document models, discovery, and role/embedding resolution |
 | `embedding.py` | `EmbeddingProvider` Protocol, `create_embedding_provider` factory, `verify_embedding_dimension` |
 | `tokenization.py` | Measures text in the embedding model's own tokens: `EmbeddingRuler`, `create_embedding_ruler()`, `verify_embedding_window()`, `SPECIAL_TOKEN_COUNT`. The only module that imports `transformers`. |
-| `providers/openai_compatible_embeddings.py` | `OpenAiCompatibleEmbeddingProvider` — any OpenAI-compatible embeddings endpoint (Berget hosted, by default) |
-| `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers` (offline dev/test fallback) |
+| `providers/openai_compatible_embeddings.py` | `OpenAiCompatibleEmbeddingProvider` — any OpenAI-compatible embeddings endpoint, Berget included; not the checked-in default, see below |
+| `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers`, the checked-in default (`embedding.provider: local`) |
 | `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
 | `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step`, opening an `interaction_scope` around the message so its trace records land in a directory of their own; `close_llm_clients()` — the `StepTeardown` the four LLM-calling workers hand to the same call, releasing the loop-bound OpenAI-compatible client pool before their `asyncio.run()` loop closes (see [worker patterns](/pipeline/worker-patterns.md)) |
 | `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |

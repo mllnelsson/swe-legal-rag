@@ -3,15 +3,18 @@ type: Decision
 title: Structural fields are parsed, not inferred
 description: Why case number, decision number, decision date, category, and lagrum citations are extracted by rule alone with no LLM fallback, and where LLM fallback is used instead.
 tags: [decisions, extraction, llm, rules, parsing]
-timestamp: 2026-08-07T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Structural fields are parsed, not inferred
 
 **Status:** Accepted
 
-Measured against all 25 real documents in `data/store/documents.json`, every parser
-failure in `shared.segmentation` and `worker-extract`'s rule-based pass turned out to be a
+Measured against all 25 real documents in `data/store/documents.json` — the corpus as
+it stood on 2026-08-04, since grown to 184 documents; the figures below are the
+evidence that motivated this decision, not a claim about the corpus today — every
+parser failure in `shared.segmentation` and `worker-extract`'s rule-based pass turned
+out to be a
 deterministic one-line defect in a regex — not a case the corpus is genuinely too
 irregular to describe with rules. Two were severe: the appendix-label regex missed
 `BILAGA A` (upper case, 22 of 25 decisions), which swallowed 43% of the corpus's

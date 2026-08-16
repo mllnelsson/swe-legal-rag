@@ -4,7 +4,7 @@ title: Extract Worker
 description: Subscriber worker that extracts entities, declared keywords, and cross-references from document text into the graph-in-Postgres tables, then enqueues chunk tasks.
 resource: packages/worker-extract
 tags: [pipeline, worker, extract, entities, keywords, references, graph]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Extract Worker (`packages/worker-extract/`)
@@ -56,7 +56,8 @@ The length threshold (`factory._is_result_complete`) sizes `min_expected` off
 `len(segments.body)` alone, but counts entities found across **body and appendices
 together**. Before the appendix-label fix in [document
 structure](/reference/document-structure.md), `segments.appendices` came back empty for
-22 of 25 corpus documents — not because their appendix text was gone, but because it had
+22 of 25 documents on the 25-document sample the corpus stood at on 2026-08-04 — not
+because their appendix text was gone, but because it had
 been swallowed into `trailer`, which this strategy never scans. Entity count dropped
 (appendix-sourced entities were simply never found) while the threshold, sized off `body`
 alone, did not — so the check judged those results incomplete more often than the body-only
@@ -104,11 +105,12 @@ Pure functions, no I/O:
   spelling, **`N kap. M § kyrkoordningen`** (`N kap. kyrkoordningen` with no section).
   The sub-clause is dropped, since `58 kap. 18 §` and `58 kap. 18 § tredje stycket` cite
   the same provision and keeping them apart would fragment the vocabulary the entity graph
-  exists to join on. Measured over the 25-document corpus: 213 of 215 citations put the
-  lagrum first (`58 kap. 1 § kyrkoordningen`), which the patterns previously did not match
-  at all — `EntityType.REGULATION` went from an empty vocabulary (0 rows, 0 documents) to
-  104 rows across 59 distinct names in 24 of 25 documents; the 25th genuinely cites no
-  lagrum.
+  exists to join on. Measured on the 25-document sample the corpus stood at on
+  2026-08-04 — the evidence behind this fix, not a claim about the corpus's current
+  size: 213 of 215 citations put the lagrum first (`58 kap. 1 § kyrkoordningen`), which
+  the patterns previously did not match at all — `EntityType.REGULATION` went from an
+  empty vocabulary (0 rows, 0 documents) to 104 rows across 59 distinct names in 24 of
+  25 documents; the 25th genuinely cites no lagrum.
 
   A range is normalised, then **expanded when short**: a numeric range of at most 6
   provisions becomes one entity per section, so `47 kap. 1-3 §§` and `47 kap. 1 §` collapse
@@ -126,8 +128,10 @@ Pure functions, no I/O:
   survive next to `8 kap. 7-39 §§`. Subsumption runs over the whole merged entity list
   (holding, body and appendices together), since whether a chapter is also cited at section
   level is a fact about the decision, not about the segment a citation happened to sit in.
-  Measured on the live corpus: regulation links go from 673 to 626, and decision 5/2021's
-  Lagrum list from 10 entries to 6.
+  Measured against the corpus as it stood when subsumption was added (185 documents,
+  before the later duplicate-decision cleanup — see [deployment
+  state](/reference/deployment-state.md) for today's count): regulation links went from
+  673 to 626, and decision 5/2021's Lagrum list from 10 entries to 6.
 - **Parishes:** a bounded run of up to three **capitalised** words immediately before
   `församling`, `stift`, or `pastorat` — a lower-case word cannot join the run, which is
   what stops `Kyrkofullmäktige i Y församling` from matching past `Y`. Leading
@@ -138,10 +142,10 @@ Pure functions, no I/O:
   kyrkofullmäktige i y församling`) for what is one parish. The name is built from its
   remaining words rather than echoed from the source, so the head noun is always spelled
   the same way regardless of source casing. `pastorat` is a recognised head noun — the
-  corpus names one 224 times. Measured on the live corpus: distinct parish entities go from
-  122 to 43. 134 of the 185 decisions are anonymised, so most of this vocabulary is the
-  placeholders `x stift` and `y församling`/`y pastorat` — that is the corpus describing
-  itself, not the extractor failing.
+  corpus names one 224 times. Measured against that same 185-document snapshot: distinct
+  parish entities went from 122 to 43. 134 of those 185 decisions were anonymised, so
+  most of this vocabulary is the placeholders `x stift` and `y församling`/`y pastorat`
+  — that is the corpus describing itself, not the extractor failing.
 - **Roles:** exact-word lookup from a known set (`kyrkoherde`, `kyrkoråd`,
   `kyrkofullmäktige`, `biskop`, `domkapitel`, `kontraktsprost`, `domprost`,
   `stiftsstyrelse`) with Swedish definite/genitive suffix handling
@@ -175,8 +179,9 @@ Pure functions, no I/O:
   not decision 10/2024) — using `\s*` rather than `[ \t]*` because the corpus wraps a
   citation across that exact boundary.
 
-  Measured over all 185 corpus documents: identifiers extracted rise from 54 to 116, with
-  zero previously-found citations lost.
+  Measured over the same 185-document snapshot as the subsumption and parish figures
+  above (before the later duplicate-decision cleanup): identifiers extracted rose from
+  54 to 116, with zero previously-found citations lost.
 
   Excluding the trailer is what stops a decision citing itself: it holds the document's
   own `Ärendenummer:` and `Beslut:` lines. Excluding appendices matters because a

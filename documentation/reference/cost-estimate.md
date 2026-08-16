@@ -3,7 +3,7 @@ type: Reference
 title: Cost Estimate (Idle / Low Usage)
 description: The idle and low-usage monthly cost breakdown across Cloud SQL, Cloud Run, Pub/Sub, GCS, and usage-based LLM/embedding calls.
 tags: [cost, budget, gcp]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-08-16T00:00:00Z
 ---
 
 # Cost Estimate (Idle / Low Usage)
@@ -16,12 +16,19 @@ timestamp: 2026-07-24T00:00:00Z
   5.2) — a handful of queries/day plus per-document ingestion calls is <$5/mo at this
   scale; Gemini remains an alternative if `LLM_PROVIDER=gemini` (see
   [LLM pricing](/reference/llm-pricing.md)).
-- **Embedding hosting**: Berget-hosted `intfloat/multilingual-e5-large` (~€0.03/M tokens)
-  — effectively $0 at this scale, no self-hosting, no `min-instances` decision (see
-  [embedding hosting](/decisions/embedding-hosting.md)).
+- **Embedding**: the checked-in `llm_config.yaml` ships `embedding.provider: local` —
+  in-process `sentence-transformers`, no API call, no per-token cost at all, not just a
+  small one. Berget-hosted `intfloat/multilingual-e5-large` (~€0.03/M tokens) is the
+  alternative if `embedding.provider` is pointed at `berget`, and would itself be
+  effectively $0 at this scale — no self-hosting, no `min-instances` decision — but it
+  is not what a deploy of the shipped config actually spends. See [embedding
+  hosting](/decisions/embedding-hosting.md).
 
-**Total idle: ~$7–15/mo** (Cloud SQL + Cloud Run + Pub/Sub + GCS; LLM/embedding cost is
-usage-based, not idle).
+**Total idle: ~$7–15/mo** (Cloud SQL + Cloud Run + Pub/Sub + GCS; LLM cost is
+usage-based, not idle; embedding cost is zero on the shipped local config).
 
-Scaling to 5000 docs: Cloud SQL stays the same, embedding cost scales linearly but is
-one-time, query costs unchanged. This is the target behind [NFR2](/prd.md).
+Scaling to 5000 docs: Cloud SQL stays the same, query costs unchanged. Embedding cost
+stays zero on the shipped local provider — the one-time cost of embedding a larger
+corpus is machine time on whichever host runs `worker-embed`, not a metered API bill —
+and would only scale linearly (and one-time) under the Berget alternative above. This
+is the target behind [NFR2](/prd.md).
