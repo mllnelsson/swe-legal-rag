@@ -1,6 +1,9 @@
 services:
   db:
-    image: ankane/pgvector
+    # `ankane/pgvector` is abandoned upstream — the image moved to the official
+    # `pgvector/pgvector` org and ankane's `latest` is frozen at Postgres 15.4 /
+    # pgvector 0.5.1. Pinned to the major, which is what the tag scheme offers.
+    image: pgvector/pgvector:pg17
     ports:
       - "5432:5432"
     environment:

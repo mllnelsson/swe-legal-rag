@@ -15,6 +15,13 @@ never name the database in the command line at all.
 
 Every unknown resolves to *protected*. A command this parser cannot read is
 exactly the command the guard exists for.
+
+A host without a Postgres client reaches the database only through the
+container, so `docker exec … psql …` and `sh -c '…'` are unwrapped and their
+inner command judged on its own. The host environment deliberately does not
+follow a command inside a container: `PGDATABASE` is set to the sandbox out
+here and unset in there, and believing it would read a write to the development
+database as a write to the scratch copy.
 """
 
 from __future__ import annotations
@@ -24,7 +31,7 @@ import os
 import re
 import shlex
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum, auto
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -149,9 +156,51 @@ TOOL_KINDS = {
 # separator or a pipe, inside a substitution, optionally behind `VAR=value`
 # prefixes and a directory path. Used only when tokenising fails, to tell a line
 # that *runs* psql from one that merely says the word.
-TOOL_IN_COMMAND_POSITION_RE = re.compile(
+COMMAND_POSITION = (
     r"(?:^|[|;&\n]|\$\()\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:[\w./-]*/)?"
-    r"(?:" + "|".join(TOOL_KINDS) + r")\b"
+)
+TOOL_ALTERNATION = "|".join(TOOL_KINDS)
+TOOL_IN_COMMAND_POSITION_RE = re.compile(
+    COMMAND_POSITION + r"(?:" + TOOL_ALTERNATION + r")\b"
+)
+
+# Tools that run a command somewhere this parser has to follow it to: a
+# container, or a nested shell. Neither appears in `TOOL_KINDS` — they touch no
+# database themselves, they only carry something that does.
+CONTAINER_TOOLS = frozenset({"docker", "podman", "docker-compose", "podman-compose"})
+SHELL_TOOLS = frozenset({"sh", "bash", "zsh", "dash", "ash"})
+
+# Words that stand between `docker` and the subcommand, and the subcommands that
+# take a container/service/image followed by a command to run in it.
+CONTAINER_GROUP_WORDS = frozenset({"compose", "container"})
+CONTAINER_EXEC_SUBCOMMANDS = frozenset({"exec", "run"})
+
+# Options consuming the token after them, on either side of the subcommand.
+# Getting this wrong shifts the container name by one and unwraps the wrong
+# argument list, so the set is deliberately generous: an option wrongly listed
+# here costs a fail-closed refusal, one wrongly missing costs a miss.
+CONTAINER_VALUE_OPTIONS = frozenset(
+    {
+        "-H", "--host", "-c", "--context", "-l", "--log-level",
+        "-f", "--file", "-p", "--project-name", "--project-directory",
+        "--profile", "--env-file", "--progress", "--ansi", "--parallel",
+        "-e", "--env", "-u", "--user", "-w", "--workdir",
+        "--index", "--detach-keys", "--name", "--network", "--entrypoint",
+        "-v", "--volume", "--label", "--publish",
+    }
+)  # fmt: skip
+CONTAINER_ENVIRONMENT_OPTIONS = frozenset({"-e", "--env"})
+
+# A Postgres tool reached through a container, for the same tokenising-failed
+# fallback: `docker exec db psql …` puts psql where no command-position rule
+# would find it.
+TOOL_BEHIND_CONTAINER_RE = re.compile(
+    COMMAND_POSITION
+    + r"(?:"
+    + "|".join(sorted(CONTAINER_TOOLS))
+    + r")\b[^|;&\n]*?\b(?:"
+    + TOOL_ALTERNATION
+    + r")\b"
 )
 
 IGNORED_OPTION = "_ignored"
@@ -226,14 +275,25 @@ UTILITY_OPTIONS = OptionSpec(
     ),
 )
 
+# A shell carries its command in `-c`, which is all this parser wants from it.
+SHELL_OPTIONS = OptionSpec(short_with_value="c", long_with_value=frozenset())
+
 
 @dataclass(frozen=True)
 class Segment:
-    """One command in a shell line, and where its standard input comes from."""
+    """One command in a shell line, and where its standard input comes from.
+
+    `host_environment_applies` is false once the command has been unwrapped out
+    of a container: `PGDATABASE` and friends belong to this machine, not to the
+    process that would actually run, and inheriting them there would resolve an
+    unnamed database to the sandbox when the container's own default is the
+    development database.
+    """
 
     argv: list[str]
     environment: dict[str, str]
     stdin_is_opaque: bool
+    host_environment_applies: bool = True
 
 
 @dataclass(frozen=True)
@@ -437,9 +497,9 @@ def resolve_psql_connection(
         return Connection((inline,), host, True)
 
     # Case: a named service, from the command's own environment or ours.
-    service = segment.environment.get(SERVICE_ENVIRONMENT_VARIABLE) or os.environ.get(
-        SERVICE_ENVIRONMENT_VARIABLE
-    )
+    service = segment.environment.get(SERVICE_ENVIRONMENT_VARIABLE)
+    if not service and segment.host_environment_applies:
+        service = os.environ.get(SERVICE_ENVIRONMENT_VARIABLE)
     if service:
         from_service = database_from_service(service)
         if not from_service:
@@ -447,7 +507,12 @@ def resolve_psql_connection(
         return Connection((from_service,), host, True)
 
     # Case: nothing named it, so libpq falls back to PGDATABASE, then the user
-    # name. This is the hole the environment layer plugs.
+    # name. This is the hole the environment layer plugs — but only for a command
+    # running on this machine. Inside a container none of these variables is what
+    # libpq will read there, so an unnamed database stays unresolved, which
+    # `is_protected` counts as protected.
+    if not segment.host_environment_applies:
+        return UNRESOLVED
     from_environment = os.environ.get(DATABASE_ENVIRONMENT_VARIABLE)
     if from_environment:
         return Connection((from_environment,), host, True)
@@ -534,11 +599,140 @@ def refusal(reason: str) -> str:
     )
 
 
+def find_container_subcommand(argv: list[str]) -> int | None:
+    """Index of the container/service/image in a `docker exec`-shaped command.
+
+    Returns `None` for every other docker invocation — `docker ps`, `docker
+    compose up` — none of which carries a command to look inside.
+    """
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if token.startswith("-"):
+            name = token.partition("=")[0]
+            takes_value = name in CONTAINER_VALUE_OPTIONS and "=" not in token
+            index += 2 if takes_value else 1
+            continue
+        if token in CONTAINER_GROUP_WORDS:
+            index += 1
+            continue
+        if token in CONTAINER_EXEC_SUBCOMMANDS:
+            return index + 1
+        return None
+    return None
+
+
+def unwrap_container_segment(segment: Segment) -> Segment | None:
+    """The command a container invocation would run inside the container.
+
+    Options are walked by hand rather than through `parse_arguments` because
+    parsing must stop at the container name: everything after it belongs to the
+    inner tool, and reading `psql -U postgres` with docker's option table would
+    take `postgres` for the database.
+    """
+    index = find_container_subcommand(segment.argv)
+    if index is None:
+        return None
+    environment: dict[str, str] = {}
+    while index < len(segment.argv):
+        token = segment.argv[index]
+        if not token.startswith("-"):
+            break  # the container, service or image itself
+        name, separator, inline = token.partition("=")
+        if name not in CONTAINER_VALUE_OPTIONS:
+            index += 1  # a flag carrying no value, `-it` among them
+            continue
+        if separator:
+            value, index = inline, index + 1
+        elif index + 1 < len(segment.argv):
+            value, index = segment.argv[index + 1], index + 2
+        else:
+            break
+        if name in CONTAINER_ENVIRONMENT_OPTIONS:
+            key, assigned, assignment = value.partition("=")
+            if assigned:
+                environment[key] = assignment
+    inner = segment.argv[index + 1 :]
+    if not inner:
+        return None
+    return Segment(
+        argv=inner,
+        environment=environment,
+        stdin_is_opaque=segment.stdin_is_opaque,
+        host_environment_applies=False,
+    )
+
+
+def refuse_unreadable_tool(argv: list[str], reason: str) -> str | None:
+    """Refuse when a Postgres tool sits in an argument list this parser gave up on."""
+    if any(Path(token).name in TOOL_KINDS for token in argv):
+        return refusal(reason)
+    return None
+
+
+def inspect_container_segment(segment: Segment) -> str | None:
+    """The reason a command run inside a container must be refused."""
+    inner = unwrap_container_segment(segment)
+    if inner is None:
+        return refuse_unreadable_tool(
+            segment.argv[1:],
+            "A Postgres tool runs inside a container here, in a form this guard "
+            "could not read, so the database it would reach is unknown.",
+        ) or inspect_inline_environment(segment)
+    reason = inspect_segment(inner)
+    if reason is not None:
+        return reason
+    # The unwrap found a command but the dispatch only reads its first word, so a
+    # tool behind a wrapper it does not model — `docker exec db env psql …` —
+    # would otherwise pass unexamined.
+    inner_tool = Path(inner.argv[0]).name
+    if inner_tool in TOOL_KINDS or inner_tool in SHELL_TOOLS:
+        return None
+    return refuse_unreadable_tool(
+        inner.argv,
+        "A Postgres tool runs inside a container behind another command, so what "
+        "it would reach is not visible to this guard.",
+    )
+
+
+def inspect_shell_segment(segment: Segment) -> str | None:
+    """The reason a command a shell would run via `-c` must be refused."""
+    values, _ = parse_arguments(segment.argv[1:], SHELL_OPTIONS)
+    for payload in values.get("command", []):
+        try:
+            tokens = shlex.split(payload, comments=False, posix=True)
+        except ValueError:
+            if TOOL_IN_COMMAND_POSITION_RE.search(payload) is None:
+                continue
+            return refusal(
+                "A shell would run a Postgres tool whose quoting could not be "
+                "parsed, so the database it targets is unknown."
+            )
+        for nested in split_segments(tokens):
+            reason = inspect_segment(
+                replace(
+                    nested,
+                    host_environment_applies=segment.host_environment_applies,
+                )
+            )
+            if reason is not None:
+                return reason
+    return None
+
+
 def inspect_segment(segment: Segment) -> str | None:
     """The reason this one command must be refused, or `None` to allow it."""
     if not segment.argv:
         return None
     tool = Path(segment.argv[0]).name
+
+    # Case: a command that runs another command somewhere else. Follow it there
+    # before deciding anything, because the database is named in the inner one.
+    if tool in CONTAINER_TOOLS:
+        return inspect_container_segment(segment)
+    if tool in SHELL_TOOLS:
+        return inspect_shell_segment(segment)
+
     kind = TOOL_KINDS.get(tool)
 
     # Case: not a Postgres tool at all. An inline assignment aimed at a
@@ -623,7 +817,10 @@ def inspect(command: str) -> str | None:
         # a commit message or a heredoc that merely mentions psql lands here,
         # and refusing those would make the guard something to route around.
         # What matters is whether a Postgres tool sits where a command goes.
-        if TOOL_IN_COMMAND_POSITION_RE.search(command) is None:
+        if (
+            TOOL_IN_COMMAND_POSITION_RE.search(command) is None
+            and TOOL_BEHIND_CONTAINER_RE.search(command) is None
+        ):
             return None
         return refusal(
             "A Postgres tool is invoked in this line, but its quoting could not "

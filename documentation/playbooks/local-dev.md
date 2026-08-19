@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-19T00:00:00Z
 ---
 
 # Local Development Environment
@@ -22,7 +22,7 @@ host via `uv`.
 
 The only required dependency. Runs the same SQL interface as Cloud SQL.
 
-- Postgres **17**, pgvector **0.8.5**, on `localhost:5432`
+- Postgres **17**, pgvector **0.8.6**, on `localhost:5432`
 - Swedish text search config available out of the box (built into Postgres)
 - Application code connects via `asyncpg` (async driver); Alembic migrations use the
   sync `psycopg` driver. Both are configured automatically by `shared/db.py` — the
@@ -36,7 +36,7 @@ they contend for port 5432.
 ### Linux — Docker Compose
 
 ```bash
-docker compose up -d db     # ankane/pgvector, healthchecked, persistent volume
+docker compose up -d db     # pgvector/pgvector:pg17, healthchecked, persistent volume
 ```
 
 The image's entrypoint applies `docker/init.sql`, which enables the extension and
@@ -50,6 +50,13 @@ volume. On a volume that predates the test database, create it by hand:
 ```bash
 docker compose exec db createdb -U postgres -O postgres overklagan_test
 ```
+
+**No Postgres client is needed on the host.** `psql`, `createdb` and `dropdb` live
+inside the container and are reached through `docker compose exec -T db <tool> -U
+postgres`. Both agent-facing mechanisms account for this — see
+[the sandbox](#the-coding-agents-sandbox-both-platforms) — so installing
+`postgresql-client` is a convenience, not a requirement. Install it if you want to
+type `psql` directly; nothing in the repository assumes you did.
 
 ### macOS — Homebrew (native)
 
@@ -108,16 +115,25 @@ and two mechanisms keep it there:
 
 | Piece | What it does |
 |---|---|
-| `.claude/hooks/db-sandbox.sh` | `ensure` (SessionStart) copies `overklagan` to `overklagan_coding_agent` with `createdb -T` when it is missing; `refresh --yes` drops and re-copies — see [refreshing the sandbox](#refreshing-the-sandbox) |
+| `.claude/hooks/db-sandbox.sh` | `ensure` (SessionStart) copies `overklagan` to `overklagan_coding_agent` with `createdb -T` when it is missing; `refresh --yes` drops and re-copies — see [refreshing the sandbox](#refreshing-the-sandbox). Runs the client tools on the host when they are installed and through `docker compose exec -T db` when they are not |
 | `.claude/settings.json` `env` | Points `DATABASE_URL` and `PGDATABASE` at the sandbox and pins `TEST_DATABASE_URL` to `overklagan_test` |
-| `.claude/hooks/db-guard.sh` | A `PreToolUse` hook that refuses any Bash command that would write to a database that is not the sandbox or a `_test` one |
-| `.claude/hooks/db-guard-selftest.sh` | Asserts the guard's verdict on ~37 commands, including every form in which a connection target can be declared |
+| `.claude/hooks/db-guard.sh` | A `PreToolUse` hook that refuses any Bash command that would write to a database that is not the sandbox or a `_test` one, whether the tool is invoked directly or wrapped in `docker exec` / `docker compose exec` / `sh -c` |
+| `.claude/hooks/db-guard-selftest.sh` | Asserts the guard's verdict on ~70 commands, including every form in which a connection target can be declared and every wrapper the guard unwraps |
 
 The guard resolves the target before judging the statement, because `psql` takes its
 database from `-d`, a bare positional, a `postgresql://` URI, a keyword/value
 conninfo, `PGDATABASE`, `PGSERVICE`, or a fallback to `$USER` — most of which never
 name it on the command line. Anything it cannot resolve counts as protected. Reads
 against `overklagan` are allowed; writes are not.
+
+A command wrapped in `docker exec`, `docker compose exec`/`run`, or `sh -c` is
+unwrapped and its inner command judged on its own — on a container-only host that
+wrapper is the only way to reach Postgres, so a guard blind to it would be a guard
+that never fires. One rule makes this safe: **the host environment does not follow a
+command into a container.** `PGDATABASE` names the sandbox out here and is unset in
+there, where the default is `POSTGRES_DB` — `overklagan`. So a container command that
+names no database resolves to *unknown*, which counts as protected, rather than to the
+sandbox.
 
 `TEST_DATABASE_URL` has to be pinned rather than derived: the suffix rule above would
 otherwise turn the redirected `DATABASE_URL` into `overklagan_coding_agent_test`,
@@ -150,7 +166,14 @@ run keeps the data it had — it can be several migrations and a whole corpus be
 
 ```bash
 psql -d overklagan_coding_agent -tAc "select count(*) from chunks"
-psql -d overklagan            -tAc "select count(*) from chunks"
+psql -d overklagan              -tAc "select count(*) from chunks"
+```
+
+With no host client, the same two reads go through the container:
+
+```bash
+docker compose exec -T db psql -U postgres -d overklagan_coding_agent -tAc "select count(*) from chunks"
+docker compose exec -T db psql -U postgres -d overklagan              -tAc "select count(*) from chunks"
 ```
 
 If the two disagree and you only need to *read* real data, read `overklagan`
@@ -528,7 +551,7 @@ not use `latest` or switch to alternative images without discussion.
 
 | Service | Image | Tag | Purpose |
 |---|---|---|---|
-| Postgres + pgvector | `ankane/pgvector` | (default / latest stable) | SQL database with vector search |
+| Postgres + pgvector | `pgvector/pgvector` | `pg17` | SQL database with vector search |
 | MinIO | `minio/minio` | (default / latest stable) | S3-compatible object storage |
 | Redis | `redis` | `7-alpine` | Async queue / cache |
 | Python | `python` | `3.12-slim` | Application base image |

@@ -89,5 +89,53 @@ check allow 'git commit -m "psql and createdb now go through the sandbox"'
 check allow "git commit -m \"reads .env's DATABASE_URL, then runs createdb -T\""
 check allow "echo \"the guard's psql resolver\" >> notes.md"
 
+# --- Through a container ------------------------------------------------------
+#
+# On a host with no Postgres client this is the only way to reach the database,
+# so every rule above has to hold when the command is wrapped in `docker exec`.
+
+check deny 'docker exec church-legal-db-db-1 psql -U postgres -d overklagan -c "DELETE FROM documents"'
+check deny 'docker compose exec db psql -d overklagan -c "TRUNCATE documents"'
+check deny 'docker compose -f docker-compose.yml exec -T db psql -d overklagan -c "DROP TABLE entities"'
+check deny 'docker exec -e PGDATABASE=overklagan church-legal-db-db-1 psql -c "INSERT INTO entities VALUES (1)"'
+check deny 'docker compose exec db dropdb overklagan'
+check deny 'docker exec db sh -c "psql -d overklagan -c \"DROP TABLE entities\""'
+check deny 'docker compose run --rm db psql -d overklagan -c "UPDATE documents SET raw_text = NULL"'
+check deny 'docker exec church-legal-db-db-1 pg_restore -d overklagan backup.dump'
+check deny 'docker exec church-legal-db-db-1 psql -U postgres -d overklagan -f cleanup.sql'
+check deny 'podman exec church-legal-db-db-1 psql -d overklagan -c "DELETE FROM entities"'
+
+# The host's PGDATABASE names the sandbox, but it is not set inside the
+# container — an unnamed database there is the *development* one, so the guard
+# must not read this as a write to the scratch copy.
+check deny 'docker exec church-legal-db-db-1 psql -U postgres -c "DELETE FROM documents"'
+
+# A tool behind a wrapper the unwrapper does not model still has to fail closed.
+check deny 'docker exec church-legal-db-db-1 env psql -d overklagan -c "DELETE FROM documents"'
+
+# Option forms that shift where the container name sits. Miscounting by one
+# unwraps the wrong argument list, so each of these is a parser regression test.
+check deny 'docker exec -it church-legal-db-db-1 psql -d overklagan -c "DELETE FROM documents"'
+check deny 'docker exec --user postgres church-legal-db-db-1 psql -d overklagan -c "DELETE FROM documents"'
+check deny 'docker exec -w /tmp db psql -d overklagan -c "TRUNCATE documents"'
+check deny 'docker exec -e FOO=bar -e PGDATABASE=overklagan db psql -c "DELETE FROM documents"'
+check deny 'echo "DELETE FROM documents" | docker exec -i db psql -d overklagan'
+check allow 'docker exec -it church-legal-db-db-1 psql -d overklagan_coding_agent -c "DELETE FROM documents"'
+
+check allow 'docker exec church-legal-db-db-1 psql -U postgres -d overklagan -c "SELECT count(*) FROM chunks"'
+check allow 'docker exec church-legal-db-db-1 psql -U postgres -d overklagan -tAc "\dt"'
+check allow 'docker exec church-legal-db-db-1 psql -U postgres -d overklagan_coding_agent -c "DELETE FROM documents"'
+check allow 'docker compose exec -T db psql -U postgres -d overklagan_test -c "TRUNCATE documents"'
+check allow 'docker compose exec db createdb -U postgres -T overklagan overklagan_coding_agent'
+check allow 'docker exec church-legal-db-db-1 pg_dump -U postgres overklagan'
+
+# Ordinary container work names no database and must stay out of the way.
+check allow 'docker compose up -d db'
+check allow 'docker compose down'
+check allow 'docker ps -a'
+check allow 'docker exec church-legal-db-db-1 cat /var/lib/postgresql/data/PG_VERSION'
+check allow 'docker inspect church-legal-db-db-1'
+check allow 'docker compose logs db'
+
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 (( failed == 0 ))
