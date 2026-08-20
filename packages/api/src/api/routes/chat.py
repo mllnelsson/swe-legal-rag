@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 
@@ -22,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access_log import note, preview
 from api.config import (
     DevSettings,
     SearchSettings,
@@ -30,7 +32,7 @@ from api.config import (
     get_search_settings,
     get_session_settings,
 )
-from api.correlation import INTERACTION_ID_HEADER, resolve_interaction_id
+from api.correlation import INTERACTION_ID_HEADER, interaction_id_of
 from api.dependencies import get_db
 from api.dev.chat_scripts import SCRIPTS, replay, select_script
 from api.services.chat_toolset import build_chat_toolset
@@ -97,9 +99,21 @@ async def chat_endpoint(
 
     # Resolved out here, not in the generator: the response headers are built
     # before Starlette starts draining it, so an id minted inside could never
-    # reach them.
-    interaction_id = resolve_interaction_id(request.headers.get(INTERACTION_ID_HEADER))
-    logger.info("Chat interaction %s for session %s", interaction_id, chat_session.id)
+    # reach them. `api.access_log` has already resolved it for this request, so
+    # asking again would split one turn across two ids.
+    interaction_id = interaction_id_of(request)
+
+    # Started before the agent is built, not inside the generator: `run_chat_agent`
+    # is a coroutine function, so the work begins when Starlette drains the
+    # stream, but the reader's question was asked here.
+    started_at = time.perf_counter()
+    logger.info(
+        "chat started session=%s msg_chars=%d history=%d",
+        chat_session.id,
+        len(body.message),
+        len(history),
+    )
+    logger.debug("chat question q=%s", preview(body.message))
 
     # A development switch, off by default. When on, the events are canned and
     # nothing else about the request changes — same SSE framing, same session
@@ -124,8 +138,7 @@ async def chat_endpoint(
         # answering from the corpus is the one real hazard here, so it is said
         # loudly and on every request rather than once at startup.
         logger.warning(
-            "Chat interaction %s is SCRIPTED (%s) — no model was called",
-            interaction_id,
+            "chat is SCRIPTED (%s) — no model was called",
             scripted,
         )
         agent_events = replay(SCRIPTS[scripted])
@@ -140,6 +153,33 @@ async def chat_endpoint(
         # minting their own, which is what makes the whole turn one sum.
         answer_parts: list[str] = []
         done_emitted = False
+        persisted = False
+        tool_calls = 0
+        sql_events = 0
+        source_count = 0
+        first_token_at: float | None = None
+
+        def _summarise() -> None:
+            """Hand the turn's counts to the access line, on every exit path.
+
+            There is no `chat completed` line of its own: `api.access` fires at
+            the true end of the stream and renders these fields, so a second
+            summary would be the duplicate started/finished pair the worker
+            envelope rule forbids — see /pipeline/worker-patterns.md.
+            `answer_chars` and not `tokens` because no token count reaches this
+            route; the billed totals are in the trace records
+            (/observability.md).
+            """
+            note(
+                request,
+                session=chat_session.id,
+                tools=tool_calls,
+                sql=sql_events,
+                sources=source_count,
+                answer_chars=sum(len(part) for part in answer_parts),
+                scripted=scripted or False,
+                persisted=persisted,
+            )
 
         with interaction_scope(
             interaction_id,
@@ -150,22 +190,44 @@ async def chat_endpoint(
                 async for event in agent_events:
                     match event:
                         case ToolCallEvent():
+                            tool_calls += 1
+                            logger.debug("chat step %s %s", event.tool, event.label)
                             yield _format_sse(
                                 "tool_call", event.model_dump(mode="json")
                             )
                         case ToolResultEvent():
+                            logger.debug(
+                                "chat step %s %s -> %s",
+                                event.tool,
+                                event.label,
+                                event.status,
+                            )
                             yield _format_sse(
                                 "tool_result", event.model_dump(mode="json")
                             )
                         case SqlEvent():
+                            sql_events += 1
+                            logger.debug(
+                                "chat sql answered=%s rows=%d",
+                                event.answered,
+                                event.row_count,
+                            )
                             yield _format_sse("sql", event.model_dump(mode="json"))
                         case TokenEvent():
                             # Accumulated as it streams, never buffered: the
                             # client sees each token as it arrives and the whole
                             # answer is still available to persist afterwards.
+                            if first_token_at is None:
+                                first_token_at = time.perf_counter()
+                                logger.debug(
+                                    "chat first token after %.1fs",
+                                    first_token_at - started_at,
+                                )
                             answer_parts.append(event.text)
                             yield _format_sse("token", {"text": event.text})
                         case SourcesEvent():
+                            source_count = len(event.sources)
+                            logger.debug("chat sources=%d", source_count)
                             yield _format_sse(
                                 "sources",
                                 {
@@ -182,17 +244,28 @@ async def chat_endpoint(
                         case ErrorEvent():
                             # Terminal. The agent has already logged the cause;
                             # the failed turn is not persisted.
+                            logger.warning(
+                                "chat failed in %.1fs after %d tools — %s",
+                                time.perf_counter() - started_at,
+                                tool_calls,
+                                event.message,
+                            )
                             yield _format_sse("error", {"message": event.message})
             except Exception:
                 if not done_emitted:
                     logger.exception(
-                        "Error during query for session %s", chat_session.id
+                        "chat crashed in %.1fs after %d tools, session %s",
+                        time.perf_counter() - started_at,
+                        tool_calls,
+                        chat_session.id,
                     )
                     yield _format_sse("error", {"message": _ROUTE_FAILURE_MESSAGE})
+                    _summarise()
                     return
                 logger.exception(
-                    "Error persisting turn for session %s", chat_session.id
+                    "chat crashed after `done`, session %s", chat_session.id
                 )
+                _summarise()
                 return
 
         if done_emitted:
@@ -204,12 +277,15 @@ async def chat_endpoint(
                     db,
                     interaction_id=interaction_id,
                 )
+                persisted = True
             except Exception:
                 # The answer already reached the client; failing to remember it
                 # is worth logging, not worth an error frame after `done`.
                 logger.exception(
-                    "Error persisting turn for session %s", chat_session.id
+                    "chat turn not persisted for session %s", chat_session.id
                 )
+
+        _summarise()
 
     return StreamingResponse(
         generate(),

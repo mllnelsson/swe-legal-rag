@@ -6,6 +6,7 @@ from a concept named on one decision to every other decision that names it.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,8 @@ from shared.dtos.document_entity import EntityDocumentRef
 from shared.dtos.entity import EntityWithCount
 from shared.repositories import document_entity as document_entity_repo
 from shared.repositories import entity as entity_repo
+
+logger = logging.getLogger(__name__)
 
 
 async def list_concepts(
@@ -34,6 +37,12 @@ async def list_concepts(
     )
     total = await entity_repo.count_entities(
         session, entity_type=entity_type, name_query=name_query
+    )
+    logger.debug(
+        "concepts listed count=%d total=%d type=%s",
+        len(entities),
+        total,
+        entity_type or "all",
     )
     return Page(items=entities, total=total, limit=limit, offset=offset)
 
@@ -60,5 +69,8 @@ async def list_documents_for_concept(
     )
     total = await document_entity_repo.count_documents_for_entity(
         session, entity_id, relevance=relevance
+    )
+    logger.debug(
+        "concept %s documents count=%d total=%d", entity_id, len(documents), total
     )
     return Page(items=documents, total=total, limit=limit, offset=offset)

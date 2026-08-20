@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from ai.errors import EmbeddingWindowError
+from ai.errors import EmbeddingWindowError, TokenizerUnavailableError
 from ai.llm_config import EmbeddingConfig, resolve_embedding_config
 
 if TYPE_CHECKING:
@@ -93,7 +93,18 @@ def _load_tokenizer(model_name: str) -> PreTrainedTokenizerBase:
     """
     from transformers import AutoTokenizer
 
-    return AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer is None:
+        # `from_pretrained` answers None for a name it cannot map to a tokenizer
+        # class. Caught here so the message names the model; carried further it
+        # becomes an AttributeError inside `count_tokens`, by which point the
+        # chunk worker is already running.
+        raise TokenizerUnavailableError(
+            f"transformers has no tokenizer for embedding model {model_name!r}. "
+            "Check `embedding.model` in llm_config.yaml (or EMBEDDING_MODEL), or "
+            "set EMBEDDING_WINDOW_OVERRIDE to run without a tokenizer."
+        )
+    return tokenizer
 
 
 def create_embedding_ruler(config: EmbeddingConfig | None = None) -> EmbeddingRuler:

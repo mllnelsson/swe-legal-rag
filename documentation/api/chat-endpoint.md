@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-20T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -176,6 +176,13 @@ data: {"message": "human-readable summary"}
 never waits for a `done` after it. The failed turn is not saved to session
 history. The message is deliberately generic and in Swedish, whether it
 originated in the agent or in the route; the cause is logged server-side.
+
+**Server-side, one turn is three or four lines.** `api.access` logs the request's arrival
+and — because it watches the ASGI stream rather than the response object — its exit at
+the *true end of the answer*, carrying `tools`, `sources`, `answer_chars` and whether the
+turn was persisted. `api.routes.chat` adds `chat started` and, on failure, the reason. A
+client that navigates away mid-answer produces an exit line ending ` aborted`, which is
+otherwise invisible. See [application logging](/logging.md).
 
 **Pre-stream validation.** An empty or over-long `message`, or an unparseable
 `session_id`, returns **HTTP 422** and no stream is opened.

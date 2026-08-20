@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-14T00:00:00Z
+timestamp: 2026-08-20T00:00:00Z
 ---
 
 # LLM Observability
@@ -47,7 +47,10 @@ away.
   `texts_count` and `input_chars` are kept.
 - **Local embeddings.** No API call, no token accounting, and a contribution of
   exactly zero to what a question cost.
-- **Structured application logging.** Out of scope; traces are not a log.
+- **Structured application logging.** Out of scope; traces are not a log. The two
+  streams are correlated by `interaction_id` and split by what they hold: logs
+  record *flow* and carry text only as 120-character previews, traces record
+  *payload* and carry it whole. See [application logging](/logging.md).
 
 ## Record schema
 

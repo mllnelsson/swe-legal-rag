@@ -30,6 +30,21 @@ class EmbeddingWindowError(AiError):
     """
 
 
+class TokenizerUnavailableError(AiError):
+    """`transformers` could not build a tokenizer for the configured model.
+
+    `AutoTokenizer.from_pretrained` is typed as returning `None` for a name it
+    cannot resolve to a tokenizer class. Unguarded, that `None` travels as far as
+    the first `count_tokens` call and surfaces as an `AttributeError` naming
+    neither the model nor the config key that chose it — at which point the chunk
+    worker has already started. Raised at ruler construction instead, where the
+    model name is still in hand.
+
+    `EMBEDDING_WINDOW_OVERRIDE` is the way past it for a process that genuinely
+    cannot reach a tokenizer; see :mod:`ai.tokenization`.
+    """
+
+
 class UnsupportedEmbeddingBackendError(AiError):
     """`embedding.provider` names a host whose kind has no embeddings client.
 

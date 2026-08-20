@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-20T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -271,6 +271,13 @@ above the `int(1e30)` sentinel `transformers` reports for a tokenizer config mis
 `EmbeddingWindowError` in each case. `SPECIAL_TOKEN_COUNT = 2` is the `<s>`/`</s>` pair an
 XLM-R-style tokenizer wraps around one encoded input — added once by the caller
 composing several pieces, not once per piece.
+
+`from_pretrained` returns `None` for a name it cannot map to a tokenizer class, so the
+load is guarded and raises `ai.errors.TokenizerUnavailableError` naming the model.
+Unguarded, that `None` travels to the first `count_tokens` call and arrives as an
+`AttributeError` naming neither the model nor the config key that chose it — after the
+chunk worker has already started. `EMBEDDING_WINDOW_OVERRIDE` remains the way to run
+without a tokenizer at all.
 
 `EmbeddingRuler` is a value carrying a callable rather than a Protocol with an
 implementation behind it, deliberately: a fake for tests is a lambda, so nothing needs

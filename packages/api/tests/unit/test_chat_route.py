@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import replace
@@ -35,6 +36,7 @@ from shared.dtos.session import SessionRead
 from shared.enums import ChunkSection
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access_log import AccessLogMiddleware
 from api.config import ChatScript, DevSettings, get_dev_settings
 from api.correlation import INTERACTION_ID_HEADER
 from api.dependencies import get_db
@@ -679,3 +681,113 @@ class TestScriptedChat:
         _, _, agent = self._post(ChatScript.OFF)
 
         agent.assert_called_once()
+
+    def test_a_scripted_turn_says_loudly_that_it_is_scripted(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="api.routes.chat"):
+            self._post(ChatScript.DIRECT)
+
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert any("SCRIPTED" in message for message in warnings)
+
+
+class TestChatLogging:
+    """The turn summary, and its ordering against the access envelope."""
+
+    def setup_method(self):
+        self.chat_session = _make_session()
+        self.app, self.client = _make_client()
+        self.app.add_middleware(AccessLogMiddleware)
+
+    def teardown_method(self):
+        self.app.dependency_overrides.clear()
+
+    def _post(self, script: ChatScript = ChatScript.RESEARCH):
+        instant = {
+            name: [replace(frame, delay=0.0) for frame in frames]
+            for name, frames in SCRIPTS.items()
+        }
+        self.app.dependency_overrides[get_dev_settings] = lambda: DevSettings(
+            chat_script=script
+        )
+        with (
+            patch(
+                "api.routes.chat.get_or_create_session", return_value=self.chat_session
+            ),
+            patch("api.routes.chat.append_turn", new=AsyncMock()),
+            patch("api.routes.chat.SCRIPTS", instant),
+        ):
+            return self.client.post(
+                "/api/chat", json={"message": "Vad gäller vid jäv?"}
+            )
+
+    def _exit_line(self, caplog) -> str:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith("← POST /api/chat")
+        ][0]
+
+    def test_the_route_announces_the_turn_it_is_starting(self, caplog):
+        with caplog.at_level(logging.INFO, logger="api.routes.chat"):
+            self._post()
+
+        started = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("chat started")
+        ]
+        assert len(started) == 1
+        assert " msg_chars=" in started[0]
+        assert " history=0" in started[0]
+
+    def test_the_exit_line_reports_what_the_turn_did(self, caplog):
+        """One summary, not two — the access line is the turn's summary.
+
+        A separate `chat completed` line would be the duplicate
+        started/finished pair the worker envelope rule forbids.
+        """
+        with caplog.at_level(logging.INFO):
+            self._post()
+
+        exit_line = self._exit_line(caplog)
+        assert " tools=" in exit_line
+        assert " sources=3" in exit_line
+        assert " answer_chars=" in exit_line
+        assert " scripted=research" in exit_line
+        assert " persisted=True" in exit_line
+        assert " aborted" not in exit_line
+
+        summaries = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("chat completed")
+        ]
+        assert summaries == []
+
+    def test_the_exit_line_waits_for_the_stream_to_finish(self, caplog):
+        """The regression guard for the whole raw-ASGI middleware choice.
+
+        A `BaseHTTPMiddleware` exit line fires at first byte — before the route
+        has counted a single tool call — so it would carry none of these fields.
+        """
+        with caplog.at_level(logging.INFO):
+            self._post()
+
+        messages = [
+            (r.name, r.getMessage())
+            for r in caplog.records
+            if r.name in {"api.access", "api.routes.chat"}
+        ]
+        assert messages[0][1].startswith("→ POST /api/chat")
+        assert messages[-1][1].startswith("← POST /api/chat")
+
+    def test_a_failed_turn_still_reports_what_it_managed(self, caplog):
+        with caplog.at_level(logging.INFO):
+            self._post(ChatScript.ERROR)
+
+        assert any(r.getMessage().startswith("chat failed") for r in caplog.records)
+        # The turn never reached `done`, so nothing was persisted — and the exit
+        # line says so rather than going silent.
+        assert " persisted=False" in self._exit_line(caplog)

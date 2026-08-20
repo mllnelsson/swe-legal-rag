@@ -6,6 +6,9 @@ import sys
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from ai.errors import TokenizerUnavailableError
 from ai.llm_config import EmbeddingBackend, EmbeddingConfig
 from ai.tokenization import (
     EmbeddingRuler,
@@ -127,3 +130,19 @@ def test_tokenizer_is_loaded_once_per_process() -> None:
 
     # Both workers are composed into one process by scripts/run_pipeline.py.
     assert auto_tokenizer.from_pretrained.call_count == 1
+
+
+def test_a_model_transformers_cannot_tokenize_is_refused() -> None:
+    """`from_pretrained` answers None for a name it cannot resolve.
+
+    Carried further that None becomes an `AttributeError` inside `count_tokens`,
+    naming neither the model nor the config key that chose it — and only after
+    the chunk worker has started.
+    """
+    stub, auto_tokenizer = _stub_transformers(_make_tokenizer())
+    auto_tokenizer.from_pretrained = MagicMock(return_value=None)
+    _load_tokenizer.cache_clear()
+
+    with patch.dict(sys.modules, {"transformers": stub}):
+        with pytest.raises(TokenizerUnavailableError, match="no-such/model"):
+            create_embedding_ruler(_config(model="no-such/model"))

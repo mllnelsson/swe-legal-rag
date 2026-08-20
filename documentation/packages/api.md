@@ -4,7 +4,7 @@ title: api Package
 description: The FastAPI application and the deterministic search/browse/traversal REST API — search/document/concept/keyword services, the session service, the chat toolset the conversational agent is driven through, and their routes.
 resource: packages/api
 tags: [package, api, fastapi, retrieval, sse, search, rest]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-20T00:00:00Z
 ---
 
 # api Package (`packages/api/`)
@@ -47,13 +47,29 @@ The agent's own bounds — iterations, reading budget, citation cap — are
 - **`api/pagination.py`** — the generic `Page[T]` model (`items`, `total`, `limit`,
   `offset`) every list-returning endpoint uses, and `clamp_limit(requested, *, default,
   maximum)`, which keeps a caller-supplied page size inside what the server will serve.
-- **`api/correlation.py`** — `INTERACTION_ID_HEADER` (`X-Interaction-Id`) and
-  `resolve_interaction_id(supplied)`, shared by the chat and SQL routes. The header is
+- **`api/correlation.py`** — `INTERACTION_ID_HEADER` (`X-Interaction-Id`),
+  `resolve_interaction_id(supplied)` and `interaction_id_of(request)`. The header is
   honoured only when it parses as a UUID and is canonicalised when it does; anything
-  else is ignored and an id minted. It lives here rather than in either route because
-  `api/main.py` also needs the header name — see [the CORS
-  requirement](#fastapi-app-apimainpy). See [LLM Observability](/observability.md) for
-  what the id correlates.
+  else is ignored and an id minted. `resolve_interaction_id` is now called **once per
+  request, by the access-log middleware**, and the chat and SQL routes read that id back
+  with `interaction_id_of` rather than resolving again — a second call would mint a
+  second id for one turn and split its log lines and traces in two. The fallback path
+  covers a request built without the middleware, which is how several unit tests call
+  these routes. It lives here rather than in either route because `api/main.py` also
+  needs the header name — see [the CORS requirement](#fastapi-app-apimainpy). See [LLM
+  Observability](/observability.md) for what the id correlates.
+- **`api/logging_setup.py`** — `configure_api_logging()`, called at *module scope* in
+  `api/main.py` because `uvicorn api.main:app` makes that import the entry point. It
+  applies `LOG_LEVEL`, adopts uvicorn's own loggers into the shared format, silences
+  `uvicorn.access` (the envelope below supersedes it), damps noisy third-party loggers,
+  and installs the filter that puts the request's `interaction_id` on every record.
+- **`api/access_log.py`** — `AccessLogMiddleware`, plus `note()` for route metadata and
+  `preview()` for truncating user text. One `→` line when a request arrives and exactly
+  one `←` line when it finishes, carrying status, duration and whatever the route noted.
+  A **raw ASGI** middleware, not `BaseHTTPMiddleware`: the latter returns at first byte,
+  which on `POST /api/chat` would time a fraction of the turn and carry none of its
+  metadata. Full rules and the per-endpoint field table are in [application
+  logging](/logging.md).
 
 ## The chat surface (`api/services/`)
 
@@ -152,11 +168,21 @@ agent uses two of them — `chat` drives its loop and writes the answer, `read` 
 sub-agent it hands a whole decision to. Routes: the search, documents, concepts,
 keywords and sql routers are registered ahead of the chat router, plus `GET /healthz`.
 
+Each lifespan stage logs at DEBUG with its duration, and the handler closes with one
+INFO `API ready in <n>s` line. The embedding provider's load time is the point: warm it
+is ~9 s and cold or revalidating ~90 s, which without a line reads as a hang — see
+[local dev](/playbooks/local-dev.md).
+
 CORS is configured from `AppSettings.api_cors_origins`, and names
 `X-Interaction-Id` in `expose_headers`. That is a separate requirement from the
 permissive `allow_headers`, which governs the request direction only: a browser cannot
 read a response header the server has not exposed, so without it the correlation id
 reaches the browser and stays invisible to it.
+
+**Middleware order reads backwards.** `add_middleware` inserts at the front, so
+`AccessLogMiddleware` is added *first* and `CORSMiddleware` *last*, leaving CORS
+outermost. That is deliberate: CORS answers preflight `OPTIONS` itself, and those never
+reaching the access log is how the log stays free of them without a method check.
 
 ## Chat route (`api/routes/chat.py`)
 
