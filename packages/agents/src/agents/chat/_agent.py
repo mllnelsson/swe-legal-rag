@@ -384,8 +384,21 @@ async def run_chat_agent(
             yield ErrorEvent(message=_FAILURE_MESSAGE)
             return
         finally:
-            if not loop_task.done():
-                loop_task.cancel()
+            loop_task.cancel()
+            # Cancellation is a request, not a fact: until the task has been
+            # given back control it is still sitting inside whatever it was
+            # awaiting. The tools it drives hold the request-scoped database
+            # session, and the request teardown commits that same session as
+            # soon as this generator is done — so returning before the task has
+            # actually stopped puts two tasks on one connection, which asyncpg
+            # reports as "another operation is in progress" from a traceback
+            # after the response has already started. That is what a reader who
+            # reloaded mid-answer was hitting.
+            #
+            # `return_exceptions` because the task's own CancelledError is the
+            # expected outcome here, not something to re-raise over whatever
+            # brought us into this block.
+            await asyncio.gather(loop_task, return_exceptions=True)
 
         if state.direct_reply is not None:
             # The turn gathered nothing because nothing was needed — a greeting,

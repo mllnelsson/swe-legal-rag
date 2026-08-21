@@ -95,6 +95,13 @@ async def chat_endpoint(
     dev_settings: DevSettings = Depends(get_dev_settings),
 ) -> StreamingResponse:
     chat_session = await get_or_create_session(body.session_id, db)
+    # Committed here rather than left to the request's teardown. The turn that
+    # follows runs for up to a minute, and the `done` frame hands this id to the
+    # client, which immediately claims it as a URL and refetches the session
+    # list. Both of those would race a row that is still only flushed: a reload
+    # in that window reads a 404 for a conversation the client has just been
+    # told the name of.
+    await db.commit()
     history = history_for_llm(chat_session, session_settings.session_max_history_turns)
 
     # Resolved out here, not in the generator: the response headers are built
