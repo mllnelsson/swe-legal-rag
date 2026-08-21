@@ -31,7 +31,7 @@ export function TurnView({ turn }: TurnViewProps) {
         {turn.question}
       </h2>
 
-      <TurnSteps steps={turn.steps} streaming={streaming} />
+      <TurnSteps steps={turn.steps} streaming={streaming} writing={turn.answer !== ""} />
 
       {/* Before the prose, so the query is on screen while the number is read. */}
       <SqlEvidence events={turn.sql} />
