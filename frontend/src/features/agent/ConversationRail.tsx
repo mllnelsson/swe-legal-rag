@@ -8,6 +8,13 @@ import type { SessionSummary } from "../../api/types";
 export type ConversationRailProps = {
   /** The conversation currently open, so the rail can mark it. */
   openSessionId: string | undefined;
+  /** Whether the rail offers "Nytt samtal" itself.
+   *
+   *  False where the surface around it already does. Starting a conversation is
+   *  a primary action and belongs where it is always visible, not behind the
+   *  panel a reader opens to look at old ones — but two of them on one screen is
+   *  a reader wondering whether they differ. */
+  offerNewConversation?: boolean;
 };
 
 /** Every conversation this app has held.
@@ -19,7 +26,10 @@ export type ConversationRailProps = {
  *  Titles are the opening question verbatim, truncated by the API. No model
  *  writes them: a generated label would put text the reader cannot check into
  *  the navigation, and cost money per conversation to do it. */
-export function ConversationRail({ openSessionId }: ConversationRailProps) {
+export function ConversationRail({
+  openSessionId,
+  offerNewConversation = true,
+}: ConversationRailProps) {
   const sessions = useSessions();
   const remove = useDeleteSession();
   const navigate = useNavigate();
@@ -40,6 +50,7 @@ export function ConversationRail({ openSessionId }: ConversationRailProps) {
       aria-label="Tidigare samtal"
       style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}
     >
+      {offerNewConversation && (
       <Link
         to="/agent"
         style={{
@@ -61,6 +72,7 @@ export function ConversationRail({ openSessionId }: ConversationRailProps) {
         <Icon name="plus" size={14} />
         Nytt samtal
       </Link>
+      )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
         <h2 style={overlineStyle}>Tidigare samtal</h2>
