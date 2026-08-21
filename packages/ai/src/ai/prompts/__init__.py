@@ -1,4 +1,4 @@
-from ai.prompts._renderer import PromptTemplate, render
+from ai.prompts._renderer import PromptTemplate, render, render_tool_index
 from ai.prompts._templates import (
     ANSWER_SYNTHESIS,
     CHAT_DIRECT_REPLY,
@@ -15,6 +15,7 @@ from ai.prompts._templates import (
 __all__ = [
     "PromptTemplate",
     "render",
+    "render_tool_index",
     "QUERY_DECOMPOSITION",
     "QUERY_EXPANSION",
     "ANSWER_SYNTHESIS",

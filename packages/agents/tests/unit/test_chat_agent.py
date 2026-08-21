@@ -6,6 +6,7 @@ agent can be exercised against a plain object.
 
 from __future__ import annotations
 
+import inspect
 import uuid
 
 import pytest
@@ -35,6 +36,7 @@ from agents.chat import (
     run_chat_agent,
 )
 from agents.chat._dtos import DecisionText, DecisionTextChunk
+from agents.chat._tools import build_chat_tools
 from agents.config import ChatAgentSettings
 from agents.sql._dtos import SqlAgentResult, SqlAttempt
 
@@ -225,7 +227,12 @@ async def test_progress_events_carry_keys_not_prose() -> None:
             query="jäv",
             document_filter={"keywords": ["jäv"]},
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            chunk_ids=["c1"],
+            notes="Underlaget bär svaret.",
+        ),
     )
 
     events = await _collect(
@@ -267,7 +274,12 @@ async def test_filtering_on_free_text_is_refused_until_grounded() -> None:
             query="tjänstetillsättning",
             document_filter={"category": "Tjänstetillsättning"},
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-4", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-4",
+            chunk_ids=["c1"],
+            notes="Underlaget bär svaret.",
+        ),
     )
     toolset = FakeToolset()
 
@@ -310,7 +322,12 @@ async def test_keyword_filter_needs_no_grounding() -> None:
             query="jäv",
             document_filter={"keywords": ["jäv"]},
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            chunk_ids=["c1"],
+            notes="Underlaget bär svaret.",
+        ),
     )
     toolset = FakeToolset()
 
@@ -350,7 +367,12 @@ async def test_counting_emits_the_query_before_the_answer() -> None:
             call_id="call-2",
             question="hur många avslogs 2024?",
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            chunk_ids=["c1"],
+            notes="Underlaget bär svaret.",
+        ),
     )
 
     events = await _collect(
@@ -390,7 +412,12 @@ async def test_full_decision_text_never_enters_an_orchestrator_message() -> None
             document_id="d1",
             question="Vad beslutade nämnden?",
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            chunk_ids=["c1"],
+            notes="Underlaget bär svaret.",
+        ),
     )
     toolset = FakeToolset()
 
@@ -428,7 +455,12 @@ async def test_reading_budget_refuses_rather_than_raising() -> None:
             document_id="d1",
             question="Vad beslutade nämnden?",
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            chunk_ids=["c1"],
+            notes="Underlaget bär svaret.",
+        ),
     )
     reader = ScriptedProvider(Message(role=Role.assistant, content="extract"))
 
@@ -454,7 +486,12 @@ async def test_unknown_handle_is_refused_with_the_valid_ones() -> None:
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
         _tool_call(ChatTool.INSPECT_DECISION, call_id="call-2", document_id="d99"),
-        _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            chunk_ids=["c1"],
+            notes="Underlaget bär svaret.",
+        ),
     )
 
     events = await _collect(
@@ -485,7 +522,12 @@ async def test_unknown_handle_is_refused_with_the_valid_ones() -> None:
 async def test_no_evidence_says_so_rather_than_improvising() -> None:
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="tomater"),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=[]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            chunk_ids=[],
+            notes="Underlaget bär svaret.",
+        ),
     )
 
     events = await _collect(
@@ -622,7 +664,12 @@ async def test_appendix_selection_keeps_its_label() -> None:
     """A cited appendix passage must stay attributable to the lower instance."""
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="stiftets beslut"),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c2"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            chunk_ids=["c2"],
+            notes="Underlaget bär svaret.",
+        ),
     )
 
     events = await _collect(
@@ -642,7 +689,12 @@ async def test_appendix_selection_keeps_its_label() -> None:
 async def test_citations_are_capped() -> None:
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c1", "c2"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            chunk_ids=["c1", "c2"],
+            notes="Underlaget bär svaret.",
+        ),
     )
 
     await _collect(
@@ -657,6 +709,106 @@ async def test_citations_are_capped() -> None:
     synthesis = provider.seen_messages[-1][-1].content
     assert _BODY_TEXT in synthesis
     assert _APPENDIX_TEXT not in synthesis
+
+
+class TestTheToolIndexInThePrompt:
+    """The prompt's tool list is generated from the definitions.
+
+    It used to be written out beside them and had drifted: it named a `filter`
+    argument `search_decisions` does not have, called `read_decision` without
+    the appendix switch, and did not mark `notes` required on `answer`.
+    """
+
+    def test_every_schema_property_is_a_real_executor_parameter(self) -> None:
+        """Closes prompt <- schema <- executor.
+
+        The prompt is generated from the schemas now, so this is what keeps the
+        generated text executable: a property with no matching parameter would
+        put an argument in the prompt that `tool_loop` cannot pass.
+        """
+        tools, executors, _ = build_chat_tools(FakeToolset(), _settings())
+
+        for tool in tools:
+            parameters = set(inspect.signature(executors[tool.name]).parameters)
+            declared = set(tool.parameters.get("properties", {}))
+            assert declared <= parameters, tool.name
+
+    def test_every_required_property_is_declared(self) -> None:
+        """A `required` naming a property that does not exist renders a `*` on
+        an argument the index never lists."""
+        tools, _, _ = build_chat_tools(FakeToolset(), _settings())
+
+        for tool in tools:
+            declared = set(tool.parameters.get("properties", {}))
+            assert set(tool.parameters.get("required", [])) <= declared, tool.name
+
+    async def test_the_rendered_prompt_lists_every_tool_and_its_arguments(
+        self,
+    ) -> None:
+        provider = ScriptedProvider(
+            _tool_call(ChatTool.REPLY_FROM_CONTEXT, notes="En hälsning."),
+        )
+
+        await _collect(
+            run_chat_agent(
+                ChatAgentRequest(question="Hej"),
+                FakeToolset(),
+                llm_provider=provider,
+                settings=_settings(),
+            )
+        )
+
+        prompt = provider.seen_messages[0][-1].content
+
+        for tool in ChatTool:
+            assert f"- {tool.value}(" in prompt
+        # The three things the hand-written list got wrong.
+        assert "document_filter" in prompt
+        assert "read_decision(document_id*, question*, include_appendices)" in prompt
+        assert "answer(chunk_ids*, document_ids, notes*)" in prompt
+
+
+async def test_a_wrong_argument_name_is_refused_and_the_loop_goes_on() -> None:
+    """The failure the generated tool index exists to prevent.
+
+    A model calling `search_decisions(filter=...)` — which is what the old
+    prompt asked for — used to end the turn: executors are called by keyword,
+    so the `TypeError` became a `ToolExecutionError` and the agent yielded an
+    `ErrorEvent`. Now it costs one iteration, like every other bad call.
+    """
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv", filter={"category": "x"}),
+        _tool_call(ChatTool.SEARCH_DECISIONS, call_id="call-2", query="jäv i kyrkoråd"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            chunk_ids=["c1"],
+            notes="c1 bär avgörandet.",
+        ),
+    )
+    toolset = FakeToolset()
+
+    events = await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad har nämnden sagt om jäv?"),
+            toolset,
+            llm_provider=provider,
+            settings=_settings(),
+        )
+    )
+
+    assert not any(isinstance(event, ErrorEvent) for event in events)
+
+    refusals = [
+        event
+        for event in events
+        if isinstance(event, ToolResultEvent) and event.status is ToolStatus.REFUSED
+    ]
+    assert len(refusals) == 1
+
+    # The malformed call never reached the toolset, and the turn still answered.
+    assert len(toolset.searches) == 1
+    assert isinstance(events[-1], DoneEvent)
 
 
 @pytest.mark.parametrize("question", ["", "x" * 4001])
@@ -697,7 +849,12 @@ class TestCorrelation:
                 document_id="d1",
                 question="Vad beslutade nämnden?",
             ),
-            _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+            _tool_call(
+                ChatTool.ANSWER,
+                call_id="call-3",
+                chunk_ids=["c1"],
+                notes="Underlaget bär svaret.",
+            ),
         )
         await _collect(
             run_chat_agent(
@@ -789,7 +946,12 @@ class TestCorrelation:
                 document_id="d1",
                 question="Vilka skäl angavs?",
             ),
-            _tool_call(ChatTool.ANSWER, call_id="call-4", chunk_ids=["c1"]),
+            _tool_call(
+                ChatTool.ANSWER,
+                call_id="call-4",
+                chunk_ids=["c1"],
+                notes="Underlaget bär svaret.",
+            ),
         )
 
         await _collect(
@@ -820,3 +982,145 @@ class TestCorrelation:
             for source in ("agents.chat", "agents.chat.read")
         }
         assert by_source["agents.chat"].isdisjoint(by_source["agents.chat.read"])
+
+
+class TestTheHandoffToTheWritingStep:
+    """What the orchestrator hands forward when it ends the turn."""
+
+    async def test_an_answer_without_notes_is_refused_and_the_loop_goes_on(
+        self,
+    ) -> None:
+        """A missing handoff is repaired, not fatal.
+
+        The evidence is already gathered by this point, so ending the run here
+        would answer a searchable question with the no-evidence message.
+        """
+        provider = ScriptedProvider(
+            _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+            _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c1"]),
+            _tool_call(
+                ChatTool.ANSWER,
+                call_id="call-3",
+                chunk_ids=["c1"],
+                notes="c1 bär avgörandet.",
+            ),
+        )
+
+        events = await _collect(
+            run_chat_agent(
+                ChatAgentRequest(question="Vad har nämnden sagt om jäv?"),
+                FakeToolset(),
+                llm_provider=provider,
+                settings=_settings(),
+            )
+        )
+
+        refusals = [
+            event
+            for event in events
+            if isinstance(event, ToolResultEvent)
+            and event.status is ToolStatus.REFUSED
+            and event.tool is ChatTool.ANSWER
+        ]
+        assert len(refusals) == 1
+
+        assert [event.type for event in events][-3:] == ["token", "sources", "done"]
+        tokens = "".join(e.text for e in events if isinstance(e, TokenEvent))
+        assert tokens == "Nämnden avslog."
+        # The refusal reached the model, so it could tell what to fix.
+        assert any(
+            "answer needs notes" in message.content
+            for turn in provider.seen_messages
+            for message in turn
+        )
+
+    async def test_what_the_agent_said_on_its_way_out_reaches_synthesis(self) -> None:
+        """Text written alongside the terminal call is guidance, not litter."""
+        answer = _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            chunk_ids=["c1"],
+            notes="c1 bär avgörandet.",
+        )
+        provider = ScriptedProvider(
+            _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+            Message(
+                role=answer.role,
+                content="Observera att bilagan är underinstansens ord.",
+                tool_calls=answer.tool_calls,
+            ),
+        )
+
+        await _collect(
+            run_chat_agent(
+                ChatAgentRequest(question="Vad har nämnden sagt om jäv?"),
+                FakeToolset(),
+                llm_provider=provider,
+                settings=_settings(),
+            )
+        )
+
+        synthesis = provider.seen_messages[-1]
+        rendered = "\n".join(message.content for message in synthesis)
+        assert "Observera att bilagan är underinstansens ord." in rendered
+        # The notes it did write are kept alongside, not replaced.
+        assert "c1 bär avgörandet." in rendered
+
+    async def test_a_direct_reply_keeps_it_too(self) -> None:
+        reply = _tool_call(
+            ChatTool.REPLY_FROM_CONTEXT, call_id="call-1", notes="Ett tack."
+        )
+        provider = ScriptedProvider(
+            Message(
+                role=reply.role,
+                content="Användaren tackar bara.",
+                tool_calls=reply.tool_calls,
+            ),
+            stream=("Varsågod!",),
+        )
+
+        await _collect(
+            run_chat_agent(
+                ChatAgentRequest(question="tack!"),
+                FakeToolset(),
+                llm_provider=provider,
+                settings=_settings(),
+            )
+        )
+
+        rendered = "\n".join(message.content for message in provider.seen_messages[-1])
+        assert "Användaren tackar bara." in rendered
+        assert "Ett tack." in rendered
+
+
+async def test_closing_the_stream_early_stops_the_tool_loop() -> None:
+    """A reader who reloads mid-answer takes the loop down with the stream.
+
+    The tools hold the request-scoped database session, and the request
+    teardown commits it as soon as this generator is done — so nothing may
+    still be running by then.
+    """
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, call_id="call-1", query="jäv"),
+        _tool_call(ChatTool.SEARCH_DECISIONS, call_id="call-2", query="jäv igen"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            chunk_ids=["c1"],
+            notes="c1 bär avgörandet.",
+        ),
+    )
+    toolset = FakeToolset()
+
+    agent = run_chat_agent(
+        ChatAgentRequest(question="Vad har nämnden sagt om jäv?"),
+        toolset,
+        llm_provider=provider,
+        settings=_settings(),
+    )
+    assert isinstance(await anext(agent), ToolCallEvent)
+    assert isinstance(await anext(agent), ToolResultEvent)
+    await agent.aclose()
+
+    assert len(toolset.searches) == 1
+    assert len(provider.seen_messages) == 1

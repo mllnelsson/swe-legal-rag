@@ -110,8 +110,10 @@ happened, so a client renders that.
 
 `status` on a `tool_result` is `ok`, `refused` or `error`. **`refused` is not a
 failure** — it is a policy decline (an ungrounded filter, a spent reading
-budget) that the agent repairs from on its next iteration, and a client should
-present it as a step rather than a problem.
+budget) or a call whose arguments do not fit the executor it named (a wrong
+argument name, or a required one missing) that the agent repairs from on its
+next iteration, and a client should present it as a step rather than a
+problem.
 
 `detail` is structured, never prose, and **optional for a client**: it exists so
 a later frontend can enrich a label ("7 beslut") without a contract change. `id`
@@ -197,15 +199,20 @@ reloading the page while an answer is streaming, are closed:
   list](/api/sessions.md) — both would otherwise race a row that was not
   durable yet, so a reload in that window could read a 404 for a conversation
   the client had just been told the name of.
-* On disconnect, [the agent](/retrieval/chat-agent.md) **awaits the cancelled
-  task driving its tool loop** rather than cancelling it and returning
-  immediately. Cancellation only requests that
-  the task stop; until it is given back control it is still sitting inside
-  whatever it was awaiting — usually a query on the request-scoped database
-  session — and the request teardown commits that same session as soon as the
-  generator exits. Returning before the task had actually stopped put two
-  tasks on one connection, which surfaced as an asyncpg error from a traceback
-  raised after the response had already started.
+* On disconnect, nothing is left running to race the teardown at all. [The
+  agent](/retrieval/chat-agent.md) forwards `llm_core.tool_loop`'s events
+  straight through with `async for` rather than driving the loop as a
+  separate task; closing the SSE generator on disconnect raises
+  `GeneratorExit` at its suspended `yield`, which propagates directly into
+  the tool loop's own suspended `yield` — the loop can never be mid-`await`
+  when that happens, only mid-`yield`. There is no task left holding the
+  request-scoped database session for teardown to race, because there is no
+  separate task. This used to require the agent to await a cancelled task
+  driving its tool loop before returning, so that the request teardown would
+  not commit the session out from under a task still sitting inside a query;
+  returning too early put two tasks on one connection, which surfaced as an
+  asyncpg error from a traceback raised after the response had already
+  started. That failure mode no longer has anywhere to occur.
 
 ## Correlation
 

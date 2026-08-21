@@ -13,8 +13,9 @@ from ai.prompts import (
     METADATA_EXTRACTION,
     QUERY_DECOMPOSITION,
     render,
+    render_tool_index,
 )
-from llm_core import Role
+from llm_core import Role, ToolDefinition
 
 _PLACEHOLDER_RE = re.compile(r"\{[a-z_]+\}")
 
@@ -42,6 +43,25 @@ _TABULAR = (
 )
 _NOTES = "Mål 2023/456 bär avgörandet. Antalet kommer från tabelldatan, inte utdragen."
 _TODAY = "2026-08-13"
+
+# `ai` may not import `agents`, so the renderer is exercised on definitions of
+# this file's own. That the *real* tools reach the prompt is asserted from
+# packages/agents/tests/unit/test_chat_agent.py, where they are importable.
+_SEARCH_TOOL = ToolDefinition(
+    name="search_decisions",
+    summary="hybrid semantic and lexical search",
+    description="Searches the decisions semantically and lexically at once.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "queries": {"type": "array"},
+            "document_filter": {"type": "object"},
+        },
+        "required": ["query"],
+    },
+)
+_TOOL_INDEX = render_tool_index([_SEARCH_TOOL])
 
 # The evidence bundle every ANSWER_SYNTHESIS render needs. Spread into a context
 # so a new placeholder fails one dict here rather than every call site.
@@ -75,6 +95,7 @@ _ALL_TEMPLATES = [
         {
             "question": _QUESTION,
             "today": _TODAY,
+            "tools": _TOOL_INDEX,
             "conversation_history": _CONVERSATION,
         },
     ),
@@ -191,23 +212,39 @@ class TestChatOrchestration:
             {
                 "question": _QUESTION,
                 "today": _TODAY,
+                "tools": _TOOL_INDEX,
                 "conversation_history": _CONVERSATION,
             },
         )
         assert not _has_placeholder(messages[1].content)
 
-    def test_every_tool_is_named(self):
-        """A tool the prompt never mentions is one the model will not reach for."""
-        system = CHAT_ORCHESTRATION.system_prompt
-        for tool in (
-            "list_vocabulary",
-            "search_decisions",
-            "read_decision",
-            "inspect_decision",
-            "query_corpus",
-            "answer",
-        ):
-            assert tool in system
+    def test_the_tools_reach_the_user_message(self):
+        """The list is generated, so the system prompt no longer holds one.
+
+        It cannot: `render()` formats only the user template, so a `{tools}`
+        placeholder in a system prompt would reach the model verbatim.
+        """
+        messages = render(
+            CHAT_ORCHESTRATION,
+            {
+                "question": _QUESTION,
+                "today": _TODAY,
+                "tools": _TOOL_INDEX,
+                "conversation_history": _CONVERSATION,
+            },
+        )
+
+        assert _TOOL_INDEX in messages[1].content
+        # The prose still names tools, and should. What must not survive there
+        # is a *signature*: that is the copy that drifted.
+        for tool in ("list_vocabulary", "search_decisions", "answer"):
+            assert f"{tool}(" not in messages[0].content
+
+    def test_points_at_the_generated_list(self):
+        """Named in the system prompt so `How to work` has something to refer to."""
+        assert "Your tools are listed with the question" in (
+            CHAT_ORCHESTRATION.system_prompt
+        )
 
     def test_states_the_grounding_and_counting_rules(self):
         system = CHAT_ORCHESTRATION.system_prompt
@@ -222,6 +259,58 @@ class TestChatOrchestration:
         system = CHAT_ORCHESTRATION.system_prompt
         assert "You research questions" in system
         assert "Du är" not in system
+
+
+class TestRenderToolIndex:
+    """The generated tool list. It replaced a hand-written one that had drifted
+    from the schemas — naming a `filter` argument `search_decisions` does not
+    have — which `llm_core.tool_loop` cannot repair from as cheaply as a wrong
+    value, because it calls executors by keyword."""
+
+    def test_required_arguments_are_marked_and_optional_ones_are_not(self):
+        rendered = render_tool_index([_SEARCH_TOOL])
+
+        assert "search_decisions(query*, queries, document_filter)" in rendered
+
+    def test_argument_order_follows_the_schema(self):
+        """So an entry reads against its definition line for line."""
+        rendered = render_tool_index([_SEARCH_TOOL])
+
+        assert rendered.index("query*") < rendered.index("queries")
+        assert rendered.index("queries") < rendered.index("document_filter")
+
+    def test_the_summary_is_used_when_set(self):
+        rendered = render_tool_index([_SEARCH_TOOL])
+
+        assert "hybrid semantic and lexical search" in rendered
+        assert "Searches the decisions semantically" not in rendered
+
+    def test_the_description_stands_in_when_no_summary_is_set(self):
+        tool = ToolDefinition(
+            name="run_sql",
+            description="Runs one read-only statement.",
+            parameters={"type": "object", "properties": {"sql": {"type": "string"}}},
+        )
+
+        assert (
+            render_tool_index([tool])
+            == "- run_sql(sql)\n  Runs one read-only statement."
+        )
+
+    def test_a_tool_taking_nothing_renders_empty_parentheses(self):
+        tool = ToolDefinition(
+            name="ping",
+            summary="says hello",
+            description="Says hello.",
+            parameters={"type": "object", "properties": {}, "required": []},
+        )
+
+        assert render_tool_index([tool]) == "- ping()\n  says hello"
+
+    def test_one_entry_per_tool(self):
+        rendered = render_tool_index([_SEARCH_TOOL, _SEARCH_TOOL])
+
+        assert rendered.count("- search_decisions") == 2
 
 
 class TestDecisionReading:

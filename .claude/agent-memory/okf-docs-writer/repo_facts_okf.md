@@ -99,6 +99,45 @@ conclude "nothing changed."
   document it in `frontend/overview.md` instead, and only fold it into honesty-rules.md
   if/when a test for it lands there.
 
+## `tool_loop` becomes an async generator; `answer` requires `notes` (2026-08-21)
+- `llm_core.tool_loop` going from "coroutine with optional `on_tool_call`/`on_tool_result`
+  callbacks awaited inside it, terminal tool named via `terminal_tools: set[str]`" to "async
+  generator yielding `ToolCallStarted`/`ToolCallCompleted`/`LoopFinished`, terminal call
+  decided by an `is_terminal: TerminalPredicate` consulted on the *result* too" is a
+  four-file fan-out, not just the package doc: `packages/llm-core.md` (the `_service.py`
+  module bullet, in full — three sub-paragraphs), `packages/agents.md` (both agent rows in
+  the module table — `chat/_agent.py`'s queue-and-task clause AND `sql/_agent.py`'s now
+  calling `run_tool_loop` not `tool_loop`), `api/chat-endpoint.md` ("A reload mid-answer is
+  safe"'s second bullet, which had explained a cancelled-task-await hazard that the redesign
+  removes structurally rather than fixes — rewrite naming the old hazard in past tense, don't
+  just delete it), and `retrieval/chat-agent.md` (the Shape ASCII block, the tools table, the
+  "Two ways a turn can end" table, and "The terminal answer tool is the reranking" section).
+  A predicate seeing the *result*, not just the call, is the load-bearing new fact everywhere
+  it appears — it's what lets a terminal tool (`answer`) refuse a call without ending the run.
+- A prior pass's "callbacks push to a queue" design pattern, once documented as the reason a
+  generator-shaped caller (an SSE endpoint) could receive per-step progress from a
+  non-generator `tool_loop`, is worth grepping for by phrase (`queue.*drains`, `runs.*as a
+  task`) across the whole bundle when the underlying function becomes a generator itself —
+  the phrase had propagated into three files' prose independently, not just the one file
+  whose code changed.
+- A tool's schema gaining a required field it previously allowed blank (here: `answer`'s
+  `notes` going from optional to `"required": ["chunk_ids", "notes"]`, refusing via
+  `{"refused": True}` before writing `state.selection`) reuses the bundle's existing
+  "refused as a tool result, not raised" pattern already documented for the ungrounded-filter
+  refusal in the same file — cross-link to that pattern rather than re-explaining refusal
+  semantics from scratch, but still touches three separate tables/sections in
+  `retrieval/chat-agent.md` because the signature is restated three times.
+- A previously-discarded value becoming used (here: `LoopFinished.result.message.content`,
+  the terminal call's free-form message text, now merged into `notes` via `agents/chat/
+  _agent.py`'s `_merged_notes()`) that doesn't add a new prompt variable or DTO field is easy
+  to under-document because nothing changed in the wire contract — the reader-facing fact is
+  a *qualifier* on an existing claim ("four sections, any of which may be empty" → the notes
+  section specifically cannot be, once the merge is accounted for), not a new section.
+- This pass's `git diff main...HEAD` / `git log main..HEAD` were empty again (`main` had no
+  divergence — branch even with `main`, same shape as the frontend and feedback-after-ingest
+  passes above) — `git status` plus `git diff` (no refs, working tree) was the correct
+  fallback and matched the invocation prompt's summary closely enough to trust it.
+
 ## Mapping learned on the crawl-dedup / citation-list / loop-bound-client pass (2026-08-08)
 - A new `documents.*` column that changes what the **crawl worker** dedups on (e.g.
   `source_decision_number`) is a wide fan-out edit, not a single-file one: the column
@@ -406,3 +445,40 @@ conclude "nothing changed."
   one. Worth grep'ing `embedding.*[Bb]erget\|default.*[Ee]mbedding.*provider` across the
   whole bundle next time this class of task comes up, rather than trusting a previous
   pass got every instance.
+
+## Working tree accumulates multiple unrelated doc passes before any commit (2026-08-21)
+- This repo's `documentation/` directory can carry **several independent, already-applied
+  passes as one big uncommitted working-tree diff** at once — `git status` showed
+  `api/chat-endpoint.md`, `log.md`, `packages/agents.md`, `packages/llm-core.md`, and
+  `retrieval/chat-agent.md` already modified (matching a *different*, earlier same-day
+  pass: `tool_loop` becoming an async generator, `answer.notes` becoming required — see
+  the entry above dated 2026-08-21) before this pass's own edits landed on top of the
+  same files. Always run `git diff` (no refs, working tree) against the specific files an
+  invocation names *before* editing, not just `git status`, to separate "already handled
+  by a prior uncommitted pass" from "still needs this pass's edit" — in this case the
+  `answer.notes`-required work was already fully documented and needed no further touch,
+  while `ToolDefinition.summary`/`render_tool_index`/the argument-binding refusal were
+  genuinely new and layered in cleanly on the same files.
+- `ToolDefinition.summary` (packages/llm-core, `_types.py`) → documented in
+  `packages/llm-core.md`'s `_types.py` module bullet, one sentence, emphasizing "never
+  serialized to a provider" since that's the fact a reader is likeliest to get wrong.
+- `ai.prompts.render_tool_index()` (packages/ai, `prompts/_renderer.py`) → documented in
+  `packages/ai.md`'s "Prompt templates" section, not as its own concept — it's a second
+  free function alongside `render()`, same file, same section, and the ai package doc
+  already covers `render()` there. Maps to the third case of the existing "user template,
+  not the system prompt" paragraph (joining `QUERY_EXPANSION`'s variant cap and
+  `TEXT_TO_SQL`'s schema block), which also needed the *reason `render()` can't just be
+  taught to format system prompts too* spelled out (literal JSON braces in
+  `_QUERY_DECOMPOSITION_SYSTEM`/`_QUERY_EXPANSION_SYSTEM` that `str.format_map` would
+  raise on) — that reason lived only in the invocation prompt, not anywhere in the bundle
+  before this pass.
+- A generated-prompt-block change that fixes prompt/schema drift is worth being precise
+  about what it does *not* claim: the block gives the model no information a provider
+  wasn't already sending (every provider sends each tool's full name/description/schema
+  natively, every iteration) — what's removed is a second, unexecutable, hand-maintained
+  description of the same tools. Stated this explicitly in both `packages/ai.md` and
+  `log.md` per the invocation's own caution against overstating the fix's effect.
+- `retrieval/chat-agent.md`'s tools table (`## Tools`) only needed one added sentence
+  ("the prompt's own tool list is generated from these same `ToolDefinition`s") — the
+  table itself was already fully correct (`document_filter`, `include_appendices`,
+  `notes` required) from the prior same-day pass and didn't need re-editing.

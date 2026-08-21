@@ -3,7 +3,7 @@ type: Concept
 title: Conversational Agent
 description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set, two terminal tools for the two kinds of message a conversation holds, two Mistral sub-agents for reading and counting, and one streamed writing call.
 tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-15T00:00:00Z
+timestamp: 2026-08-21T00:00:00Z
 ---
 
 # Conversational Agent
@@ -21,20 +21,24 @@ against a fake toolset with no database at all.
 
 ```
 run_chat_agent(request, toolset)
-  ├─ tool_loop(..., terminal_tools={"answer", "reply_from_context"})
+  ├─ async for event in tool_loop(..., is_terminal=_is_terminal)
   │                                                 GLM-5.2, blocking
-  │    list_vocabulary()          → tool_call / tool_result
-  │    search_decisions(...)      → tool_call / tool_result
-  │    query_corpus(...)          → tool_call / sql / tool_result   [Mistral-M]
-  │    read_decision(...)         → tool_call / tool_result         [Mistral-M]
-  │    answer(chunk_ids, document_ids, notes)       ─┐ terminal,
-  │    reply_from_context(notes)                    ─┘ loop returns
-  │
+  │    list_vocabulary()          → ToolCallStarted / ToolCallCompleted
+  │    search_decisions(...)      → ToolCallStarted / ToolCallCompleted
+  │    query_corpus(...)          → ToolCallStarted / sql / ToolCallCompleted   [Mistral-M]
+  │    read_decision(...)         → ToolCallStarted / ToolCallCompleted        [Mistral-M]
+  │    answer(chunk_ids, document_ids, notes)       ─┐ terminal if accepted;
+  │    reply_from_context(notes)                    ─┘ a refused call is not an
+  │                                                    ending, and the loop goes on
   ├─ ai.synthesize_answer(evidence bundle)          GLM-5.2, streaming
   │    → token* → sources → done
   └─ ai.reply_from_context(conversation)            GLM-5.2, streaming
        → token* → sources(empty) → done
 ```
+
+The agent forwards each event to its own SSE shape as it arrives — there is no
+separate task and no queue between the loop and the stream; see [the reload
+safety this gives the endpoint](/api/chat-endpoint.md#error-semantics).
 
 **Two phases, and the split is the point.** `LLMProvider.generate_stream` takes
 no tools, so there is no streaming tool-call path to use — the loop gathers
@@ -45,7 +49,11 @@ while one placed in the synthesis prompt is sent once.
 
 The synthesis prompt is **fresh and compact** — the selected passages, the
 reader's extracts, the SQL rows and the agent's notes — not the loop's own
-history, which carries dead ends and verbose tool results.
+history, which carries dead ends and verbose tool results. One piece of that
+history's text does reach it, though: whatever the model wrote alongside its
+terminal call is merged into the notes, on the theory that free-form reasoning
+left there is guidance the writing step should see, not evidence in its own
+right. See [notes below](#what-the-answer-may-assert).
 
 ## Models
 
@@ -73,8 +81,13 @@ a model.
 | `read_decision(document_id, question, include_appendices?)` | `document_service.get_document_chunks` → the reading sub-agent |
 | `inspect_decision(document_id)` | `document_service.get_document_detail` |
 | `query_corpus(question)` | `agents.run_sql_agent` |
-| `answer(chunk_ids, document_ids, notes)` | — terminal |
-| `reply_from_context(notes)` | — terminal |
+| `answer(chunk_ids, document_ids, notes)` | — terminal; `notes` is **required** |
+| `reply_from_context(notes)` | — terminal; `notes` is optional |
+
+The orchestration prompt's own tool list is [generated](/packages/ai.md) from these same
+`ToolDefinition`s — `render_tool_index()` renders one signature-plus-summary line per
+tool from the definitions the loop is about to be given, so the table above and the
+prompt the model reads cannot disagree with each other again.
 
 Search results carry `vector_similarity` and the search diagnostics, not just
 the fused `score`. That is deliberate: RRF derives `score` from rank alone, so
@@ -106,6 +119,14 @@ met.
 | `answer(chunk_ids, document_ids, notes)` | A question the corpus answers | `ANSWER_SYNTHESIS`, from the selected evidence |
 | `reply_from_context(notes)` | A greeting, a thank-you, a question about the previous answer | `CHAT_DIRECT_REPLY`, from the conversation alone |
 
+`answer` **refuses a call with blank `notes`**: the tool returns `{"error": …,
+"refused": True}` before writing the selection, exactly like the
+[ungrounded-filter refusal](#grounding-why-a-filter-can-be-refused) below —
+returned to the model as a tool result, not raised, so the next loop iteration
+repairs the call rather than ending the turn on an incomplete selection.
+`reply_from_context` is deliberately left lenient: a greeting needs no handoff
+to a writing step that depends on notes.
+
 Both stream, so the API forwards one shape either way. Both end with `sources`
 — empty for a direct reply, and truthfully so.
 
@@ -129,13 +150,19 @@ endings stay distinct:
 
 ### The terminal `answer` tool is the reranking
 
-`llm_core.tool_loop` normally returns when the model stops calling tools, which
-makes termination incidental and the final assistant message throwaway prose.
-Naming `answer` a [terminal tool](/packages/llm-core.md) makes the ending
-deliberate and the handoff machine-readable — and the selection *is* the
-reranking: the agent names which passages carry the answer as a tool call, not
-as a separate LLM round-trip. The rerank step the previous chat pipeline had was
-not carried over.
+`llm_core.tool_loop` normally yields `LoopFinished` only when the model stops
+calling tools, which makes termination incidental and the final assistant
+message throwaway prose. Naming `answer` a [terminal tool](/packages/llm-core.md)
+makes the ending deliberate and the handoff machine-readable — and the selection
+*is* the reranking: the agent names which passages carry the answer as a tool
+call, not as a separate LLM round-trip. The rerank step the previous chat
+pipeline had was not carried over.
+
+A call to `answer` only ends the run if the tool *accepts* it — a call with
+blank `notes` is refused, and `_is_terminal` sees the refusal in the result and
+lets the loop go round again rather than reporting `LoopFinished`. The same
+"terminal tool that declined" rule applies to `reply_from_context`, though it
+has nothing left to refuse on.
 
 ## Grounding: why a filter can be refused
 
@@ -183,8 +210,13 @@ surviving.
 
 ## What the answer may assert
 
-The synthesis prompt is given four sections, any of which may be empty:
-passages, readings, tabular data, and the agent's notes. Two rules matter:
+The synthesis prompt is given four sections: passages, readings, tabular data,
+and the agent's notes. Passages, readings and tabular data may all be empty.
+The notes section cannot be — `answer` refuses a call with blank `notes` (see
+[above](#the-terminal-answer-tool-is-the-reranking)), and now carries not only
+`state.selection.notes` but whatever the model wrote as its terminal message's
+own text, merged in alongside it. Two rules matter for what the section as a
+whole may assert:
 
 - **Counts come only from tabular data.** The passages are a relevance-ranked
   sample of the corpus, so a total derived from them is wrong in a way that

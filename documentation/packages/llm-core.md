@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-14T00:00:00Z
+timestamp: 2026-08-21T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -19,6 +19,11 @@ lives in the [ai package](/packages/ai.md).
   `LLMResponse`, `StreamChunk`, `Usage`, `Role` (StrEnum). `LLMResponse` and
   `StreamChunk` each carry `usage`, `model` and `provider`; `Usage` fields are
   `None` when the provider reported nothing, which is not the same as zero.
+  `ToolDefinition.summary` is an optional one-line alternative to `description`,
+  for a prompt's own tool index rather than the payload sent to a provider —
+  **it is never serialized to a provider**, only `name`, `description` and
+  `parameters` are; a caller reading it falls back to `description` when it is
+  unset. See [`ai.prompts.render_tool_index`](/packages/ai.md).
 - **`_exceptions.py`** — `LLMError` base, `ProviderError`, `MissingCredentialError` (a
   provider constructed without the API key or base URL it needs), `LLMDisabledError`
   (something called a provider deliberately configured as absent — the mirror image of
@@ -84,26 +89,61 @@ lives in the [ai package](/packages/ai.md).
   [`llm_config.yaml`](/reference/llm-config.md) or `LLM_PROVIDER=none`; what each
   pipeline step then does is tabulated there.
 - **`_service.py`** — the higher-level API: `generate()`, `generate_structured()`,
-  `generate_stream()`, `tool_loop()` with optional callbacks. All four emit one trace
-  record per billed provider round-trip. Note the asymmetry that shapes every agent
-  built on this: **`generate_stream` takes no `tools`**, so there is no streaming
-  tool-call path — an agent that streams gathers with `tool_loop` and then makes one
-  streaming call (see [the conversational agent](/retrieval/chat-agent.md)).
+  `generate_stream()`, `tool_loop()`. All four emit one trace record per billed
+  provider round-trip. Note the asymmetry that shapes every agent built on this:
+  **`generate_stream` takes no `tools`**, so there is no streaming tool-call path — an
+  agent that streams gathers with `tool_loop` and then makes one streaming call (see
+  [the conversational agent](/retrieval/chat-agent.md)).
 
-  `tool_loop` takes an optional `terminal_tools: set[str]`. Naming a tool there means
-  the loop executes it and returns rather than looping again. Without it a run ends
-  only when the model happens to stop calling tools, which makes termination incidental
-  and the final assistant message throwaway prose; with it the ending is deliberate and
-  the *arguments* of the terminal call are the result. `ToolLoopResult.message` is then
-  the assistant message carrying that call. Any later call in the same turn is left
-  unexecuted, so the returned `history` can end on an assistant message with an
-  unanswered tool call and is not safe to resume a provider round-trip with.
+  `tool_loop` is an async generator: it yields `ToolCallStarted(call, history)` before
+  each executor runs, `ToolCallCompleted(call, result, history)` after, and
+  `LoopFinished(result: ToolLoopResult)` as its last event. `run_tool_loop()` drains it
+  and returns only `ToolLoopResult`, for a caller with no progress to report (the SQL
+  agent's `run_sql_agent` is one).
 
-  `on_tool_call` / `on_tool_result` are awaited inside the loop, so a caller that needs
-  to *yield* per step — an SSE generator, say — runs `tool_loop` as a task and has the
-  callbacks push to a queue it drains. `generate_structured[T: BaseModel]` is generic
-  in its `response_model`, so callers get the model they asked for and need no cast,
-  `assert isinstance`, or `type: ignore` to narrow it.
+  `tool_loop` takes an optional `is_terminal: TerminalPredicate` — a
+  `Callable[[ToolCall, Any], bool]` consulted after the executor returns, on both the
+  call *and* its result. Returning `True` ends the run rather than looping again;
+  without it a run ends only when the model happens to stop calling tools, which makes
+  termination incidental. Being handed the result matters: a terminal tool that
+  *declined* the call — refused for a missing precondition, say — has ended nothing, and
+  the predicate says so by returning `False`, so the loop continues and the model gets a
+  chance to repair the call (see [the conversational agent](/retrieval/chat-agent.md)'s
+  `answer` tool). When the predicate does end the run, `ToolLoopResult.message` is the
+  assistant message carrying the terminal call's arguments — and, now that the
+  conversational agent merges that message's *text* into its evidence notes, the prose
+  the model writes alongside a terminal call is no longer throwaway; it is read. Any
+  later call in the same turn is left unexecuted, so the returned `history` can end on
+  an assistant message with an unanswered tool call and is not safe to resume a
+  provider round-trip with.
+
+  Yielding rather than invoking callbacks is what lets a caller that is itself a
+  generator — an SSE endpoint, say — forward each step as it happens by running
+  `async for event in tool_loop(...)` directly, instead of running the loop as a task
+  and draining a queue that callbacks push to. Nothing is yielded from inside a
+  `trace_context` block: an async generator shares its consumer's context, so a context
+  variable set across a `yield` would leak into whatever drives the loop.
+  `generate_structured[T: BaseModel]` is generic in its `response_model`, so callers get
+  the model they asked for and need no cast, `assert isinstance`, or `type: ignore` to
+  narrow it.
+
+  **A call whose arguments do not fit the executor is refused, not raised.** Before
+  invoking an executor, `tool_loop` calls `inspect.signature(executor).bind(**tc.arguments)`;
+  a `TypeError` (an argument name the executor does not have, or a required one missing)
+  comes back to the model as the tool result `{"error": "<tool>: <reason>. Valid
+  arguments: a, b.", "refused": True}` instead of propagating. The valid names are
+  spelled out because `bind` reports only the first thing wrong — given both a wrong
+  name and a missing one it names only the missing one, leaving the model no way to
+  learn which of its arguments was rejected. This is the **one** tool result `tool_loop`
+  authors itself; everywhere else it only serializes and forwards what an executor
+  returned, never inspecting it. Before this, a wrong argument name was the one kind of bad tool call the loop
+  could not repair from — executors are called by keyword, so it raised `TypeError` →
+  `ToolExecutionError` and ended the run, where every other bad call (an ungrounded
+  filter, an unknown handle, a spent budget) already came back as a refusal the next
+  iteration could fix. **An exception raised from *inside* an executor is still a
+  `ToolExecutionError`** — that is a defect, not a bad call, and `bind` is used rather
+  than a blanket `except TypeError` around the call precisely to keep the two from being
+  confused.
 
 Both providers map the token usage the SDK reports onto `Usage`, and record the model
 the API says it **served** rather than the one configured — hosts resolve aliases to

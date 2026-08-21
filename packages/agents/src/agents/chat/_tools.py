@@ -384,6 +384,19 @@ async def _answer(
     document_ids: list[str] | None = None,
     notes: str = "",
 ) -> dict[str, Any]:
+    if not notes.strip():
+        # Refused before the selection is written, so the run has not ended and
+        # the model can call again — the loop treats a declined terminal call as
+        # no ending at all. Without the notes the writing step gets the passages
+        # and no account of why they were chosen.
+        return {
+            "error": (
+                "answer needs notes: which passage carries what, what to be "
+                "careful of, and what the evidence does not support."
+            ),
+            "refused": True,
+        }
+
     requested_chunks = chunk_ids or []
     known = [handle for handle in requested_chunks if handle in state.chunks]
     unknown = [handle for handle in requested_chunks if handle not in state.chunks]
@@ -413,6 +426,10 @@ async def _reply_from_context(state: ChatState, *, notes: str = "") -> dict[str,
 _TOOL_DEFINITIONS = [
     ToolDefinition(
         name=ChatTool.LIST_VOCABULARY,
+        summary=(
+            "the category, outcome, keyword and concept values that occur in the "
+            "corpus, with a count for each"
+        ),
         description=(
             "Lists the category, outcome, keyword and concept values that "
             "actually occur in the corpus, with a count for each. Call this "
@@ -435,6 +452,9 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.SEARCH_DECISIONS,
+        summary=(
+            "hybrid semantic and lexical search, returning passages grouped by decision"
+        ),
         description=(
             "Searches the decisions semantically and lexically at once and "
             "returns the matching passages grouped by decision. Each passage "
@@ -483,6 +503,10 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.READ_DECISION,
+        summary=(
+            "hands one whole decision to a reader and returns what it found for "
+            "your question"
+        ),
         description=(
             "Hands one whole decision to a reader together with your question, "
             "and returns what it found. Use it when the passages leave the "
@@ -512,6 +536,10 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.INSPECT_DECISION,
+        summary=(
+            "one decision's keywords, concepts, regulations, roles, parishes and "
+            "citations, both directions"
+        ),
         description=(
             "One decision's keywords, legal concepts, regulations, roles, "
             "parishes and citation graph in both directions. Metadata only — "
@@ -530,6 +558,7 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.QUERY_CORPUS,
+        summary=("counts, sums and groupings over the whole corpus, answered with SQL"),
         description=(
             "Answers counting, grouping and aggregation questions with SQL over "
             "the whole corpus. Use it for any 'how many', 'which year' or 'most "
@@ -549,6 +578,7 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.ANSWER,
+        summary=("ends your turn on the evidence you selected"),
         description=(
             "Ends your turn. Name the passages that carry the answer and any "
             "decisions you read in full, and leave short notes for the writing "
@@ -579,11 +609,12 @@ _TOOL_DEFINITIONS = [
                     ),
                 },
             },
-            "required": ["chunk_ids"],
+            "required": ["chunk_ids", "notes"],
         },
     ),
     ToolDefinition(
         name=ChatTool.REPLY_FROM_CONTEXT,
+        summary=("ends your turn on the conversation alone"),
         description=(
             "Ends your turn on the conversation alone, without any evidence. "
             "For a greeting, a thank-you, or a question about what you just "

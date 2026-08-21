@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -7,7 +8,16 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from llm_core._exceptions import MaxIterationsError, ProviderError, ToolExecutionError
-from llm_core._service import generate, generate_stream, generate_structured, tool_loop
+from llm_core._service import (
+    LoopFinished,
+    ToolCallCompleted,
+    ToolCallStarted,
+    generate,
+    generate_stream,
+    generate_structured,
+    run_tool_loop,
+    tool_loop,
+)
 from llm_core._tracing import LLMCallRecord, LLMOperation, set_trace_recorder
 from llm_core._types import (
     LLMResponse,
@@ -105,7 +115,7 @@ async def test_tool_loop_single_iteration() -> None:
     tools = [ToolDefinition(name="search", description="Search", parameters={})]
     messages = [Message(role=Role.user, content="Search for test")]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         messages, tools, {"search": executor}, provider=mock_provider
     )
 
@@ -135,7 +145,7 @@ async def test_tool_loop_multi_iteration() -> None:
     ]
     messages = [Message(role=Role.user, content="Go")]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         messages, tools, {"step1": noop, "step2": noop}, provider=mock_provider
     )
 
@@ -169,12 +179,12 @@ async def test_tool_loop_terminal_tool_ends_the_run() -> None:
         ToolDefinition(name="answer", description="Finish", parameters={}),
     ]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         [Message(role=Role.user, content="Go")],
         tools,
         {"search": search, "answer": answer},
         provider=mock_provider,
-        terminal_tools={"answer"},
+        is_terminal=lambda call, _result: call.name == "answer",
     )
 
     assert mock_provider.generate.await_count == 2
@@ -200,19 +210,19 @@ async def test_tool_loop_terminal_tool_executes_before_returning() -> None:
 
     tools = [ToolDefinition(name="answer", description="Finish", parameters={})]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         [Message(role=Role.user, content="Go")],
         tools,
         {"answer": answer},
         provider=mock_provider,
-        terminal_tools={"answer"},
+        is_terminal=lambda call, _result: call.name == "answer",
     )
 
     assert recorded == [[7]]
     assert result.iterations == 1
 
 
-async def test_tool_loop_without_terminal_tools_is_unchanged() -> None:
+async def test_tool_loop_without_a_terminal_predicate_is_unchanged() -> None:
     tc = ToolCall(id="tc-1", name="answer", arguments={})
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(
@@ -224,7 +234,7 @@ async def test_tool_loop_without_terminal_tools_is_unchanged() -> None:
 
     tools = [ToolDefinition(name="answer", description="Finish", parameters={})]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         [Message(role=Role.user, content="Go")],
         tools,
         {"answer": answer},
@@ -248,7 +258,7 @@ async def test_tool_loop_max_iterations_raises() -> None:
     tools = [ToolDefinition(name="loop", description="Loop", parameters={})]
 
     with pytest.raises(MaxIterationsError):
-        await tool_loop(
+        await run_tool_loop(
             [Message(role=Role.user, content="Go")],
             tools,
             {"loop": executor},
@@ -269,7 +279,7 @@ async def test_tool_loop_unknown_tool_raises_tool_execution_error() -> None:
     tools = [ToolDefinition(name="missing_tool", description="Missing", parameters={})]
 
     with pytest.raises(ToolExecutionError, match="missing_tool"):
-        await tool_loop(
+        await run_tool_loop(
             [Message(role=Role.user, content="Go")],
             tools,
             {},
@@ -290,7 +300,7 @@ async def test_tool_loop_executor_error_raises_tool_execution_error() -> None:
     tools = [ToolDefinition(name="bad_tool", description="Bad", parameters={})]
 
     with pytest.raises(ToolExecutionError) as exc_info:
-        await tool_loop(
+        await run_tool_loop(
             [Message(role=Role.user, content="Go")],
             tools,
             {"bad_tool": failing_executor},
@@ -301,39 +311,236 @@ async def test_tool_loop_executor_error_raises_tool_execution_error() -> None:
     assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
-async def test_tool_loop_callbacks_invoked() -> None:
-    tc = ToolCall(id="tc-1", name="search", arguments={"q": "test"})
-    first_response = _make_response("", tool_calls=(tc,))
-    final_response = _make_response("Done")
+async def test_tool_loop_unexpected_argument_is_refused_not_raised() -> None:
+    """A wrong argument name costs an iteration, not the run.
 
+    Executors are called by keyword, so this used to be a `TypeError` and hence
+    a `ToolExecutionError` — the one bad call the loop could not repair from,
+    while a bad *value* has always come back as a refusal the next iteration
+    fixes. A prompt that names an argument the schema does not have is exactly
+    how this arises.
+    """
+    bad = ToolCall(id="tc-1", name="search", arguments={"filter": "x"})
+    good = ToolCall(id="tc-2", name="search", arguments={"q": "x"})
     mock_provider = AsyncMock()
-    mock_provider.generate = AsyncMock(side_effect=[first_response, final_response])
+    mock_provider.generate = AsyncMock(
+        side_effect=[
+            _make_response("", tool_calls=(bad,)),
+            _make_response("", tool_calls=(good,)),
+            _make_response("Done"),
+        ]
+    )
 
-    on_tool_call = AsyncMock()
-    on_tool_result = AsyncMock()
+    calls: list[str] = []
+
+    async def executor(q: str) -> str:
+        calls.append(q)
+        return "found it"
+
+    tools = [ToolDefinition(name="search", description="Search", parameters={})]
+
+    result = await run_tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"search": executor},
+        provider=mock_provider,
+    )
+
+    # The executor never ran for the malformed call, and the run still finished.
+    assert calls == ["x"]
+    assert result.message.content == "Done"
+
+    refusal = json.loads(
+        next(m.content for m in result.history if m.tool_call_id == "tc-1")
+    )
+    assert refusal["refused"] is True
+    # `bind` reports the missing `q` before the invented `filter`, so the valid
+    # names are spelled out — otherwise the model cannot tell what was rejected.
+    assert "Valid arguments: q." in refusal["error"]
+
+
+async def test_tool_loop_missing_required_argument_is_refused_too() -> None:
+    """The same seam from the other side: an argument left out, not invented."""
+    tc = ToolCall(id="tc-1", name="search", arguments={})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[_make_response("", tool_calls=(tc,)), _make_response("Done")]
+    )
+
+    async def executor(q: str) -> str:
+        raise AssertionError("must not run")
+
+    tools = [ToolDefinition(name="search", description="Search", parameters={})]
+
+    result = await run_tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"search": executor},
+        provider=mock_provider,
+    )
+
+    assert result.message.content == "Done"
+
+
+def test_tool_definition_summary_is_optional() -> None:
+    """Prompt-only, and never serialized to a provider."""
+    assert ToolDefinition(name="t", description="D", parameters={}).summary is None
+    assert (
+        ToolDefinition(name="t", description="D", parameters={}, summary="s").summary
+        == "s"
+    )
+
+
+async def test_tool_loop_yields_a_call_then_its_result() -> None:
+    tc = ToolCall(id="tc-1", name="search", arguments={"q": "test"})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[_make_response("", tool_calls=(tc,)), _make_response("Done")]
+    )
 
     async def executor(q: str) -> str:
         return "found it"
 
     tools = [ToolDefinition(name="search", description="Search", parameters={})]
 
-    await tool_loop(
+    events = [
+        event
+        async for event in tool_loop(
+            [Message(role=Role.user, content="Search")],
+            tools,
+            {"search": executor},
+            provider=mock_provider,
+        )
+    ]
+
+    assert [type(event) for event in events] == [
+        ToolCallStarted,
+        ToolCallCompleted,
+        LoopFinished,
+    ]
+    started, completed, finished = events
+    assert isinstance(started, ToolCallStarted)
+    assert isinstance(completed, ToolCallCompleted)
+    assert isinstance(finished, LoopFinished)
+    assert started.call is tc
+    assert completed.call is tc
+    assert completed.result == "found it"
+    # The result is already in `history` by the time it is reported, so a
+    # consumer sees the same messages the model will see next.
+    assert completed.history[-1].tool_name == "search"
+    assert finished.result.message.content == "Done"
+
+
+async def test_tool_loop_finishes_with_what_the_wrapper_returns() -> None:
+    """The generator and the draining wrapper agree on the outcome."""
+    tc = ToolCall(id="tc-1", name="search", arguments={"q": "test"})
+    responses = [_make_response("", tool_calls=(tc,)), _make_response("Done")]
+
+    async def executor(q: str) -> str:
+        return "found it"
+
+    tools = [ToolDefinition(name="search", description="Search", parameters={})]
+
+    streamed = AsyncMock()
+    streamed.generate = AsyncMock(side_effect=list(responses))
+    events = [
+        event
+        async for event in tool_loop(
+            [Message(role=Role.user, content="Search")],
+            tools,
+            {"search": executor},
+            provider=streamed,
+        )
+    ]
+
+    drained = AsyncMock()
+    drained.generate = AsyncMock(side_effect=list(responses))
+    returned = await run_tool_loop(
         [Message(role=Role.user, content="Search")],
         tools,
         {"search": executor},
-        provider=mock_provider,
-        on_tool_call=on_tool_call,
-        on_tool_result=on_tool_result,
+        provider=drained,
     )
 
-    on_tool_call.assert_awaited_once()
-    call_args = on_tool_call.call_args
-    assert call_args[0][0] is tc
+    assert isinstance(events[-1], LoopFinished)
+    assert events[-1].result == returned
 
-    on_tool_result.assert_awaited_once()
-    result_args = on_tool_result.call_args
-    assert result_args[0][0] is tc
-    assert result_args[0][1] == "found it"
+
+async def test_tool_loop_terminal_tool_that_declined_does_not_end_the_run() -> None:
+    """A refusal is not an ending.
+
+    An agent whose terminal tool rejects the call — bad arguments, a budget
+    spent — has to be able to repair it, so the predicate is given the result
+    and the loop goes on when it says no.
+    """
+    tc_refused = ToolCall(id="tc-1", name="answer", arguments={})
+    tc_accepted = ToolCall(id="tc-2", name="answer", arguments={"notes": "here"})
+
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[
+            _make_response("", tool_calls=(tc_refused,)),
+            _make_response("", tool_calls=(tc_accepted,)),
+        ]
+    )
+
+    async def answer(notes: str = "") -> dict[str, Any]:
+        if not notes:
+            return {"error": "notes are required", "refused": True}
+        return {"ok": True}
+
+    tools = [ToolDefinition(name="answer", description="Finish", parameters={})]
+
+    result = await run_tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"answer": answer},
+        provider=mock_provider,
+        is_terminal=lambda call, res: call.name == "answer" and not res.get("refused"),
+    )
+
+    assert mock_provider.generate.await_count == 2
+    assert result.iterations == 2
+    assert result.message.tool_calls == (tc_accepted,)
+
+
+async def test_closing_a_partly_drained_tool_loop_runs_no_more_executors() -> None:
+    """A consumer that walks away stops the loop where it stood.
+
+    This is what a reader who reloaded mid-answer does to the SSE generator
+    above it, and the tools below hold a request-scoped database session.
+    """
+    tc_first = ToolCall(id="tc-1", name="step", arguments={})
+    tc_second = ToolCall(id="tc-2", name="step", arguments={})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[
+            _make_response("", tool_calls=(tc_first,)),
+            _make_response("", tool_calls=(tc_second,)),
+            _make_response("Done"),
+        ]
+    )
+
+    calls: list[str] = []
+
+    async def step() -> str:
+        calls.append("ran")
+        return "ok"
+
+    tools = [ToolDefinition(name="step", description="Step", parameters={})]
+
+    loop = tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"step": step},
+        provider=mock_provider,
+    )
+    assert isinstance(await anext(loop), ToolCallStarted)
+    assert isinstance(await anext(loop), ToolCallCompleted)
+    await loop.aclose()
+
+    assert calls == ["ran"]
+    assert mock_provider.generate.await_count == 1
 
 
 async def test_tool_loop_result_serialized_as_json() -> None:
@@ -350,7 +557,7 @@ async def test_tool_loop_result_serialized_as_json() -> None:
     tools = [ToolDefinition(name="get_data", description="Get data", parameters={})]
     messages = [Message(role=Role.user, content="Get")]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         messages, tools, {"get_data": executor}, provider=mock_provider
     )
 
@@ -470,7 +677,7 @@ class TestTracing:
             ]
         )
 
-        result = await tool_loop(
+        result = await run_tool_loop(
             [Message(role=Role.user, content="Hi")],
             [ToolDefinition(name="search", description="", parameters={})],
             {"search": AsyncMock(return_value="hit")},

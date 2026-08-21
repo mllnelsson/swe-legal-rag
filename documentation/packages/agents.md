@@ -4,7 +4,7 @@ title: agents Package
 description: The LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — the text-to-SQL agent behind POST /api/sql and the conversational agent behind POST /api/chat — their module layout, and the injected-toolset seam that keeps the dependency running api to agents.
 resource: packages/agents
 tags: [package, agents, sql, chat, tool-loop, llm]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-21T00:00:00Z
 ---
 
 # agents Package (`packages/agents/`)
@@ -39,12 +39,12 @@ tools arrive as an injected `ChatToolset`, and it calls `run_sql_agent` as one o
 | `sql/_guard.py` | `check_sql(sql, document=None)` — static checks on model-authored SQL before it reaches Postgres; `find_predicate_columns(sql, document=None)` — which free-text columns a query's predicate touches, as opposed to merely projecting or grouping by |
 | `sql/_sandbox.py` | `execute_readonly()` — runs a statement inside `SET TRANSACTION READ ONLY` plus a `SET LOCAL statement_timeout`, always rolled back regardless of outcome |
 | `sql/_tools.py` | The three tools the loop is given (`list_column_values`, `run_sql`, `note_assumption`) and `GroundingState`, the mutable per-run record of what the agent has grounded, assumed, and attempted. `build_sql_tools(session, settings, document=None)` |
-| `sql/_agent.py` | `run_sql_agent(..., document=None)` — wires the prompt, the tools, and `llm_core.tool_loop` together, and assembles the result from the trail `GroundingState` left behind |
+| `sql/_agent.py` | `run_sql_agent(..., document=None)` — wires the prompt, the tools, and `llm_core.run_tool_loop` together, and assembles the result from the trail `GroundingState` left behind |
 | `chat/_dtos.py` | The chat wire contract: `ChatAgentRequest`, the `AgentEvent` union, `SourceReference`, the `ChatTool` / `ProgressLabel` / `ToolStatus` enums, and the shapes a toolset returns (`SearchOutcome`, `Vocabulary`, `DecisionText`, `DecisionProfile`) |
 | `chat/_protocols.py` | The `ChatToolset` Protocol — five async capabilities in the agent's own shapes. See [the seam](#the-toolset-seam) below |
 | `chat/_tools.py` | `build_chat_tools(toolset, settings, reader_provider=None)` → the six tool definitions, their executors and `ChatState`; plus `label_for_call()` and `FREE_TEXT_FILTER_FIELDS`, the grounding precondition's column list |
 | `chat/_reader.py` | `read_decision_text()` — the one-shot sub-agent a whole decision goes to, and `format_decision_text()`, which marks each appendix boundary before it does |
-| `chat/_agent.py` | `run_chat_agent(request, toolset, ...)` — runs the loop as a task pushing to a queue the generator drains, then streams one synthesis call over the evidence the agent selected |
+| `chat/_agent.py` | `run_chat_agent(request, toolset, ...)` — forwards `llm_core.tool_loop`'s events with `async for` as they arrive, then streams one synthesis call over the evidence the agent selected |
 
 Both agents open their correlation scope the same way, and neither mints an
 `interaction_id` outright: `ai.interaction_scope()` **inherits** one already in the

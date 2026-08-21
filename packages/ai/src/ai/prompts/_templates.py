@@ -258,11 +258,7 @@ _TEXT_TO_SQL_SYSTEM = """\
 Du översätter svenska frågor om Överklagandenämndens beslut till PostgreSQL-frågor.
 Du ska ta fram frågan och dess resultat - aldrig tolka eller sammanfatta svaret.
 
-Verktyg:
-- list_column_values(table, column, contains) - visar vilka värden som faktiskt
-  finns i en kolumn, med antal per värde
-- run_sql(sql) - kör en läsande fråga och returnerar raderna
-- note_assumption(assumption) - registrerar ett tolkningsval du gjort
+Dina verktyg listas tillsammans med frågan, med sina argument.
 
 Arbetsgång:
 1. Läs schemat. Avgör vilka kolumner frågan handlar om.
@@ -291,11 +287,15 @@ Regler:
 Exemplen efter schemat visar formen. Värdena i dem är inte nödvändigtvis
 aktuella - läs alltid kolumnens egna värden innan du villkorar på den."""
 
-# The schema and the examples both arrive here rather than in the system prompt:
-# `render()` formats only the user template, so a placeholder above would reach
-# the model verbatim - and this way the exact schema the model saw is recorded in
-# every trace record.
+# The tool index, the schema and the examples all arrive here rather than in the
+# system prompt: `render()` formats only the user template, so a placeholder
+# above would reach the model verbatim - and this way the exact schema and tools
+# the model saw are recorded in every trace record.
 _TEXT_TO_SQL_USER = """\
+Verktyg:
+{tools}
+(* markerar ett obligatoriskt argument.)
+
 Databasschema:
 {schema}
 
@@ -321,18 +321,7 @@ appeals board of the Church of Sweden. You gather evidence with tools; you do
 not write the answer the user reads. A separate step turns the evidence you
 select into Swedish prose.
 
-Tools:
-- list_vocabulary(contains) - the category, outcome and keyword values that
-  actually occur in the corpus, with a count for each
-- search_decisions(query, queries, filter, include_appendices, limit) - hybrid
-  semantic and lexical search over the decisions
-- read_decision(document_id, question) - hands one whole decision to a reader
-  and returns what it found for the question you asked
-- inspect_decision(document_id) - one decision's keywords, legal concepts and
-  citation graph, both directions
-- query_corpus(question) - counts, sums and groupings, answered with SQL
-- answer(chunk_ids, document_ids, notes) - ends your turn on the evidence
-- reply_from_context(notes) - ends your turn on the conversation alone
+Your tools are listed with the question, each with its arguments.
 
 How to work:
 1. Not every message is a research question. A greeting, a thank-you, or a
@@ -373,10 +362,19 @@ notes is guidance for the writing step, not the answer: which passages carry
 what, what to be careful of, what the evidence does not support. A few sentences,
 in Swedish. Never put a fact there that is not in the evidence you selected."""
 
+# The tool index arrives here rather than in the system prompt, for the same
+# reason TEXT_TO_SQL's schema does: `render()` formats only the user template.
+# It is generated from the tool definitions themselves - a hand-kept list drifts
+# from the schemas it describes, and this one had, naming an argument
+# `search_decisions` does not have.
 _CHAT_ORCHESTRATION_USER = """\
 Question: {question}
 
 Today's date: {today}
+
+Tools:
+{tools}
+(* marks a required argument.)
 
 Conversation history:
 {conversation_history}"""

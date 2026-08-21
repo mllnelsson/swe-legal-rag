@@ -1,31 +1,33 @@
 """The conversational agent: a question in, a stream of events out.
 
 Two phases, and the split is deliberate. The tool loop gathers evidence and does
-not stream — `LLMProvider.generate_stream` takes no tools, so there is no
-streaming tool-call path to use. Then one streaming call turns the evidence the
-agent selected into Swedish prose.
+not stream — `LLMProvider.generate_stream` takes no tools, so this project's
+provider protocol offers no streaming tool-call path, which is a limit of
+`llm_core` rather than of the providers behind it. Then one streaming call turns
+the evidence the agent selected into Swedish prose, from a prompt holding only
+what was selected. That clean context is what makes the writing rules
+enforceable: synthesis cannot miscount search hits it was never shown.
 
-Carrying the evidence in a single synthesis prompt rather than in the loop is
-what keeps it affordable: a passage placed in the loop is re-sent on every later
-iteration, while one placed here is sent once.
+A whole decision never enters the loop either. `read_decision` hands it to a
+reader sub-agent and only the extract comes back, because anything placed in the
+loop is re-sent on every later iteration while the synthesis prompt is sent once.
 
 The loop has two ways to end, because a conversation has two kinds of message in
 it. `answer` ends a turn on evidence and hands it to synthesis;
 `reply_from_context` ends a turn that needed no evidence — a greeting, a
 thank-you, "förklara det enklare" — and hands it to a prompt that may build only
-on what has already been said. Both stream, so a caller has one shape to
-forward.
+on what has already been said. Both stream, so a caller has one shape to forward.
 
-The loop runs as a task pushing to a queue this generator drains, because
-`tool_loop`'s progress callbacks are awaited inside it and so cannot yield.
+Neither ends the turn when the tool *declined* the call, which is what keeps a
+refused `answer` from stranding the evidence already gathered — see
+`_is_terminal`.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -37,12 +39,14 @@ from ai.dtos import (
     SynthesizeRequest,
     TabularEvidence,
 )
-from ai.prompts import CHAT_ORCHESTRATION, render
+from ai.prompts import CHAT_ORCHESTRATION, render, render_tool_index
 from llm_core import (
     LLMProvider,
+    LoopFinished,
     MaxIterationsError,
-    Message,
     ToolCall,
+    ToolCallCompleted,
+    ToolCallStarted,
     ToolExecutionError,
     tool_loop,
 )
@@ -73,6 +77,9 @@ __all__ = ["run_chat_agent"]
 
 _SOURCE = "agents.chat"
 
+# The calls that end a turn, subject to the tool having accepted them.
+_TERMINAL_TOOLS = frozenset({ChatTool.ANSWER, ChatTool.REPLY_FROM_CONTEXT})
+
 # What the client is told when the run fails. Deliberately generic: the stream
 # has already started, so this reaches a user, and provider errors are not for
 # them to read.
@@ -81,6 +88,19 @@ _NO_EVIDENCE_MESSAGE = (
     "Jag hittade inget i besluten som besvarar frågan. Pröva att formulera om "
     "den eller att fråga om ett annat ämne."
 )
+
+
+def _is_terminal(call: ToolCall, result: Any) -> bool:
+    """Whether a finished call ends the turn.
+
+    A terminal tool that declined has ended nothing. `answer` refuses a call
+    carrying no notes, and the loop has to go on so the model can supply them —
+    stopping there would leave `state.selection` unset and strand the evidence
+    already gathered behind the no-evidence message.
+    """
+    if call.name not in _TERMINAL_TOOLS:
+        return False
+    return not (isinstance(result, dict) and result.get("refused"))
 
 
 def _detail_for_call(tool: ChatTool, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -145,6 +165,28 @@ def _label_for_result(
     return label_for_call(tool, arguments)
 
 
+def _tool_call_event(call: ToolCall) -> ToolCallEvent:
+    tool = ChatTool(call.name)
+    return ToolCallEvent(
+        id=call.id,
+        tool=tool,
+        label=label_for_call(tool, call.arguments),
+        detail=_detail_for_call(tool, call.arguments),
+    )
+
+
+def _tool_result_event(call: ToolCall, result: Any) -> ToolResultEvent:
+    tool = ChatTool(call.name)
+    status = _status_for_result(result)
+    return ToolResultEvent(
+        id=call.id,
+        tool=tool,
+        label=_label_for_result(tool, call.arguments, status),
+        status=status,
+        detail=_detail_for_result(tool, result),
+    )
+
+
 def _sql_event(result: dict[str, Any], state: ChatState) -> SqlEvent:
     """The query behind a count, with the whole attempt trail.
 
@@ -163,6 +205,18 @@ def _sql_event(result: dict[str, Any], state: ChatState) -> SqlEvent:
         assumptions=result.get("assumptions") or [],
         attempts=list(attempts),
     )
+
+
+def _merged_notes(base: str, closing: str) -> str:
+    """The agent's notes, plus whatever it said on its way out.
+
+    A model that writes its reasoning as message text and leaves `notes` thin
+    has still said the useful thing; dropping it because it arrived in the wrong
+    field would lose the handoff the writing step depends on. Both prompts treat
+    notes as guidance and never as a source, so the looser text inherits the
+    right rule.
+    """
+    return "\n\n".join(part for part in (base.strip(), closing.strip()) if part)
 
 
 def _selected_chunk_contexts(state: ChatState) -> list[ChunkContext]:
@@ -245,76 +299,6 @@ def _has_evidence(state: ChatState) -> bool:
     )
 
 
-async def _drive_loop(
-    request: ChatAgentRequest,
-    tools: list[Any],
-    executors: dict[str, Any],
-    state: ChatState,
-    settings: ChatAgentSettings,
-    provider: LLMProvider | None,
-    queue: asyncio.Queue[AgentEvent | None],
-) -> None:
-    """Run the tool loop, pushing progress events as it goes.
-
-    Always closes the queue with a sentinel, including on failure — the drain
-    loop terminates on it, and the exception is re-raised to the caller when it
-    awaits this task.
-    """
-
-    async def on_tool_call(call: ToolCall, _history: list[Message]) -> None:
-        tool = ChatTool(call.name)
-        await queue.put(
-            ToolCallEvent(
-                id=call.id,
-                tool=tool,
-                label=label_for_call(tool, call.arguments),
-                detail=_detail_for_call(tool, call.arguments),
-            )
-        )
-
-    async def on_tool_result(
-        call: ToolCall, result: Any, _history: list[Message]
-    ) -> None:
-        tool = ChatTool(call.name)
-        if tool is ChatTool.QUERY_CORPUS and isinstance(result, dict):
-            # Before the result event, so a client that renders the query can
-            # do so while the label is still on screen.
-            await queue.put(_sql_event(result, state))
-        status = _status_for_result(result)
-        await queue.put(
-            ToolResultEvent(
-                id=call.id,
-                tool=tool,
-                label=_label_for_result(tool, call.arguments, status),
-                status=status,
-                detail=_detail_for_result(tool, result),
-            )
-        )
-
-    messages = render(
-        CHAT_ORCHESTRATION,
-        {
-            "question": request.question,
-            "today": datetime.now(UTC).date().isoformat(),
-            "conversation_history": _format_history(request.history),
-        },
-    )
-
-    try:
-        await tool_loop(
-            messages,
-            tools,
-            executors,
-            provider=provider,
-            max_iterations=settings.chat_agent_max_iterations,
-            terminal_tools={ChatTool.ANSWER, ChatTool.REPLY_FROM_CONTEXT},
-            on_tool_call=on_tool_call,
-            on_tool_result=on_tool_result,
-        )
-    finally:
-        await queue.put(None)
-
-
 def _format_history(history: list[dict]) -> str:
     if not history:
         return "(none)"
@@ -330,12 +314,17 @@ async def run_chat_agent(
     llm_provider: LLMProvider | None = None,
     reader_provider: LLMProvider | None = None,
     settings: ChatAgentSettings | None = None,
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncGenerator[AgentEvent, None]:
     """Answer `request.question` from the corpus, streaming progress then prose.
 
     Never raises for a question it cannot answer: a failure ends the stream with
     an `ErrorEvent`, so a caller has one shape to handle rather than two. An
     `ErrorEvent` is terminal — no `DoneEvent` follows it.
+
+    Closing this generator early — a reader who reloaded mid-answer — closes the
+    tool loop with it, at whichever step it had reached. Nothing outlives the
+    stream, so nothing is still holding the request-scoped database session when
+    the request teardown commits it.
     """
     settings = settings or get_chat_agent_settings()
     tools, executors, state = build_chat_tools(
@@ -354,15 +343,44 @@ async def run_chat_agent(
     ):
         logger.info("Chat agent interaction %s", interaction_id)
 
-        queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
-        loop_task = asyncio.create_task(
-            _drive_loop(request, tools, executors, state, settings, llm_provider, queue)
+        messages = render(
+            CHAT_ORCHESTRATION,
+            {
+                "question": request.question,
+                "today": datetime.now(UTC).date().isoformat(),
+                # Generated from the definitions the loop is about to be given,
+                # so the prompt cannot name an argument the executors lack.
+                "tools": render_tool_index(tools),
+                "conversation_history": _format_history(request.history),
+            },
         )
 
+        # Whatever the model said alongside its terminal call, which is guidance
+        # for the writing step exactly as `notes` is.
+        closing_text = ""
+
         try:
-            while (event := await queue.get()) is not None:
-                yield event
-            await loop_task
+            async for event in tool_loop(
+                messages,
+                tools,
+                executors,
+                provider=llm_provider,
+                max_iterations=settings.chat_agent_max_iterations,
+                is_terminal=_is_terminal,
+            ):
+                match event:
+                    case ToolCallStarted(call=call):
+                        yield _tool_call_event(call)
+                    case ToolCallCompleted(call=call, result=result):
+                        tool = ChatTool(call.name)
+                        if tool is ChatTool.QUERY_CORPUS and isinstance(result, dict):
+                            # Before the result event, so a client that renders
+                            # the query can do so while the label is still on
+                            # screen.
+                            yield _sql_event(result, state)
+                        yield _tool_result_event(call, result)
+                    case LoopFinished(result=loop_result):
+                        closing_text = loop_result.message.content
         except MaxIterationsError:
             logger.warning(
                 "Chat agent %s exhausted its iteration budget", interaction_id
@@ -383,22 +401,6 @@ async def run_chat_agent(
             logger.exception("Chat agent %s failed", interaction_id)
             yield ErrorEvent(message=_FAILURE_MESSAGE)
             return
-        finally:
-            loop_task.cancel()
-            # Cancellation is a request, not a fact: until the task has been
-            # given back control it is still sitting inside whatever it was
-            # awaiting. The tools it drives hold the request-scoped database
-            # session, and the request teardown commits that same session as
-            # soon as this generator is done — so returning before the task has
-            # actually stopped puts two tasks on one connection, which asyncpg
-            # reports as "another operation is in progress" from a traceback
-            # after the response has already started. That is what a reader who
-            # reloaded mid-answer was hitting.
-            #
-            # `return_exceptions` because the task's own CancelledError is the
-            # expected outcome here, not something to re-raise over whatever
-            # brought us into this block.
-            await asyncio.gather(loop_task, return_exceptions=True)
 
         if state.direct_reply is not None:
             # The turn gathered nothing because nothing was needed — a greeting,
@@ -408,7 +410,7 @@ async def run_chat_agent(
             reply = DirectReplyRequest(
                 question=request.question,
                 conversation_history=request.history,
-                notes=state.direct_reply.notes,
+                notes=_merged_notes(state.direct_reply.notes, closing_text),
             )
             try:
                 async for token in ai.reply_from_context(reply, provider=llm_provider):
@@ -438,7 +440,9 @@ async def run_chat_agent(
             conversation_history=request.history,
             readings=list(state.readings),
             tabular=_tabular_evidence(state),
-            notes=state.selection.notes if state.selection else "",
+            notes=_merged_notes(
+                state.selection.notes if state.selection else "", closing_text
+            ),
         )
 
         try:

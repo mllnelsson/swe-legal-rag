@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-20T00:00:00Z
+timestamp: 2026-08-21T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -28,7 +28,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers`, the checked-in default (`embedding.provider: local`) |
 | `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
 | `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step`, opening an `interaction_scope` around the message so its trace records land in a directory of their own; `close_llm_clients()` — the `StepTeardown` the four LLM-calling workers hand to the same call, releasing the loop-bound OpenAI-compatible client pool before their `asyncio.run()` loop closes (see [worker patterns](/pipeline/worker-patterns.md)) |
-| `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |
+| `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function + `render_tool_index()` |
 | `prompts/_templates.py` | The seven template constants |
 | `__init__.py` | Public API — service functions, embedding types, and DTOs |
 
@@ -47,17 +47,37 @@ cover every use case:
 | `QUERY_DECOMPOSITION` | JSON (`DecomposeResult` schema) | `{question}`, `{conversation_history}` |
 | `QUERY_EXPANSION` | JSON (`QueryExpansionResult` schema) | `{question}`, `{max_variants}` |
 | `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{readings}`, `{tabular}`, `{notes}`, `{conversation_history}` |
-| `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — **the one English prompt here** | `{question}`, `{today}`, `{conversation_history}` |
+| `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — **the one English prompt here** | `{question}`, `{today}`, `{tools}`, `{conversation_history}` |
 | `DECISION_READING` | Plain Swedish text | `{question}`, `{case_number}`, `{decision_text}` |
 | `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
 | `ENTITY_EXTRACTION` | JSON (`EntityResult` schema) | `{raw_text}`, `{case_number}` |
 | `DOCUMENT_SUMMARIZATION` | Plain Swedish text | `{raw_text}` |
-| `TEXT_TO_SQL` | Plain text (tool loop, no JSON schema) | `{question}`, `{schema}` |
+| `TEXT_TO_SQL` | Plain text (tool loop, no JSON schema) | `{question}`, `{tools}`, `{schema}`, `{examples}` |
 
-`QUERY_EXPANSION`'s cap on variant count and `TEXT_TO_SQL`'s schema block both live in the
-user template, not the system prompt, for the same reason: `render()` only formats the
-user template with `context`, so a `{max_variants}` or `{schema}` placeholder in the system
-prompt would reach the model verbatim instead of being substituted.
+A second free function, `render_tool_index(tools: list[ToolDefinition]) -> str`, renders
+the `{tools}` block both prompts above now carry: one entry per tool, a signature line
+(`name(arg*, arg)`, required arguments suffixed `*`, argument order following the
+schema's own `properties`) then an indented line of that tool's `summary` (or
+`description` if unset). It returns only the entries — the heading above the block and
+the legend explaining `*` belong to the calling template, which is what lets the Swedish
+`TEXT_TO_SQL` prompt and the English `CHAT_ORCHESTRATION` one share it. `CHAT_ORCHESTRATION`
+and `TEXT_TO_SQL` used to spell their tools out by hand in the system prompt instead; that
+list had drifted from the schemas it described — it named a `filter` argument
+`search_decisions` does not have (the real one is `document_filter`), omitted
+`read_decision`'s `include_appendices`, and did not mark `answer`'s `chunk_ids`/`notes` as
+required. The generated block cannot drift, because it is built from the same
+`ToolDefinition`s the loop executes against — though it tells the model nothing a
+provider was not already sending: every provider already receives each tool's name,
+description and full JSON schema natively on every iteration, and what the generated
+block replaces is a second, unexecutable description of the same tools.
+
+`QUERY_EXPANSION`'s cap on variant count, `TEXT_TO_SQL`'s schema block, and both prompts'
+`{tools}` block all live in the user template, not the system prompt, for the same
+reason: `render()` only formats the user template with `context`, so a `{max_variants}`,
+`{schema}` or `{tools}` placeholder in the system prompt would reach the model verbatim
+instead of being substituted. `render()` cannot simply be taught to format system prompts
+too — `QUERY_DECOMPOSITION` and `QUERY_EXPANSION`'s own system prompts embed literal JSON
+braces that `str.format_map` would raise on.
 
 `TEXT_TO_SQL` is rendered directly by [`agents.run_sql_agent`](/packages/agents.md) via
 `render()`, not through a function in `ai/services.py` — the agent owns its own tool loop

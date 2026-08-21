@@ -10,13 +10,17 @@ from llm_core._exceptions import (
 )
 from llm_core._protocol import LLMProvider
 from llm_core._service import (
-    ToolCallCallback,
+    LoopFinished,
+    TerminalPredicate,
+    ToolCallCompleted,
+    ToolCallStarted,
     ToolExecutor,
+    ToolLoopEvent,
     ToolLoopResult,
-    ToolResultCallback,
     generate,
     generate_stream,
     generate_structured,
+    run_tool_loop,
     tool_loop,
 )
 from llm_core._tracing import (
@@ -67,10 +71,15 @@ __all__ = [
     "generate_stream",
     "generate_structured",
     "tool_loop",
+    "run_tool_loop",
     "ToolLoopResult",
     "ToolExecutor",
-    "ToolCallCallback",
-    "ToolResultCallback",
+    "TerminalPredicate",
+    # The loop's progress events, for a caller that forwards them as they happen.
+    "ToolLoopEvent",
+    "ToolCallStarted",
+    "ToolCallCompleted",
+    "LoopFinished",
     # For callers that build their own OpenAI-compatible client — embeddings,
     # say — and must not outlive the loop its connection pool belongs to.
     "get_async_openai",
