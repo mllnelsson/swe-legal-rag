@@ -178,11 +178,22 @@ export function TurnSteps({ steps, streaming, writing = false }: TurnStepsProps)
         padding: "var(--space-6)",
         borderRadius: "var(--radius-lg)",
         background: "var(--surface-accent)",
-        borderTop: `${ACCENT_RULE} solid transparent`,
-        borderImage: "var(--gradient-ember) 1",
         boxShadow: "var(--shadow-xs)",
       }}
     >
+      {/* The ember gradient, which the design system allows only as a rule this
+          thin. Drawn as an element rather than a `border-image`, which would
+          ignore the card's own corner radius and square its top off. */}
+      <div
+        aria-hidden="true"
+        style={{
+          height: ACCENT_RULE,
+          borderRadius: "var(--radius-pill)",
+          background: "var(--gradient-ember)",
+          marginBottom: "var(--space-5)",
+        }}
+      />
+
       <div
         style={{
           display: "flex",
