@@ -2,25 +2,27 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import { AskBox } from "../../components/research/AskBox";
-import { Tabs } from "../../components/navigation/Tabs";
-import { Tag } from "../../components/display/Tag";
+import { Switch } from "../../components/forms/Switch";
 import { useFacets } from "../../api/queries";
 import { formatCount } from "../../lib/format";
 import { EMPTY_SEARCH, toSearchParams } from "./search-params";
+import { ASK_BOX_TRANSITION_NAME } from "../agent/ask-box-transition";
 
-/** How many of the nämnd's own Sökord to offer as a starting point. */
-const SUGGESTED_KEYWORDS = 8;
+/** How many of the nämnd's own Sökord to offer as a starting point.
+ *
+ *  Three, on one line, not the eight the page used to stack under the box. They
+ *  are a hint that the nämnd has a vocabulary of its own, not a browsing
+ *  surface — `/sokord` is that. */
+const SUGGESTED_KEYWORDS = 3;
+
+/** The house metadata separator. */
+const SEPARATOR = " · ";
 
 /** The two things the box can do with a question, and they are not the same
  *  promise. Search returns the nämnd's own text, ranked; the agent researches
  *  and writes prose. Which one runs is the reader's choice, made before they
  *  type — not something inferred from the wording. */
 type Mode = "search" | "agent";
-
-const MODES = [
-  { value: "search", label: "Sök" },
-  { value: "agent", label: "Agent" },
-];
 
 const PLACEHOLDER: Record<Mode, string> = {
   search: "Sök i Överklagandenämndens beslut",
@@ -30,12 +32,11 @@ const PLACEHOLDER: Record<Mode, string> = {
 const SUBMIT_LABEL: Record<Mode, string> = { search: "Sök", agent: "Fråga" };
 
 /* One line for each mode, in the same place, because the choice between them is
- * the only thing this page asks the reader to decide and the words "Sök" and
- * "Agent" do not settle it. A note on the agent alone left search unexplained —
- * and moved the box every time the mode changed. */
+ * the only thing this page asks the reader to decide and the word "Agentläge"
+ * does not settle it. It sits under the switch rather than under the box, so
+ * turning the switch does not move the box. */
 const MODE_NOTE: Record<Mode, string> = {
-  search:
-    "Söker i besluten och visar nämndens egna ord, med utdrag ur de beslut som matchar.",
+  search: "Visar nämndens egna ord, med utdrag ur de beslut som matchar.",
   agent:
     "Agenten söker, läser och skriver ett svar med hänvisningar. Det tar upp till en minut.",
 };
@@ -56,11 +57,16 @@ export function SearchHomePage() {
     navigate(`/sok?${toSearchParams({ ...EMPTY_SEARCH, query: text }).toString()}`);
   }
 
-  /** The question travels in the URL so the agent page can start on arrival; it
-   *  drops the param immediately, so a reload never re-asks. */
+  /** The question travels in router state, not in the URL, so the agent page can
+   *  start on arrival and a reload never re-asks.
+   *
+   *  `viewTransition` is what makes this read as the box moving rather than the
+   *  page being replaced: the ask box here and the composer there share a
+   *  `view-transition-name`, so the browser interpolates between them. Browsers
+   *  without the API swap instantly, which is the behaviour this replaces. */
   function askAgent(text: string) {
     if (text.trim() === "") return;
-    navigate(`/agent?${new URLSearchParams({ q: text }).toString()}`);
+    navigate("/agent", { state: { question: text }, viewTransition: true });
   }
 
   function searchKeyword(keyword: string) {
@@ -72,9 +78,14 @@ export function SearchHomePage() {
   return (
     <main
       style={{
-        minHeight: "calc(100vh - var(--section-gap))",
-        background: "var(--gradient-wash)",
+        minHeight: "100vh",
+        background: "var(--gradient-wash-soft)",
         display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        // Centred on the box, not on the whole column: the caption line below it
+        // is a footnote, and counting it into the centring would push the box
+        // above the middle of the screen.
         justifyContent: "center",
         padding: "var(--space-12) var(--gutter-page)",
       }}
@@ -85,33 +96,35 @@ export function SearchHomePage() {
           maxWidth: "var(--measure-prose)",
           display: "flex",
           flexDirection: "column",
+          alignItems: "center",
           gap: "var(--space-8)",
         }}
       >
+        {/* The wordmark is the page's heading. There is nothing to say above the
+            box that the box does not already ask. */}
         <h1
           style={{
+            margin: 0,
             fontFamily: "var(--font-display)",
             fontSize: "var(--text-display-size)",
             lineHeight: "var(--text-display-lh)",
             letterSpacing: "var(--text-display-ls)",
             fontWeight: "var(--text-display-weight)",
-            color: "var(--text-strong)",
-            margin: 0,
+            color: "var(--burgundy-600)",
           }}
         >
-          Vad vill du veta?
+          Svk Beslutsök
         </h1>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
-          <Tabs
-            tabs={MODES}
-            value={mode}
-            onChange={(value) => setMode(value as Mode)}
-            variant="pill"
-            label="Sökläge"
-            style={{ alignSelf: "flex-start" }}
-          />
-
+        <div
+          style={{
+            width: "100%",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "var(--space-5)",
+          }}
+        >
           <AskBox
             value={query}
             onChange={setQuery}
@@ -120,57 +133,53 @@ export function SearchHomePage() {
             autoFocus
             placeholder={PLACEHOLDER[mode]}
             submitLabel={SUBMIT_LABEL[mode]}
+            style={{ width: "100%", viewTransitionName: ASK_BOX_TRANSITION_NAME }}
           />
 
-          <p
-            style={{
-              margin: 0,
-              fontFamily: "var(--font-sans)",
-              fontSize: "var(--text-small-size)",
-              color: "var(--text-muted)",
-            }}
-          >
-            {MODE_NOTE[mode]}
-          </p>
+          <Switch
+            checked={mode === "agent"}
+            onChange={(on) => setMode(on ? "agent" : "search")}
+            label="Agentläge"
+            hint={MODE_NOTE[mode]}
+          />
         </div>
 
         {facets.data !== undefined && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: "var(--text-small-size)",
-                color: "var(--text-muted)",
-                fontFamily: "var(--font-sans)",
-              }}
-            >
-              {formatCount(facets.data.document_count)} beslut i samlingen
-            </p>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-              <span
-                style={{
-                  fontSize: "var(--text-overline-size)",
-                  letterSpacing: "var(--text-overline-ls)",
-                  textTransform: "uppercase",
-                  fontWeight: "var(--text-overline-weight)",
-                  color: "var(--text-faint)",
-                  fontFamily: "var(--font-sans)",
-                }}
-              >
-                Nämndens egna sökord
+          <p
+            style={{
+              margin: 0,
+              textAlign: "center",
+              fontFamily: "var(--font-sans)",
+              fontSize: "var(--text-caption-size)",
+              lineHeight: "var(--text-caption-lh)",
+              color: "var(--text-muted)",
+            }}
+          >
+            {`${formatCount(facets.data.document_count)} beslut i samlingen`}
+            {facets.data.keywords.slice(0, SUGGESTED_KEYWORDS).map((keyword) => (
+              <span key={keyword.value}>
+                {SEPARATOR}
+                <button
+                  type="button"
+                  onClick={() => searchKeyword(keyword.value)}
+                  style={keywordStyle}
+                >
+                  {keyword.value}
+                </button>
               </span>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-3)" }}>
-                {facets.data.keywords.slice(0, SUGGESTED_KEYWORDS).map((keyword) => (
-                  <Tag key={keyword.value} onClick={() => searchKeyword(keyword.value)}>
-                    {keyword.value}
-                  </Tag>
-                ))}
-              </div>
-            </div>
-          </div>
+            ))}
+          </p>
         )}
       </div>
     </main>
   );
 }
+
+const keywordStyle = {
+  padding: 0,
+  border: "none",
+  background: "none",
+  font: "inherit",
+  color: "var(--text-link)",
+  cursor: "pointer",
+} as const;

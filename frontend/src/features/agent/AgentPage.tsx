@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 
 import { Composer } from "./Composer";
 import { ConversationRail } from "./ConversationRail";
 import { TurnView } from "./TurnView";
 import { useAgentConversation } from "./useAgentConversation";
 
-/** The question handed over from the home page's Agent mode. */
-const QUESTION_PARAM = "q";
+/** The question handed over from the home page's agent toggle.
+ *
+ *  Router state rather than a query parameter: the question is not part of the
+ *  conversation's address, and putting it there meant arriving, asking, and then
+ *  rewriting the URL to drop it again so a reload would not re-ask. State is not
+ *  in the URL to begin with, so a reload cannot re-ask — the same promise, one
+ *  navigation instead of two. */
+type HandedOverQuestion = { question?: string };
 
 /** Agent mode.
  *
@@ -24,7 +30,7 @@ const QUESTION_PARAM = "q";
  *  soon as the server names it. */
 export function AgentPage() {
   const { sessionId: routeSessionId } = useParams();
-  const [params, setParams] = useSearchParams();
+  const { state } = useLocation();
   const navigate = useNavigate();
   // `replace`, not push: the fresh-conversation URL and this one are the same
   // conversation, so Back should leave the page rather than un-name it.
@@ -39,16 +45,16 @@ export function AgentPage() {
   const handedOver = useRef(false);
   const end = useRef<HTMLDivElement>(null);
 
-  const initial = params.get(QUESTION_PARAM);
+  const initial = (state as HandedOverQuestion | null)?.question;
 
+  // Asked once per visit. The ref, not the state's absence, is what closes it:
+  // router state survives a re-render, so without the guard a question would be
+  // re-asked every time this effect's dependencies changed.
   useEffect(() => {
-    if (handedOver.current || initial === null || initial.trim() === "") return;
+    if (handedOver.current || initial === undefined || initial.trim() === "") return;
     handedOver.current = true;
     ask(initial);
-    // Dropped from the URL so a reload does not silently re-ask a question that
-    // costs a model call and a minute.
-    setParams(new URLSearchParams(), { replace: true });
-  }, [initial, ask, setParams]);
+  }, [initial, ask]);
 
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth", block: "end" });
