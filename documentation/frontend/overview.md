@@ -3,7 +3,7 @@ type: Concept
 title: Frontend
 description: The React SPA at frontend/ — two surfaces over the same corpus: deterministic search, and agent mode, an SSE client for the conversational agent. No LLM call is made from the browser; both surfaces go through the API.
 tags: [frontend, ui, search, agent, sse, react, spa]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-21T00:00:00Z
 ---
 
 # Frontend
@@ -39,7 +39,7 @@ just `react`, `react-dom`, `react-router`, `@tanstack/react-query`.
 |---|---|
 | `/` | Search home — carries the **Sök / Agent** mode toggle |
 | `/sok` | Search results |
-| `/agent` | Agent mode, a new conversation; `?q=` hands over a question from the home page and is dropped on arrival |
+| `/agent` | Agent mode, a new conversation; a question handed over from the home page arrives as router state, never the URL, so a reload cannot re-ask it |
 | `/agent/:sessionId` | An earlier conversation, reopened |
 | `/beslut/:documentId` | Decision detail |
 | `/sokord` | Keyword (Sökord) index |
@@ -54,6 +54,20 @@ Swedish param names (`q`, `sokord`, `kategori`, `utfall`, `fran`, `tom`,
 `refs`, `sida`) matching the interface's language — so every search is a
 shareable, bookmarkable URL and nothing about the current search lives only in
 React state.
+
+**On `/` only, `AppShell` drops its own chrome.** The home page carries the
+wordmark itself, at display size, as its heading — a second one in a header
+above it would say the app's name twice and put a band of chrome over a page
+whose point is that there is nothing above the box. So on `/` the header loses
+its background, its hairline and its wordmark, and keeps only its nav links,
+right-aligned. Every other route keeps the full header.
+
+**A render that throws no longer takes the document with it.** The routed
+`<Outlet/>` is wrapped in an `ErrorBoundary`
+(`src/components/layout/ErrorBoundary.tsx`), the app's one class component. It shows a plain statement
+and logs the error and component stack to the console; the reader never sees a
+stack trace, and a blank white page — the most literal reading of "it
+crashed" — is no longer reachable from a render failure.
 
 ## Agent mode
 
@@ -89,6 +103,65 @@ across the language boundary, so `progress-labels.test.ts` reads
 adds a label the client has no words for. A label that reaches the client
 unrecognised anyway renders neutral prose, never the raw key.
 
+### Watching the agent work
+
+`TurnSteps` (`src/features/agent/TurnSteps.tsx`) renders the same step list two
+ways, depending on whether prose has started arriving.
+
+**While the turn is streaming and no answer text exists yet**, the steps are a
+`--surface-accent` card with a `--gradient-ember` top rule, at body text size —
+the loudest thing on the page, because for [roughly 18
+seconds](/api/chat-endpoint.md#latency) they are the only thing there is to
+look at. The step currently running pulses, its label carries a slow sweeping
+highlight, and beside the list an elapsed-seconds counter ticks once a second.
+The counter is the honest form of a progress bar here: the agent cannot say how
+far along it is, since it does not know in advance how many tools it will
+reach for, but it can say how long it has been running against the roughly
+one-minute ceiling [NFR1b](/prd.md) sets. The seconds before any step exists at
+all — the first tool call is itself a model round trip away — get the same
+treatment under the label "Läser frågan", rather than a bare grey line.
+
+**Once the first token of the answer arrives**, the block folds to a `<details>`
+summary reading "4 steg · 21 s" — the steps are provenance at that point, not
+news, and the answer should have the reader's attention. Folded is not gone:
+the summary opens on click, at any time, and TurnView passes the `writing`
+prop (`turn.answer !== ""`) that decides which presentation `TurnSteps` shows.
+**Honesty rule 14 is untouched by this** — the block that folds is the step
+list only; `SqlEvidence` still renders its rows and query uncollapsed beside
+the answer, because rule 14 forbids collapsing evidence a count rests on, not
+the process narration around it.
+
+This is the app's first `@keyframes` (`step-pulse`, the marker; `step-sweep`,
+the label highlight — both in `src/styles/app.css`). Both are switched off
+under `prefers-reduced-motion`, along with the home-to-composer [view
+transition](#arriving-from-the-home-page): the information is carried in the
+text and the counter either way, so the motion is decoration rather than the
+message.
+
+### Arriving from the home page
+
+A question typed into the home page's box travels as **router state**
+(`navigate("/agent", { state: { question } })`), not a `?q=` query parameter.
+State is not part of the URL, so a reload of `/agent` cannot re-ask it — the
+same promise a dropped-on-arrival query param used to buy, without the
+arrive-ask-then-rewrite-the-URL round trip that used to precede it. `AgentPage`
+reads it from `useLocation().state` and asks it once, guarded by a ref rather
+than the value's absence, so React StrictMode's mount → cleanup → mount on a
+fresh page does not ask it twice.
+
+The transcript-reset effect that watches the route is keyed on a *change* of
+route, tracked in a ref, for the same reason: a bare "does the route differ
+from the conversation I started?" check is true twice under StrictMode's
+double mount, which used to clear the turn the handed-over question had just
+appended before any of its tokens, steps or sources could render.
+
+The home page's ask box and the agent page's composer share a
+`view-transition-name` (the `ASK_BOX_TRANSITION_NAME` constant in
+`src/features/agent/ask-box-transition.ts`), so the navigation reads as the box
+travelling to where the composer sits rather than as the page being swapped
+for a differently-shaped control. Browsers without the View Transitions API
+swap instantly, which is the behaviour this replaces everywhere else.
+
 ### Conversation state
 
 **The client never re-sends the history** — the server holds it and each request
@@ -111,19 +184,42 @@ An **aborted turn is not persisted**, because the API appends a turn only after
 memory of — and it is genuinely absent after a reload, which is the same
 promise.
 
+**A reopened conversation can be empty for the same reason.**
+`get_or_create_session` writes the row before the turn runs, so a first
+question that failed or was abandoned leaves a real session behind with
+`history = []` — see [a row exists before the conversation
+does](/data-model/sessions.md#a-row-exists-before-the-conversation-does).
+`/agent/{id}` on such a session shows neither a transcript nor the ordinary
+new-conversation empty state: the first has nothing to render, and the second
+would claim nothing was ever asked here, which is false. It states plainly
+that the question was not completed and was not kept, and offers the box to
+ask it again.
+
 ### Earlier conversations
 
-The rail beside the transcript lists every conversation the app has held, newest
+The conversation itself is the only thing on the agent page: it is a single
+column centred at `--measure-prose`, not a column beside a list of every
+conversation the app has held. That list — `ConversationRail` — now opens on
+request, in a slide-over panel (`ConversationPanel`) behind a "Tidigare samtal"
+button in the page's action row, and closes on Escape or on a click outside it.
+"Nytt samtal" stays in that same action row, always visible, rather than moving
+into the panel with the list: starting a fresh conversation is a primary
+action, and one hidden behind a button a reader has to know to press is one
+they reach for the browser's back arrow instead. `ConversationRail` takes an
+`offerNewConversation` prop (default `true`) that the panel sets `false`, so
+there is never a screen offering "Nytt samtal" twice.
+
+Inside the panel, the rail lists every conversation the app has held, newest
 first, from [`GET /api/sessions`](/api/sessions.md). Titles are the opening
 question verbatim; **no model writes them**, because a generated label is text in
-the navigation the reader cannot check, at a cost per conversation. "Nytt
-samtal" is a link to `/agent`; a row is a link to `/agent/{id}`; `x` deletes,
-behind a confirmation, and is the only destructive thing this app does.
+the navigation the reader cannot check, at a cost per conversation. A row is a
+link to `/agent/{id}`; `x` deletes, behind a confirmation, and is the only
+destructive thing this app does.
 
-The rail says on screen that the app has no accounts, so someone else's question
-appearing in it is not a surprise. And it distinguishes *empty* from *could not
-load*: a rail that renders nothing on a failed fetch tells the reader their
-earlier question is gone.
+The panel says on screen that the app has no accounts, so someone else's
+question appearing in it is not a surprise. And it distinguishes *empty* from
+*could not load*: a rail that renders nothing on a failed fetch tells the
+reader their earlier question is gone.
 
 **A reopened turn shows what was said, not what it rested on.** The API stores
 the question and the answer only, so a restored turn carries no sources, no
@@ -171,9 +267,14 @@ The reader this is built for is not a lawyer and not a developer, so each surfac
 opens with as little as it can and offers the rest once there is something to
 refine:
 
-* **The home page asks one question** and offers one box. The **Sök / Agent**
-  choice carries a line of prose for each mode, in the same slot, because those
-  two words do not settle which promise the reader is getting.
+* **The home page asks one question** and offers one box: the wordmark is the
+  page's own heading, and nothing else is stacked above or below the box beyond
+  a one-line caption naming the corpus size and three of the nämnd's own
+  keywords. The **Sök / Agent** choice is a `Switch`
+  (`src/components/forms/Switch.tsx`), not a `Tabs` pill — a tab implies two places, and there is one
+  box with two destinations — and its explanatory line sits under the switch
+  rather than under the box, so toggling the mode does not move the box on
+  screen.
 * **Filters appear beside results, never before them.** `/` has no filter rail
   at all; `/sok` has one, because narrowing is something a reader reaches for
   after seeing what came back.
@@ -190,11 +291,15 @@ refine:
 ## Small screens
 
 A full phone layout is [out of scope](#out-of-scope); being unreadable on one is
-not. `src/styles/app.css` holds the three layout classes the two-column pages
-share (`layout-columns`, `layout-rail`, `layout-main`) and one media query at
-900px that stacks them — the one thing an inline style cannot express. Stacked,
-the **rail is ordered after the content**, so a phone reader meets results
-before six filter controls.
+not. `src/styles/app.css` holds three layout classes (`layout-columns`,
+`layout-rail`, `layout-main`) shared by the two pages that still lay out a rail
+beside their content — `/sok`'s results-plus-filters and the decision detail
+page — and one media query at 900px that stacks them, the one thing an inline
+style cannot express. Stacked, the **rail is ordered after the content**, so a
+phone reader meets results before six filter controls. Agent mode no longer
+participates in this pattern: the conversation is one centred column at every
+width, and the list of earlier conversations lives in a slide-over panel rather
+than a stacking column, so there is nothing there to reorder.
 
 ## Design system
 
@@ -221,6 +326,14 @@ this corpus, and those were dropped rather than mapped: `CitationCard`'s
 Criticized) fields do not exist here. `Badge` tones are renamed
 `declared`/`inferred` instead — see [honesty rule
 6](/frontend/honesty-rules.md).
+
+One component was ported as a fix rather than a straight port: the skill's
+switch is a clickable `<span>`, which a keyboard cannot reach. `Switch`
+(`src/components/forms/Switch.tsx`) is rebuilt as a real
+`<button role="switch">`, so Space and Enter work on it like any other control. The
+`/stil` [component reference](#routes) carries all three of its states —
+on, off, and disabled — for the same reason the rest of the gallery does: it is
+only useful as a reference while it stays complete.
 
 ## The honesty rules
 

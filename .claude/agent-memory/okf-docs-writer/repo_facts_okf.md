@@ -283,6 +283,69 @@ conclude "nothing changed."
   example command's literal string, which the skill's "cosmetic edits don't bump
   timestamp" rule covers even though the change came from a real code default change.
 
+## Frontend UI-polish pass — home page, agent layout, progress steps, reload races (2026-08-21)
+- This pass (5 commits, `main` had no divergence — again the "current branch is
+  main, ahead of origin" shape, not a worktree one; `git log --oneline
+  <first>^..<last>` plus `git diff --stat` over that range was the working
+  substitute for `main...HEAD`) landed entirely in `documentation/frontend/
+  overview.md`, `api/chat-endpoint.md`, `data-model/sessions.md`, and
+  `playbooks/live-testing.md`'s scripted-UI checklist table. No new concept
+  files — new small components (`Switch`, `ErrorBoundary`, `ConversationPanel`)
+  are folded into `frontend/overview.md` prose at the point a reader would hit
+  them, matching how `Tag`/`Tabs` never got their own files either. Reusable
+  rule: a new frontend *component* only earns a concept file if it is a new
+  page/route or a new cross-cutting contract (SSE events, honesty rule) — a
+  new form control or layout primitive is prose in `overview.md`.
+- A frontend UI-presentation change to an *already-documented* mechanism (here:
+  `TurnSteps`'s two render modes — a loud "thinking" card vs. a folded
+  `<details>` once tokens arrive) is worth its own subsection even though the
+  underlying SSE contract (`event: tool_call`/`tool_result`) didn't change at
+  all — the reader question it answers ("what does the wait look like, and
+  does anything get hidden") is different from "what do the progress labels
+  mean", which already had its own subsection. Cross-linked rather than
+  merged, and explicitly called out that [honesty rule
+  14](/frontend/honesty-rules.md) is untouched (it governs `SqlEvidence`, a
+  different component from the step list that now folds) — worth stating
+  explicitly because the commit message itself anticipated the confusion.
+- A URL-based handoff between two pages (`?q=` query param) moving to
+  React Router's `navigate(..., { state })` is a **Routes-table-plus-new-
+  subsection** edit, not just a one-line table fix: the table row is what a
+  reader skims, but *how* the handoff works (guarded against StrictMode double-
+  mount via a ref, shared `view-transition-name` between the source and
+  destination control) only has one natural home, a new subsection in the
+  page/surface doc it affects (`frontend/overview.md`'s "Arriving from the home
+  page"), not scattered as parenthetical asides in the table.
+- A backend race-condition fix reachable only via a client action (here:
+  reloading mid-SSE-stream) that touches two independent bugs on the same seam
+  (an un-awaited cancelled task holding the request-scoped DB session, plus a
+  session row committed at teardown instead of at creation) gets **one new
+  subsection naming both**, in the `API Endpoint` doc (`api/chat-endpoint.md`,
+  "A reload mid-answer is safe") — not two separate edits — because a reader
+  investigating "why did my reload 404 or 500" needs both explanations
+  together, and the commit that fixed them explicitly frames them as "two races
+  on the same seam". The `Table` doc for the row being committed early
+  (`data-model/sessions.md`, "A row exists before the conversation does") gets
+  a shorter, table-scoped restatement of just the commit-timing half — cross-
+  linked, not duplicated in full.
+- A layout change that removes a page from a previously-documented shared-CSS-
+  class group (here: `AgentPage` dropping `layout-columns`/`layout-rail`/
+  `layout-main` — the conversation rail became a slide-over panel instead of a
+  second column) requires checking **every place the old page count was
+  implied**, not just the class-owning section: `frontend/overview.md`'s
+  "Small screens" section (now two pages share the classes, not three, and
+  needed a sentence added saying agent mode "has nothing there to reorder"),
+  and `playbooks/live-testing.md`'s manual small-screen checklist paragraph,
+  which named "rails" plural without qualifying which pages — grepped for
+  `264px`/`beside the transcript`/`?q=` across the whole bundle to confirm no
+  other doc restated the old layout by name.
+- `playbooks/live-testing.md`'s scripted-server walkthrough table
+  (`/`, `/sok`, `/beslut/{id}`, `/agent`, ...) restates page-specific UI facts
+  (control names, what a chip/link looks like) independently of
+  `frontend/overview.md` — it drifted on "keyword chips" (now caption links)
+  and "toggle" (now a `Switch`) even though neither word appeared anywhere
+  else. Treat this table as its own small fan-out target whenever a page's
+  visible controls change, not just when routes themselves change.
+
 ## Tier-1 "documentation drift" pass — corpus went from empty to real (2026-08-16)
 - This repo runs explicit, numbered "documentation drift" passes as slash-command
   invocations that hand over **pre-measured facts** (SQL counts already run against

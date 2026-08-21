@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-20T00:00:00Z
+timestamp: 2026-08-21T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -186,6 +186,26 @@ otherwise invisible. See [application logging](/logging.md).
 
 **Pre-stream validation.** An empty or over-long `message`, or an unparseable
 `session_id`, returns **HTTP 422** and no stream is opened.
+
+**A reload mid-answer is safe.** Two races on the same seam, both reachable by
+reloading the page while an answer is streaming, are closed:
+
+* The [session](/data-model/sessions.md) row is **committed as soon as it
+  exists**, right after `get_or_create_session`, rather than left flushed-only
+  until the whole turn finishes. The `done` frame hands its id to the client,
+  which immediately claims it as a URL and refetches [the session
+  list](/api/sessions.md) — both would otherwise race a row that was not
+  durable yet, so a reload in that window could read a 404 for a conversation
+  the client had just been told the name of.
+* On disconnect, [the agent](/retrieval/chat-agent.md) **awaits the cancelled
+  task driving its tool loop** rather than cancelling it and returning
+  immediately. Cancellation only requests that
+  the task stop; until it is given back control it is still sitting inside
+  whatever it was awaiting — usually a query on the request-scoped database
+  session — and the request teardown commits that same session as soon as the
+  generator exits. Returning before the task had actually stopped put two
+  tasks on one connection, which surfaced as an asyncpg error from a traceback
+  raised after the response had already started.
 
 ## Correlation
 
