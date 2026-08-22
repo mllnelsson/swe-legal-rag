@@ -176,11 +176,20 @@ def _format_gaps(gaps: list[str]) -> str:
 
 
 def _format_readings(readings: list[DecisionReading]) -> str:
+    """Which passages one whole-decision reading picked out, and how they connect.
+
+    Rendered as a labelled line rather than prose, for the same reason the
+    annotations are: it points at the utdrag above, and its status has to be
+    visible as "a label on the evidence" rather than as evidence.
+    """
     if not readings:
         return _NOTHING
-    return "\n".join(
-        f"[Mål {reading.case_number}] {reading.extract}" for reading in readings
-    )
+    lines = []
+    for reading in readings:
+        handles = ", ".join(reading.handles) or "inga utdrag"
+        summary = f" {reading.summary}" if reading.summary else ""
+        lines.append(f"[Mål {reading.case_number} — {handles}]{summary}")
+    return "\n".join(lines)
 
 
 def _format_tabular(tabular: TabularEvidence | None) -> str:

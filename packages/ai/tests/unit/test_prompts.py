@@ -26,6 +26,7 @@ _LEGAL_TEXT = (
     "Beslutet avslogs med hänvisning till kyrkoordningen kapitel 34.\n"
     "Parter: Kyrkoherden i Skattkärrens församling, Göteborgs stift."
 )
+_NUMBERED_CHUNKS = "[0] Nämnden prövar först jäv.\n[1] Överklagandet avslås."
 _CASE_NUMBER = "2023/456"
 _CONVERSATION = (
     "Användare: Vad gäller för överklaganden?\n"
@@ -85,7 +86,9 @@ _ALL_TEMPLATES = [
         {
             "question": _QUESTION,
             "case_number": _CASE_NUMBER,
-            "decision_text": _LEGAL_TEXT,
+            "numbered_chunks": _NUMBERED_CHUNKS,
+            "max_selected": 6,
+            "max_summary_words": 80,
         },
     ),
     (METADATA_EXTRACTION, {"raw_text": _LEGAL_TEXT}),
@@ -239,27 +242,52 @@ class TestChatOrchestration:
 
 
 class TestDecisionReading:
+    def test_the_caps_are_rendered_rather_than_written_into_the_system_prompt(self):
+        """One source of truth for both caps: the settings the reader passes.
+
+        `render` formats the user template only, so a cap written into the
+        system prompt would reach the model as a literal `{max_selected}` and
+        could drift from the number the code actually enforces.
+        """
+        assert "{" not in DECISION_READING.system_prompt
+        messages = render(
+            DECISION_READING,
+            {
+                "question": _QUESTION,
+                "case_number": _CASE_NUMBER,
+                "numbered_chunks": _NUMBERED_CHUNKS,
+                "max_selected": 4,
+                "max_summary_words": 55,
+            },
+        )
+        assert "Högst 4 stycken" in messages[1].content
+        assert "Högst 55 ord" in messages[1].content
+
     def test_no_unrendered_placeholders_in_user_message(self):
         messages = render(
             DECISION_READING,
             {
                 "question": _QUESTION,
                 "case_number": _CASE_NUMBER,
-                "decision_text": _LEGAL_TEXT,
+                "numbered_chunks": _NUMBERED_CHUNKS,
+                "max_selected": 6,
+                "max_summary_words": 80,
             },
         )
         assert not _has_placeholder(messages[1].content)
 
-    def test_decision_text_reaches_the_user_message(self):
+    def test_the_numbered_passages_reach_the_user_message(self):
         messages = render(
             DECISION_READING,
             {
                 "question": _QUESTION,
                 "case_number": _CASE_NUMBER,
-                "decision_text": _LEGAL_TEXT,
+                "numbered_chunks": _NUMBERED_CHUNKS,
+                "max_selected": 6,
+                "max_summary_words": 80,
             },
         )
-        assert _LEGAL_TEXT in messages[1].content
+        assert _NUMBERED_CHUNKS in messages[1].content
         assert _CASE_NUMBER in messages[1].content
 
     def test_carries_the_appendix_rule(self):

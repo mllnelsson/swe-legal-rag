@@ -7,6 +7,7 @@ from shared.enums import ChunkSection
 
 from ai.dtos import (
     ChunkContext,
+    DecisionReading,
     DecomposeResult,
     EntityResult,
     ExtractedEntity,
@@ -17,6 +18,7 @@ from ai.dtos import (
     SynthesizeRequest,
 )
 from ai.services import (
+    _format_readings,
     decompose_query,
     expand_query,
     extract_entities,
@@ -218,6 +220,40 @@ async def test_synthesize_answer_marks_appendix_excerpts() -> None:
     assert "c1 · Mål 1/2026 - Bilaga A, det överklagade beslutet" in prompt
     # The body excerpt keeps the plain label, and its own handle.
     assert "[c2 · Mål 1/2026]" in prompt
+
+
+class TestFormatReadings:
+    """A reading is guidance about passages, and has to render as one.
+
+    The writing step is told never to assert something because a genomläsning
+    says it. That rule is only checkable if the reading visibly points at
+    utdrag the model can go and read instead.
+    """
+
+    def test_a_reading_names_the_passages_it_points_at(self):
+        rendered = _format_readings(
+            [
+                DecisionReading(
+                    case_number="12/2023",
+                    handles=["c14", "c15"],
+                    summary="c14 ställer upp kriterierna, c15 tillämpar dem.",
+                )
+            ]
+        )
+        assert rendered == (
+            "[Mål 12/2023 — c14, c15] c14 ställer upp kriterierna, c15 tillämpar dem."
+        )
+
+    def test_nothing_renders_as_the_visible_marker(self):
+        assert _format_readings([]) == "(inget)"
+
+    def test_a_reading_carries_no_passage_text(self):
+        """The whole point: a decision's words reach the writer through
+        `chunks`, verbatim from the database, never through this."""
+        reading = DecisionReading(
+            case_number="12/2023", handles=["c14"], summary="c14 bär utfallet."
+        )
+        assert "Nämnden" not in _format_readings([reading])
 
 
 class TestTraceAttribution:

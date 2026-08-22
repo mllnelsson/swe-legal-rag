@@ -50,6 +50,14 @@ class ChatAgentSettings(BaseSettings):
     # synthesis step, and a citation list longer than this stops being a
     # citation list.
     chat_agent_max_chunks_cited: int = 12
+    # Passages one reading may point at. The reader sees a whole decision and
+    # hands back indices, so without a cap it can hand the whole document back
+    # and undo the reason it is a sub-agent at all.
+    chat_agent_max_chunks_per_reading: int = 6
+    # Words the reader's connecting note may run to. It is guidance about which
+    # passage carries what, not the finding — and a note long enough to be read
+    # instead of the passages is the failure this whole path exists to avoid.
+    chat_agent_reading_summary_words: int = 80
     # Decisions one search returns. The agent reads their passages, so this
     # trades recall against how much lands in its context per call.
     chat_agent_search_limit: int = 8

@@ -203,7 +203,15 @@ async def tool_loop(
             except Exception as exc:
                 raise ToolExecutionError(tc.name, str(exc), cause=exc) from exc
 
-            result_str = result if isinstance(result, str) else json.dumps(result)
+            # `ensure_ascii=False`: a tool result on a Swedish corpus is mostly
+            # å, ä and ö, and escaping each to \uXXXX inflates the payload ~48%
+            # — paid again on every later iteration, since the result stays in
+            # the history. The provider sends UTF-8 either way.
+            result_str = (
+                result
+                if isinstance(result, str)
+                else json.dumps(result, ensure_ascii=False)
+            )
 
             history.append(
                 Message(

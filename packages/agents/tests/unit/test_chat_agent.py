@@ -6,6 +6,7 @@ agent can be exercised against a plain object.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -45,8 +46,32 @@ _APPENDIX_CHUNK_ID = uuid.UUID("33333333-3333-3333-3333-333333333333")
 _BODY_TEXT = "Nämnden avslår överklagandet med hänvisning till kyrkoordningen kap. 34."
 _APPENDIX_TEXT = "Stiftet beslutade att avslå ansökan om tjänstetillsättning."
 # Long enough that a test can prove it never reaches an orchestrator message.
-_READ_CHUNK_ID = uuid.UUID("00000000-0000-0000-0000-0000000000c1")
+_READ_CHUNK_IDS = [
+    uuid.UUID(f"00000000-0000-0000-0000-0000000000{n:02d}") for n in (11, 12, 13)
+]
+# The bulk of the decision. Long on purpose: it is what must never reach the
+# orchestrator, and a short string would pass that assertion by accident.
 _FULL_DECISION_TEXT = "Beslutets fullständiga lydelse. " * 400
+# The passage a reading points at. It *does* reach the orchestrator, because a
+# handle it has never read is a handle it cannot annotate.
+_READ_PASSAGE = "Nämnden fann att jäv förelåg och undanröjde beslutet."
+_UNREAD_PASSAGE = "Beslutet expedierades till parterna."
+
+
+def _reading(
+    *, relevance: str = "carries", indices: list[int] | None = None, summary: str = ""
+) -> Message:
+    """A reader turn. `generate_structured` parses the content as JSON."""
+    return Message(
+        role=Role.assistant,
+        content=json.dumps(
+            {
+                "relevance": relevance,
+                "chunk_indices": [1] if indices is None else indices,
+                "summary": summary,
+            }
+        ),
+    )
 
 
 class ScriptedProvider:
@@ -118,10 +143,20 @@ class FakeToolset:
             case_number="12/2024",
             chunks=[
                 DecisionTextChunk(
-                    chunk_id=_READ_CHUNK_ID,
-                    chunk_index=0,
-                    text=_FULL_DECISION_TEXT,
+                    chunk_id=chunk_id,
+                    chunk_index=index,
+                    text=text,
                     section=ChunkSection.BODY,
+                )
+                for index, (chunk_id, text) in enumerate(
+                    (
+                        (_READ_CHUNK_IDS[0], _FULL_DECISION_TEXT),
+                        (_READ_CHUNK_IDS[1], _READ_PASSAGE),
+                        (_READ_CHUNK_IDS[2], _UNREAD_PASSAGE),
+                        # Index 3 is the passage search already returned, so a
+                        # reading that picks it must reuse its handle.
+                        (_BODY_CHUNK_ID, _BODY_TEXT),
+                    )
                 )
             ],
         )
@@ -398,11 +433,15 @@ async def test_counting_emits_the_query_before_the_answer() -> None:
     assert "SELECT count(*)" in synthesis
 
 
-async def test_full_decision_text_never_enters_an_orchestrator_message() -> None:
-    """The reason read_decision is a sub-agent rather than a tool result."""
-    reader = ScriptedProvider(
-        Message(role=Role.assistant, content="Nämnden avslog överklagandet.")
-    )
+async def test_a_reading_returns_its_passages_and_not_the_decision() -> None:
+    """The reason read_decision is a sub-agent rather than a tool result.
+
+    The line is the *whole document*, not the passages. Six selected passages
+    are the same order of size as one search result and the orchestrator has to
+    see them — a handle it has never read is a handle it cannot annotate. The
+    other 20k characters are what the sub-agent exists to keep out.
+    """
+    reader = ScriptedProvider(_reading(indices=[1], summary="c-handtaget bär jävet"))
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
         _tool_call(
@@ -435,13 +474,162 @@ async def test_full_decision_text_never_enters_an_orchestrator_message() -> None
         message.content for messages in provider.seen_messages for message in messages
     )
     assert _FULL_DECISION_TEXT not in orchestrator_text
-    assert "Nämnden avslog överklagandet." in orchestrator_text
+    assert _UNREAD_PASSAGE not in orchestrator_text
+    # The selected passage, verbatim, and the note pointing at it.
+    assert _READ_PASSAGE in orchestrator_text
+    assert "c-handtaget bär jävet" in orchestrator_text
 
-    # The reader, by contrast, was given the whole thing.
+    # The reader, by contrast, was given the whole thing — numbered, so it can
+    # answer with a position rather than with prose.
     reader_text = "".join(
         message.content for messages in reader.seen_messages for message in messages
     )
     assert _FULL_DECISION_TEXT.strip() in reader_text
+    assert f"[1] {_READ_PASSAGE}" in reader_text
+
+
+def _read_then_answer(*, cite: str = "c3") -> ScriptedProvider:
+    """Search, read one decision, then answer citing a handle the reading minted."""
+    return ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+        _tool_call(
+            ChatTool.READ_DECISION,
+            call_id="call-2",
+            document_id="d1",
+            question="Vad beslutade nämnden?",
+        ),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            annotations=[{"handle": cite, "carries": "bär svaret"}],
+        ),
+    )
+
+
+async def _run(provider, reader, **settings) -> list:
+    return await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad beslutade nämnden?"),
+            FakeToolset(),
+            llm_provider=provider,
+            reader_provider=reader,
+            settings=_settings(**settings),
+        )
+    )
+
+
+def _sources(events: list) -> list:
+    return next(e.sources for e in events if isinstance(e, SourcesEvent))
+
+
+async def test_a_passage_a_reading_found_can_be_cited_like_any_other() -> None:
+    """The invariant: every claim traces to a verbatim passage in `sources`.
+
+    Search returned c1 and c2; the reading picks index 1, which is a passage
+    search never surfaced, and it becomes c3. Citing c3 has to reach the reader
+    of the answer, or the citation marker resolves to nothing.
+    """
+    events = await _run(_read_then_answer(cite="c3"), ScriptedProvider(_reading()))
+
+    sources = _sources(events)
+    assert [s.handle for s in sources] == ["c3"]
+    assert sources[0].excerpt == _READ_PASSAGE
+
+
+async def test_a_passage_search_already_returned_keeps_its_handle() -> None:
+    """Index 3 of the decision is the chunk search returned as c1.
+
+    Minting a second handle for it would put the same text in `sources` twice
+    under two numbers, and the reader would count two sources where there is
+    one passage.
+    """
+    provider = _read_then_answer(cite="c1")
+    events = await _run(provider, ScriptedProvider(_reading(indices=[3])))
+
+    # Asserted on what the reading handed back, not on what the answer cited:
+    # citing c1 would still work if the reading had minted a c3 for the same
+    # text, and the duplicate is exactly what this pins.
+    read_result = next(
+        message
+        for messages in provider.seen_messages
+        for message in messages
+        if message.tool_name == ChatTool.READ_DECISION
+    )
+    assert json.loads(read_result.content)["passages"] == [
+        {"chunk_id": "c1", "text": _BODY_TEXT, "origin": "the board's own text"}
+    ]
+
+    sources = _sources(events)
+    assert [s.handle for s in sources] == ["c1"]
+    assert sources[0].excerpt == _BODY_TEXT
+
+
+async def test_a_reading_that_finds_nothing_contributes_nothing() -> None:
+    """A decision that does not address the question used to arrive at the
+    writing step as a paragraph saying so, which the writer had to read and
+    discard."""
+    provider = _read_then_answer(cite="c1")
+    events = await _run(provider, ScriptedProvider(_reading(relevance="nothing")))
+
+    result = next(
+        e
+        for e in events
+        if isinstance(e, ToolResultEvent) and e.tool is ChatTool.READ_DECISION
+    )
+    assert result.status is ToolStatus.OK
+
+    synthesis = provider.seen_messages[-1][-1].content
+    assert "Genomläsningar:\n(inget)" in synthesis
+    assert [s.handle for s in _sources(events)] == ["c1"]
+
+
+async def test_an_index_outside_the_decision_is_dropped_not_fatal() -> None:
+    """One bad index is a lost passage, not a lost turn — the same trade
+    `_answer` makes for an unreadable annotation."""
+    events = await _run(
+        _read_then_answer(cite="c3"), ScriptedProvider(_reading(indices=[99, 1, -1]))
+    )
+
+    assert [s.handle for s in _sources(events)] == ["c3"]
+
+
+async def test_a_reading_cannot_hand_the_whole_decision_back() -> None:
+    """Without the cap the sub-agent's whole reason for existing is undone: the
+    reader could select every passage and put the document in the loop."""
+    provider = _read_then_answer(cite="c3")
+    await _run(
+        provider,
+        ScriptedProvider(_reading(indices=[0, 1, 2, 3])),
+        chat_agent_max_chunks_per_reading=2,
+    )
+
+    read_result = next(
+        message
+        for messages in provider.seen_messages
+        for message in messages
+        if message.tool_name == ChatTool.READ_DECISION
+    )
+    assert read_result.content.count('"chunk_id"') == 2
+
+
+async def test_an_unreadable_reading_is_refused_rather_than_fatal() -> None:
+    """`generate_structured` raises on output the schema cannot read. Unhandled
+    that ends the whole request; here it is a tool result the orchestrator can
+    repair from."""
+    provider = _read_then_answer(cite="c1")
+    reader = ScriptedProvider(Message(role=Role.assistant, content="not json at all"))
+
+    events = await _run(provider, reader)
+
+    result = next(
+        e
+        for e in events
+        if isinstance(e, ToolResultEvent) and e.tool is ChatTool.READ_DECISION
+    )
+    assert result.status is ToolStatus.REFUSED
+    # The turn still finished on the evidence search had already found.
+    assert [s.handle for s in _sources(events)] == ["c1"]
+    assert any(isinstance(e, DoneEvent) for e in events)
 
 
 async def test_reading_budget_refuses_rather_than_raising() -> None:
@@ -459,7 +647,7 @@ async def test_reading_budget_refuses_rather_than_raising() -> None:
             annotations=[{"handle": "c1", "carries": "bär svaret"}],
         ),
     )
-    reader = ScriptedProvider(Message(role=Role.assistant, content="extract"))
+    reader = ScriptedProvider(_reading())
 
     events = await _collect(
         run_chat_agent(

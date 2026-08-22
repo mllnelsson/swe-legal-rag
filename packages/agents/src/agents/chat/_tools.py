@@ -36,6 +36,7 @@ from agents.chat._dtos import (
     DecisionText,
     PassageNote,
     ProgressLabel,
+    ReadingSelection,
     SearchedChunk,
     SearchedDecision,
 )
@@ -325,12 +326,120 @@ async def _read_decision(
     if text is None or not text.chunks:
         return {"error": f"Decision {document_id} has no readable text."}
 
-    extract = await read_decision_text(text, question, provider=reader_provider)
+    try:
+        selection = await read_decision_text(
+            text,
+            question,
+            max_selected=settings.chat_agent_max_chunks_per_reading,
+            summary_words=settings.chat_agent_reading_summary_words,
+            provider=reader_provider,
+        )
+    except Exception:
+        # A reader that returns output the schema cannot read is a refusal, not
+        # a failed turn: every other expected failure here comes back as a tool
+        # result, and the orchestrator repairs through the loop's ordinary path.
+        logger.exception("Reading %s returned unreadable output", document_id)
+        return {
+            "error": (
+                f"Decision {document_id} could not be read this time. Answer "
+                "from the passages you already have, or try another decision."
+            ),
+            "refused": True,
+        }
+
+    # Counted as read whatever the verdict: the call was made and paid for, and
+    # a budget that only counted useful readings would let a run of dead ends
+    # spend without bound.
     state.documents_read.add(decision.document_id)
+
+    if selection.relevance == "nothing":
+        # Nothing is recorded, so nothing reaches the writing step. A decision
+        # that does not address the question used to arrive there as a paragraph
+        # of prose saying so, which the writer then had to read and discard.
+        return {
+            "document_id": document_id,
+            "relevance": "nothing",
+            "note": "This decision has nothing to say about the question.",
+        }
+
+    handles, unknown = _handles_for_reading(state, decision, text, selection, settings)
+    if unknown:
+        logger.info(
+            "Reading %s pointed at passages outside the decision: %s",
+            document_id,
+            unknown,
+        )
+    if not handles:
+        return {
+            "document_id": document_id,
+            "relevance": selection.relevance,
+            "note": "The reading pointed at no passage of this decision.",
+        }
+
     state.readings.append(
-        DecisionReading(case_number=text.case_number or document_id, extract=extract)
+        DecisionReading(
+            case_number=text.case_number or document_id,
+            handles=list(handles),
+            summary=selection.summary,
+        )
     )
-    return {"document_id": document_id, "extract": extract}
+    return {
+        "document_id": document_id,
+        "relevance": selection.relevance,
+        "summary": selection.summary,
+        "passages": [
+            {
+                "chunk_id": handle,
+                "text": state.chunks[handle].chunk.text,
+                "origin": _chunk_origin(state.chunks[handle].chunk),
+            }
+            for handle in handles
+        ],
+    }
+
+
+def _handles_for_reading(
+    state: ChatState,
+    decision: SearchedDecision,
+    text: DecisionText,
+    selection: ReadingSelection,
+    settings: ChatAgentSettings,
+) -> tuple[list[str], list[int]]:
+    """The reading's chosen passages, as citable handles.
+
+    The index addresses `text.chunks` by position, which is what the reader was
+    shown. Each survivor goes through `_assign_chunk_handle`, so a passage search
+    already surfaced comes back under the handle it already has rather than a
+    second one pointing at the same text.
+    """
+    handles: list[str] = []
+    unknown: list[int] = []
+    seen: set[int] = set()
+
+    for index in selection.chunk_indices:
+        if not 0 <= index < len(text.chunks):
+            unknown.append(index)
+            continue
+        if index in seen:
+            continue
+        seen.add(index)
+        if len(handles) >= settings.chat_agent_max_chunks_per_reading:
+            continue
+        chunk = text.chunks[index]
+        handles.append(
+            _assign_chunk_handle(
+                state,
+                decision.document_id,
+                SearchedChunk(
+                    chunk_id=chunk.chunk_id,
+                    text=chunk.text,
+                    section=chunk.section,
+                    appendix_label=chunk.appendix_label,
+                ),
+            )
+        )
+
+    return handles, unknown
 
 
 async def _inspect_decision(

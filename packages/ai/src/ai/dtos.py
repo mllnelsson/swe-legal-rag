@@ -83,17 +83,24 @@ class PassageNote(BaseModel):
 
 
 class DecisionReading(BaseModel):
-    """What a reading sub-agent got out of one whole decision.
+    """What a reading sub-agent found in one whole decision.
 
-    The extract, never the decision. A full decision runs to ~10k characters on
-    average and 165k at worst; the point of reading it in a sub-agent is that
-    only this comes back.
+    Handles, never text. A full decision runs to ~10k characters on average and
+    165k at worst; the point of reading it in a sub-agent is that only this
+    comes back — and the passages it names are carried by `SynthesizeRequest.chunks`
+    like any other, so the writing step reads them verbatim rather than reading
+    a model's account of them.
+
+    `summary` is guidance about how those passages connect, with exactly the
+    status of `PassageNote.carries`: it says where a finding lives, never what
+    the finding is.
     """
 
     model_config = ConfigDict(frozen=True)
 
     case_number: str
-    extract: str
+    handles: list[str] = []
+    summary: str = ""
 
 
 class TabularEvidence(BaseModel):

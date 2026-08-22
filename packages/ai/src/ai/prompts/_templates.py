@@ -82,7 +82,8 @@ Skriv ett svar på svenska utifrån det underlag som följer.
 Underlaget kan bestå av fem delar. Alla behöver inte finnas:
 - Utdrag: ordagranna textstycken ur besluten, vart och ett märkt med ett
   handtag (c1, c2, ...) och vilket mål det kommer ur
-- Genomläsningar: sammandrag som tagits fram ur ett helt beslut
+- Genomläsningar: vägledning från en agent som läst ett helt beslut - vilka
+  utdrag ovan som hör ihop och hur
 - Tabelldata: resultatet av en databasfråga, med frågan som gav det
 - Anteckningar: en rad per utdrag från den agent som valde ut det - vad
   utdraget bär, och vad du ska se upp med
@@ -108,6 +109,9 @@ Regler:
 - Anteckningarna säger vilket utdrag som bär vad, och vad du ska se upp med.
   De är vägledning, aldrig källa: påstå aldrig något för att en anteckning
   säger det, utan läs efter i utdraget självt.
+- Genomläsningarna har samma status. De pekar ut vilka utdrag ett beslut
+  besvarar frågan genom; påstå aldrig något för att en genomläsning säger det,
+  utan läs efter i de utdrag den namnger.
 - Luckorna är sådant underlaget inte räcker till. Skriv ut dem hellre än att
   fylla igen dem.
 - Returnera löpande text: inga rubriker, ingen markdown, inga punktlistor och
@@ -305,8 +309,9 @@ Tools:
   only when you pass contains.
 - search_decisions(query, queries, filter, include_appendices, limit) - hybrid
   semantic and lexical search over the decisions
-- read_decision(document_id, question) - hands one whole decision to a reader
-  and returns what it found for the question you asked
+- read_decision(document_id, question) - hands one whole decision to a reader,
+  which points out the passages in it that bear on your question and returns
+  them with handles you can cite
 - inspect_decision(document_id) - one decision's keywords, legal concepts and
   citation graph, both directions
 - query_corpus(question) - counts, sums and groupings, answered with SQL
@@ -327,7 +332,9 @@ How to work:
    search_decisions refuses such a filter until you have read the values.
 4. Read a decision in full only when the passages leave the question open -
    typically when reasoning is split across a decision, or when the user asks
-   what a specific decision held. Passages answer most questions.
+   what a specific decision held. Passages answer most questions. A reading
+   returns passage handles like any search does, so name them in answer if the
+   answer rests on them - a handle you do not name reaches no reader.
 5. Any question of "how many", "which year", "most common" goes to
    query_corpus. Never count search hits yourself: they are a relevance-ranked
    sample of the corpus, not a census of it.
@@ -379,26 +386,36 @@ CHAT_ORCHESTRATION = PromptTemplate(
 
 
 _DECISION_READING_SYSTEM = """\
-Du läser ett enskilt beslut från Överklagandenämnden och tar fram det som
-besvarar en given fråga. Du skriver inte svaret till användaren - det du tar
-fram går vidare till ett annat steg.
+Du läser ett enskilt beslut från Överklagandenämnden och pekar ut de stycken som
+besvarar en given fråga. Du skriver inte svaret till användaren, och du skriver
+inte av beslutet - du hänvisar till det.
 
-Regler:
-- Svara på svenska
-- Håll dig till detta beslut. Har det inget att säga om frågan, skriv det rent
-  ut i en mening i stället för att fylla ut.
-- Citera ordagrant de meningar som bär avgörandet, och skriv ut vad de betyder
-- Texten kan innehålla bilagor. En bilaga är det överklagade beslutet, alltså
-  underinstansens egna ord - nämnden kan ha ändrat eller upphävt det. Blanda
-  aldrig ihop de två; skriv ut vem som uttalat sig.
-- Hitta aldrig på ärendenummer, datum eller hänvisningar som inte står i texten
-- Returnera löpande text, högst omkring 300 ord"""
+Beslutet är uppdelat i numrerade stycken. Lämna tillbaka tre saker:
+
+- relevance: "carries" om beslutet avgör frågan, "mentions" om det berör den utan
+  att avgöra den, "nothing" om det inte har något att säga om den. Att ett beslut
+  inte behandlar frågan är ett riktigt svar - fyll inte ut.
+- chunk_indices: numren på de stycken som bär svaret. Välj få och välj rätt:
+  styckena läses ordagrant av nästa steg. Tom lista när relevance är "nothing".
+- summary: hur de utpekade styckena hänger ihop - vilket som ställer upp regeln,
+  vilket som tillämpar den, vilket som bär utfallet. Detta är en vägvisning,
+  aldrig källan: skriv aldrig ut en uppgift som inte står i de stycken du pekat
+  ut. Tom sträng när du inte pekat ut något.
+
+Beslutet kan innehålla bilagor. En bilaga är det överklagade beslutet, alltså
+underinstansens egna ord - nämnden kan ha ändrat eller upphävt det. Blanda aldrig
+ihop de två; pekar du ut ett stycke ur en bilaga, skriv i summary vems ord det är.
+
+Svara på svenska."""
 
 _DECISION_READING_USER = """\
 Fråga: {question}
 
+Högst {max_selected} stycken. Högst {max_summary_words} ord i summary.
+
 Beslut {case_number}:
-{decision_text}"""
+{numbered_chunks}"""
+
 
 DECISION_READING = PromptTemplate(
     name="DECISION_READING",

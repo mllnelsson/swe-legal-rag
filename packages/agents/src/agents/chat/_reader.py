@@ -2,43 +2,51 @@
 
 A decision runs to ~10k characters on average and 165k at worst. Handing them to
 the orchestrator would make its context grow with every document it opens, and
-pay for that growth again on every later iteration and every later turn of the
-conversation.
+pay for that growth again on every later iteration.
 
 So the document goes to a cheaper, longer-context model on its own, with the
-question attached, and only the extract comes back. The orchestrator's context
-never holds a decision, which is what makes the size of the worst document
-uninteresting.
+question attached. What comes back is a *selection*, not a summary: the reader is
+shown the decision as numbered passages and returns the numbers, so the text
+downstream is fetched from the database rather than written by a model. That is
+what gives the reading path the same ground truth the search path has — the
+reader chooses which passages carry the answer and never what they say.
+
+The orchestrator's context still never holds a whole decision, which is what
+makes the size of the worst document uninteresting.
 """
 
 from __future__ import annotations
 
 from ai import agent_run_scope
 from ai.prompts import DECISION_READING, render
-from llm_core import LLMProvider, generate
+from llm_core import LLMProvider, generate_structured
 from shared.enums import ChunkSection
 
-from agents.chat._dtos import DecisionText
+from agents.chat._dtos import DecisionText, ReadingSelection
 
-__all__ = ["read_decision_text", "format_decision_text"]
+__all__ = ["read_decision_text", "format_numbered_chunks"]
 
 _SOURCE = "agents.chat.read"
 
 _UNKNOWN_CASE = "utan ärendenummer"
 
 
-def format_decision_text(decision: DecisionText) -> str:
-    """The decision as one string, with each appendix marked where it starts.
+def format_numbered_chunks(decision: DecisionText) -> str:
+    """The decision as numbered passages, with each appendix marked where it starts.
 
-    The marker is the whole point of passing chunks rather than `raw_text`: an
-    appendix is the appealed decision, and a reader that cannot see where the
-    board's own text ends will attribute the wrong words to it.
+    The number is the address the reader answers with, so it is the chunk's
+    position in this list and nothing else — never `chunk_index`, which counts
+    over the whole document and does not survive a body-only fetch.
+
+    The appendix marker is the other half of the point: an appendix is the
+    appealed decision, and a reader that cannot see where the board's own text
+    ends will attribute the wrong words to it.
     """
     parts: list[str] = []
     current_label: str | None = None
     in_appendix = False
 
-    for chunk in decision.chunks:
+    for position, chunk in enumerate(decision.chunks):
         is_appendix = chunk.section is ChunkSection.APPENDIX
         label = chunk.appendix_label or "Bilaga"
         if is_appendix and (not in_appendix or label != current_label):
@@ -48,7 +56,7 @@ def format_decision_text(decision: DecisionText) -> str:
             parts.append("\n--- Nämndens egen text ---")
             current_label = None
         in_appendix = is_appendix
-        parts.append(chunk.text)
+        parts.append(f"[{position}] {chunk.text}")
 
     return "\n".join(parts)
 
@@ -57,15 +65,24 @@ async def read_decision_text(
     decision: DecisionText,
     question: str,
     *,
+    max_selected: int,
+    summary_words: int,
     provider: LLMProvider | None = None,
-) -> str:
-    """What this decision has to say about `question`, in a few hundred words."""
+) -> ReadingSelection:
+    """Which passages of this decision bear on `question`, and how they connect.
+
+    Raises whatever `generate_structured` raises when the model returns output
+    the schema cannot read. That is a refusal for the caller to turn into a tool
+    result, not a failed turn — see `_tools._read_decision`.
+    """
     messages = render(
         DECISION_READING,
         {
             "question": question,
             "case_number": decision.case_number or _UNKNOWN_CASE,
-            "decision_text": format_decision_text(decision),
+            "numbered_chunks": format_numbered_chunks(decision),
+            "max_selected": max_selected,
+            "max_summary_words": summary_words,
         },
     )
     # One reading is one sub-agent invocation, the same as one `query_corpus`
@@ -74,5 +91,4 @@ async def read_decision_text(
     # the orchestrator's id and every other key, leaving them indistinguishable
     # from one another in the trace stream.
     with agent_run_scope(source=_SOURCE, prompt=DECISION_READING.name):
-        response = await generate(messages, provider=provider)
-    return response.message.content
+        return await generate_structured(messages, ReadingSelection, provider=provider)

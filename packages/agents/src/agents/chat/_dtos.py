@@ -60,6 +60,29 @@ class PassageNote(BaseModel):
     caution: str | None = None
 
 
+class ReadingSelection(BaseModel):
+    """What a reading sub-agent found in one decision.
+
+    Indices, not prose. The reader is shown the decision as numbered passages
+    and hands back the numbers; the text is then fetched from the database by
+    index. So the model chooses *which* passages carry the answer and never
+    *what* they say, which is what makes reader hallucination structurally
+    impossible rather than merely discouraged.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    # `mentions` is its own verdict rather than being folded into either
+    # neighbour: a decision that raises the topic without deciding it is
+    # exactly what the orchestrator needs in order to stop reading.
+    relevance: Literal["carries", "mentions", "nothing"]
+    chunk_indices: list[int] = []
+    # How the selected passages connect, in Swedish. Guidance for the writing
+    # step, never a source — the same status as `PassageNote.carries`, and for
+    # the same reason. Empty when there is nothing to connect.
+    summary: str = ""
+
+
 class ProgressLabel(StrEnum):
     """What a client may say is happening, as a key rather than a sentence.
 
