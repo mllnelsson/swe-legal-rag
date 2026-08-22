@@ -58,6 +58,7 @@ export function makeHit(overrides: Partial<SearchHit> = {}): SearchHit {
 
 export function makeSource(overrides: Partial<SourceReference> = {}): SourceReference {
   return {
+    handle: "c1",
     document_id: "22222222-2222-2222-2222-222222222222",
     case_number: "2025-0035",
     decision_date: "2026-03-16",

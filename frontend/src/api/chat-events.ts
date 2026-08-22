@@ -107,7 +107,13 @@ export type TokenEvent = { kind: "token"; text: string };
  *  `section: "appendix"` means the appealed decision — the lower instance's
  *  words, which Överklagandenämnden may have overturned. A client must not
  *  present such an excerpt as the nämnd's own reasoning. */
+/** One passage the answer rests on.
+ *
+ *  The grain is the passage, not the decision: `handle` is the marker the
+ *  answer text carries, so several references may share a `document_id`. */
 export type SourceReference = {
+  /** The marker the prose carries, e.g. "c3". */
+  handle: string;
   document_id: string;
   case_number: string | null;
   decision_date: string | null;

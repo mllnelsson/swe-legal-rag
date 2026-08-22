@@ -5,27 +5,39 @@ import { SectionBadge } from "../../components/research/SectionBadge";
 import { decisionIdentityParts } from "../../lib/format";
 import type { SourceReference } from "../../api/chat-events";
 
+/** A stable reference, so the default does not remount the list each render. */
+const NO_SOURCES: SourceReference[] = [];
+
 export type SourceListProps = {
+  /** Cited passages, in the order the answer first referred to them. Their
+   *  position here is the superscript number the prose carries. */
   sources: SourceReference[];
+  /** Selected by the agent but never cited. Rendered after, unnumbered. */
+  uncited?: SourceReference[];
   /** True once the `sources` frame has arrived, whatever it contained. */
   received: boolean;
 };
 
-/** The decisions an answer rests on.
+/** The passages an answer rests on.
  *
- *  One entry per cited decision, not per passage — the API deduplicates by
- *  document, first selected passage winning, so the excerpt is a label rather
- *  than the whole evidence. The passage reached the model in full; this is 200
- *  characters of it.
+ *  One entry per cited passage, not per decision, so two passages of the same
+ *  decision are two entries — the superscript in the prose points at a
+ *  passage, and collapsing them would leave one of those marks pointing at
+ *  nothing. The excerpt is a label rather than the whole evidence: the passage
+ *  reached the model in full, and this is 200 characters of it.
  *
  *  An empty list is a real answer and is said out loud: a turn that found
  *  nothing, and a turn that needed nothing (a greeting, a follow-up), both send
  *  one. Rendering nothing at all would leave the reader to assume the prose was
  *  sourced when it was not. */
-export function SourceList({ sources, received }: SourceListProps) {
+export function SourceList({
+  sources,
+  uncited = NO_SOURCES,
+  received,
+}: SourceListProps) {
   if (!received) return null;
 
-  if (sources.length === 0) {
+  if (sources.length === 0 && uncited.length === 0) {
     return (
       <p
         style={{
@@ -57,7 +69,7 @@ export function SourceList({ sources, received }: SourceListProps) {
           color: "var(--text-faint)",
         }}
       >
-        {sources.length === 1 ? "Källa" : "Källor"}
+        {sources.length + uncited.length === 1 ? "Källa" : "Källor"}
       </h3>
 
       <ul
@@ -70,15 +82,26 @@ export function SourceList({ sources, received }: SourceListProps) {
           gap: "var(--space-4)",
         }}
       >
-        {sources.map((source) => (
-          <SourceCard key={source.document_id} source={source} />
+        {sources.map((source, index) => (
+          <SourceCard key={source.handle} source={source} number={index + 1} />
+        ))}
+        {/* Selected but never cited. Unnumbered on purpose: the answer did not
+            lean on them, and a number would say a superscript pointed here. */}
+        {uncited.map((source) => (
+          <SourceCard key={source.handle} source={source} number={null} />
         ))}
       </ul>
     </section>
   );
 }
 
-function SourceCard({ source }: { source: SourceReference }) {
+function SourceCard({
+  source,
+  number,
+}: {
+  source: SourceReference;
+  number: number | null;
+}) {
   const identity = decisionIdentityParts({
     caseNumber: source.case_number,
     // The chat contract carries no beslutsnummer — the two identifier spaces
@@ -107,6 +130,24 @@ function SourceCard({ source }: { source: SourceReference }) {
           gap: "var(--space-4)",
         }}
       >
+        {number !== null && (
+          <span
+            aria-label={`Källa ${number}`}
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-caption-size)",
+              fontWeight: "var(--weight-semibold)",
+              color: "var(--text-strong)",
+              background: "var(--surface-sunken)",
+              borderRadius: "var(--radius-sm)",
+              padding: "0 var(--space-2)",
+            }}
+          >
+            {number}
+          </span>
+        )}
+        {/* Never omitted. An appendix excerpt is the appealed decision — the
+            lower instance's own words, which the nämnd may have overturned. */}
         <SectionBadge section={source.section} appendixLabel={source.appendix_label} />
         {identity.map((part) => (
           <span

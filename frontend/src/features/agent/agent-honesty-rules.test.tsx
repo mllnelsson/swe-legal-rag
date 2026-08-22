@@ -22,6 +22,7 @@ import { TurnSteps } from "./TurnSteps";
 import { TurnView } from "./TurnView";
 import { applyEvent, newTurn, restoredTurn, type Step, type Turn } from "./conversation";
 import { makeSessionTurn, makeSource, makeSqlEvent } from "../../test/factories";
+import type { SourceReference } from "../../api/chat-events";
 
 function renderTurn(turn: Turn) {
   return render(
@@ -137,48 +138,123 @@ describe("rule 15 — an error is terminal", () => {
 });
 
 describe("rule 16 — a refused step is a step, not a failure", () => {
-  test("it is described as the agent waiting for the values, not as an error", () => {
-    render(
+  test("it is not described as an error", () => {
+    // The rule rides on `status`, not on a label of its own: a declined filter
+    // is a search that reported `refused`, and the next step is the lookup.
+    const { container } = render(
       <TurnSteps
-        steps={[step({ label: "search.refused", status: "refused" })]}
+        steps={[step({ label: "search.filtered", status: "refused" })]}
         streaming={false}
       />,
     );
 
-    expect(screen.getByText(/Avvaktade med filtret/)).toBeInTheDocument();
     expect(screen.queryByText(/fel/i)).not.toBeInTheDocument();
+    // Every step carries a marker; only a failure carries the error colour.
+    expect(container.innerHTML).not.toContain("--status-error-fg");
   });
 
   test("a genuine tool error is distinguishable from it", () => {
     const { container } = render(
       <TurnSteps steps={[step({ status: "error" })]} streaming={false} />,
     );
-    // The error marker is the warning triangle; a refusal never gets one.
-    expect(container.querySelector("svg")).toBeInTheDocument();
+    expect(container.innerHTML).toContain("--status-error-fg");
     expect(screen.getByText("Sökte i besluten")).toBeInTheDocument();
   });
 });
 
 describe("rule 17 — streaming text is not a finished answer", () => {
   test("a turn still streaming says it is still being written", () => {
-    render(<AnswerBody text="Enligt beslut 14/2026" streaming />);
+    render(<AnswerBody sources={[]} text="Enligt beslut 14/2026" streaming />);
     expect(screen.getByText(/Skriver vidare/)).toBeInTheDocument();
   });
 
   test("a finished answer carries no such marker", () => {
-    render(<AnswerBody text="Enligt beslut 14/2026 gäller följande." streaming={false} />);
+    render(<AnswerBody sources={[]} text="Enligt beslut 14/2026 gäller följande." streaming={false} />);
     expect(screen.queryByText(/Skriver/)).not.toBeInTheDocument();
   });
 
-  test("sources are not shown until the frame carrying them has arrived", () => {
-    // Otherwise a half-streamed answer would appear to be sourced by whatever
-    // the previous turn cited, or by nothing at all.
+  test("nothing is shown until the sources frame has arrived", () => {
+    // Sources now precede the prose, so `received` is what separates "this
+    // turn cites nothing" from "this turn has not said yet".
     render(
       <MemoryRouter>
         <SourceList sources={[]} received={false} />
       </MemoryRouter>,
     );
     expect(screen.queryByText(/vilar inte/)).not.toBeInTheDocument();
+  });
+
+  test("the writing marker is what says the answer is unfinished", () => {
+    // Sources arriving first must not read as a finished turn: they are the
+    // evidence the answer is about to rest on, not proof that it does yet.
+    render(
+      <MemoryRouter>
+        <TurnView
+          turn={{
+            ...newTurn("t1", "Vad gäller vid jäv?"),
+            sources: [makeSource()],
+            sourcesReceived: true,
+            answer: "Enligt beslut 14/2026",
+            status: "streaming" as const,
+          }}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/Skriver vidare/)).toBeInTheDocument();
+  });
+});
+
+describe("rule 22 — an inline citation resolves to a passage the reader can see", () => {
+  const cited = (answer: string, sources: SourceReference[]) =>
+    render(
+      <MemoryRouter>
+        <TurnView
+          turn={{
+            ...newTurn("t1", "Vad gäller vid jäv?"),
+            sources,
+            sourcesReceived: true,
+            answer,
+            status: "done" as const,
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+  test("the superscript and the source carry the same number", () => {
+    cited("Fristen löper från delgivning[c1].", [makeSource({ handle: "c1" })]);
+
+    // Both the mark in the prose and the card it points at are labelled alike,
+    // so counting down the list lands on the passage the mark named.
+    expect(screen.getAllByLabelText("Källa 1")).toHaveLength(2);
+  });
+
+  test("an unresolvable marker is removed, never shown raw", () => {
+    cited("Fristen löper från delgivning[c9].", [makeSource({ handle: "c1" })]);
+
+    expect(screen.queryByText(/\[c9\]/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Fristen löper från delgivning\./)).toBeInTheDocument();
+  });
+
+  test("a cited appendix passage keeps its badge", () => {
+    // Rule 13, at the citation. A superscript pointing at the appealed
+    // decision must not let the reader take it for the nämnd's reasoning.
+    cited("Stiftet avslog begäran[c1].", [
+      makeSource({ handle: "c1", section: "appendix", appendix_label: "Bilaga A" }),
+    ]);
+
+    expect(screen.getByText(/Bilaga A/)).toBeInTheDocument();
+    expect(screen.getByText(/överklagat beslut/)).toBeInTheDocument();
+  });
+
+  test("two passages of one decision stay two resolvable citations", () => {
+    const id = "33333333-3333-3333-3333-333333333333";
+    cited("Först[c1], men också[c2].", [
+      makeSource({ handle: "c1", document_id: id }),
+      makeSource({ handle: "c2", document_id: id }),
+    ]);
+
+    expect(screen.getAllByLabelText("Källa 1")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Källa 2")).toHaveLength(2);
   });
 });
 

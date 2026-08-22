@@ -1,5 +1,6 @@
 import { Icon } from "../../components/display/Icon";
 import { AnswerBody } from "./AnswerBody";
+import { parseAnswer } from "./citations";
 import { SourceList } from "./SourceList";
 import { SqlEvidence } from "./SqlEvidence";
 import { TurnSteps } from "./TurnSteps";
@@ -12,6 +13,9 @@ export type TurnViewProps = {
 /** One question and everything that came back from it. */
 export function TurnView({ turn }: TurnViewProps) {
   const streaming = turn.status === "streaming";
+  // Parsed once here and handed down, so the prose and the list cannot
+  // disagree about which passage is number two.
+  const cited = parseAnswer(turn.answer, turn.sources, streaming);
 
   return (
     <article
@@ -36,7 +40,9 @@ export function TurnView({ turn }: TurnViewProps) {
       {/* Before the prose, so the query is on screen while the number is read. */}
       <SqlEvidence events={turn.sql} />
 
-      {turn.answer !== "" && <AnswerBody text={turn.answer} streaming={streaming} />}
+      {turn.answer !== "" && (
+        <AnswerBody text={turn.answer} sources={turn.sources} streaming={streaming} />
+      )}
 
       {turn.origin === "restored" && <RestoredNotice />}
 
@@ -68,7 +74,13 @@ export function TurnView({ turn }: TurnViewProps) {
       {/* Gated on the frame having arrived, not on the turn having finished: a
           turn that failed before `sources` has none to show, and one that got
           them has them whatever happened next. */}
-      <SourceList sources={turn.sources} received={turn.sourcesReceived} />
+      {/* Ordered and numbered by the prose, not by the frame: the superscript
+          a reader counts to has to land on the passage it pointed at. */}
+      <SourceList
+        sources={cited.citedSources}
+        uncited={cited.uncitedSources}
+        received={turn.sourcesReceived}
+      />
 
       {turn.interactionId !== null && turn.status !== "streaming" && (
         <p
