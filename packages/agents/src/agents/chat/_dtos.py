@@ -74,7 +74,6 @@ class ProgressLabel(StrEnum):
     VOCABULARY_LIST = "vocabulary.list"
     SEARCH_BROAD = "search.broad"
     SEARCH_FILTERED = "search.filtered"
-    SEARCH_REFUSED = "search.refused"
     SQL_QUERY = "sql.query"
     DECISION_READ = "decision.read"
     DECISION_INSPECT = "decision.inspect"
@@ -156,7 +155,6 @@ class SearchOutcome(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     decisions: list[SearchedDecision] = []
-    total: int = 0
     # Mirrors the search diagnostics the deterministic path already publishes, so
     # the agent can tell "the corpus does not address this" from "the filter
     # excluded everything".

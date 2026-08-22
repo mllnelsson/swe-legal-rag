@@ -194,7 +194,7 @@ async def _list_vocabulary(
             for item in items[:_MAX_VOCABULARY_VALUES]
         ]
 
-    return {
+    result: dict[str, Any] = {
         "categories": values(vocabulary.categories),
         "decision_outcomes": values(vocabulary.decision_outcomes),
         "keywords": values(vocabulary.keywords),
@@ -203,6 +203,14 @@ async def _list_vocabulary(
         "earliest_decision_date": _as_text(vocabulary.earliest_decision_date),
         "latest_decision_date": _as_text(vocabulary.latest_decision_date),
     }
+    if contains is None:
+        # The facets do not publish concepts, and an empty list here reads as
+        # "the corpus has none" rather than "you have not asked yet".
+        result["concepts_note"] = (
+            "Concepts are only listed for a `contains` lookup. Call again with "
+            "one to see them."
+        )
+    return result
 
 
 def _as_text(value: Any) -> str | None:
@@ -412,10 +420,11 @@ _TOOL_DEFINITIONS = [
     ToolDefinition(
         name=ChatTool.LIST_VOCABULARY,
         description=(
-            "Lists the category, outcome, keyword and concept values that "
-            "actually occur in the corpus, with a count for each. Call this "
-            "before filtering on category, decision_outcome or entity_names — "
-            "search_decisions refuses such a filter otherwise."
+            "Lists the category, outcome and keyword values that actually "
+            "occur in the corpus, with a count for each. Call this before "
+            "filtering on category, decision_outcome or entity_names — "
+            "search_decisions refuses such a filter otherwise. Legal concepts "
+            "are returned only for a `contains` lookup."
         ),
         parameters={
             "type": "object",

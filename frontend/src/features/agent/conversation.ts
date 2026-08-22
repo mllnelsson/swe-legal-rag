@@ -112,8 +112,9 @@ export function applyEvent(turn: Turn, event: ChatEvent): Turn {
           step.id === event.id
             ? {
                 ...step,
-                // The result's label wins: a refused search reports
-                // `search.refused` where its call said `search.filtered`.
+                // The result is authoritative for both. Today its label
+                // always matches the call's; `status` is what a finished step
+                // adds, and it is the only thing that can say "refused".
                 label: event.label,
                 status: event.status,
                 detail: { ...step.detail, ...(event.detail ?? {}) },

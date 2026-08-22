@@ -327,14 +327,18 @@ class TestChatEndpointSseStream:
         assert names == ["token", "sources", "done"]
         assert events[-2]["data"]["sources"] == []
 
-    def test_a_refused_search_says_so_in_its_label(self):
-        """`search.filtered` on the result would name a search that never ran."""
+    def test_a_refused_search_says_so_in_its_status(self):
+        """`refused` is a policy decline the agent repairs from, not a failure.
+
+        It rides on `status` alone. A second label for the same tool made a
+        client choose between two ways of learning one fact.
+        """
         response = self._post(
             _agent_emitting(
                 ToolResultEvent(
                     id="tc-1",
                     tool=ChatTool.SEARCH_DECISIONS,
-                    label=ProgressLabel.SEARCH_REFUSED,
+                    label=ProgressLabel.SEARCH_FILTERED,
                     status=ToolStatus.REFUSED,
                 ),
                 DoneEvent(),
@@ -342,7 +346,7 @@ class TestChatEndpointSseStream:
         )
 
         payload = _parse_sse(response.text)[0]["data"]
-        assert payload["label"] == "search.refused"
+        assert payload["label"] == "search.filtered"
         assert payload["status"] == "refused"
 
     def test_done_carries_the_session_id(self):

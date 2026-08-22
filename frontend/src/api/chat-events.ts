@@ -33,7 +33,6 @@ export type ProgressLabel =
   | "vocabulary.list"
   | "search.broad"
   | "search.filtered"
-  | "search.refused"
   | "sql.query"
   | "decision.read"
   | "decision.inspect"

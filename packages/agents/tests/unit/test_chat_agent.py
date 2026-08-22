@@ -155,7 +155,6 @@ def _search_outcome() -> SearchOutcome:
                 ],
             )
         ],
-        total=1,
         top_vector_similarity=0.86,
     )
 
@@ -291,7 +290,10 @@ async def test_filtering_on_free_text_is_refused_until_grounded() -> None:
     assert results[0].status is ToolStatus.REFUSED
     # The call went out as a filtered search; the result says a search was
     # declined. `search.filtered` here would name a search that never ran.
-    assert results[0].label is ProgressLabel.SEARCH_REFUSED
+    # The label is the one the call went out under; `status` is what says the
+    # filter was declined. One fact, one place to read it.
+    assert results[0].label is ProgressLabel.SEARCH_FILTERED
+    assert results[0].status is ToolStatus.REFUSED
     calls = [e for e in events if isinstance(e, ToolCallEvent)]
     assert calls[0].label is ProgressLabel.SEARCH_FILTERED
 

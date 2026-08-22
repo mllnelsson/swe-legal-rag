@@ -18,7 +18,6 @@ const RUNNING: Record<ProgressLabel, string> = {
   "vocabulary.list": "Läser vilka kategorier och sökord som finns",
   "search.broad": "Söker i besluten",
   "search.filtered": "Söker i ett avgränsat urval",
-  "search.refused": "Söker i ett avgränsat urval",
   "sql.query": "Räknar i hela samlingen",
   "decision.read": "Läser ett beslut i sin helhet",
   "decision.inspect": "Följer begrepp och hänvisningar",
@@ -30,9 +29,6 @@ const FINISHED: Record<ProgressLabel, string> = {
   "vocabulary.list": "Läste kategorier och sökord",
   "search.broad": "Sökte i besluten",
   "search.filtered": "Sökte i ett avgränsat urval",
-  // Not a failure: the agent asked to filter on a value it had not looked up,
-  // and the API declined until it does. The next step is that lookup.
-  "search.refused": "Avvaktade med filtret tills värdena var kända",
   "sql.query": "Räknade i hela samlingen",
   "decision.read": "Läste ett beslut i sin helhet",
   "decision.inspect": "Följde begrepp och hänvisningar",

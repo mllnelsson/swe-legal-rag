@@ -84,7 +84,6 @@ def _to_searched_decision(hit: SearchHit) -> SearchedDecision:
 def _to_search_outcome(response: SearchResponse) -> SearchOutcome:
     return SearchOutcome(
         decisions=[_to_searched_decision(hit) for hit in response.items],
-        total=response.total,
         widened_to_appendices=response.diagnostics.widened_to_appendices,
         candidate_document_count=response.diagnostics.candidate_document_count,
         top_vector_similarity=response.diagnostics.top_vector_similarity,
@@ -92,6 +91,12 @@ def _to_search_outcome(response: SearchResponse) -> SearchOutcome:
 
 
 def _to_vocabulary(facets: DocumentFacets) -> Vocabulary:
+    """The facets as the agent sees them.
+
+    `concepts` is absent from `DocumentFacets` and is filled in only by a
+    `contains` lookup — the tool says so rather than reporting an empty list as
+    if the corpus had no legal concepts in it.
+    """
     return Vocabulary(
         categories=_facet_values(facets.categories),
         decision_outcomes=_facet_values(facets.decision_outcomes),

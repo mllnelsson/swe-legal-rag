@@ -105,16 +105,14 @@ def _step(
     label: ProgressLabel,
     *,
     duration: float,
-    result_label: ProgressLabel | None = None,
     status: ToolStatus = ToolStatus.OK,
     call_detail: dict | None = None,
     result_detail: dict | None = None,
 ) -> list[ScriptedFrame]:
     """A `tool_call` and the `tool_result` that closes it.
 
-    `result_label` exists because the two may legitimately differ: a search that
-    goes out as `search.filtered` comes back as `search.refused` when the filter
-    is declined, since `search.filtered` would name a search that never ran.
+    Both carry the same label; `status` is what distinguishes a call that did
+    the work from one that was refused or failed.
     """
     return [
         ScriptedFrame(
@@ -126,7 +124,7 @@ def _step(
             ToolResultEvent(
                 id=step_id,
                 tool=tool,
-                label=result_label or label,
+                label=label,
                 status=status,
                 detail=result_detail or {},
             ),
@@ -269,7 +267,6 @@ _RESEARCH_SCRIPT: list[ScriptedFrame] = [
         "s2",
         ChatTool.SEARCH_DECISIONS,
         ProgressLabel.SEARCH_FILTERED,
-        result_label=ProgressLabel.SEARCH_REFUSED,
         status=ToolStatus.REFUSED,
         duration=TOOL_DELAY,
         call_detail={"has_filter": True, "filter_fields": ["decision_outcome"]},

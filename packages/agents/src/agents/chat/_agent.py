@@ -52,7 +52,6 @@ from agents.chat._dtos import (
     ChatTool,
     DoneEvent,
     ErrorEvent,
-    ProgressLabel,
     SourceReference,
     SourcesEvent,
     SqlEvent,
@@ -127,20 +126,6 @@ def _status_for_result(result: Any) -> ToolStatus:
     if not isinstance(result, dict) or "error" not in result:
         return ToolStatus.OK
     return ToolStatus.REFUSED if result.get("refused") else ToolStatus.ERROR
-
-
-def _label_for_result(
-    tool: ChatTool, arguments: dict[str, Any], status: ToolStatus
-) -> ProgressLabel:
-    """The label a finished call reports under.
-
-    Only search differs from its call label: a declined filter is a step of its
-    own to a reader — the agent is about to go and read the vocabulary — and
-    `search.filtered` would describe a search that never ran.
-    """
-    if tool is ChatTool.SEARCH_DECISIONS and status is ToolStatus.REFUSED:
-        return ProgressLabel.SEARCH_REFUSED
-    return label_for_call(tool, arguments)
 
 
 def _sql_event(result: dict[str, Any], state: ChatState) -> SqlEvent:
@@ -254,8 +239,14 @@ def _messages_for(request: ChatAgentRequest) -> list[Message]:
     )
 
 
-def _call_event(call: ToolCall) -> ToolCallEvent:
-    tool = ChatTool(call.name)
+def _tool_or_none(name: str) -> ChatTool | None:
+    try:
+        return ChatTool(name)
+    except ValueError:
+        return None
+
+
+def _call_event(tool: ChatTool, call: ToolCall) -> ToolCallEvent:
     return ToolCallEvent(
         id=call.id,
         tool=tool,
@@ -264,14 +255,15 @@ def _call_event(call: ToolCall) -> ToolCallEvent:
     )
 
 
-def _result_event(call: ToolCall, result: Any) -> ToolResultEvent:
-    tool = ChatTool(call.name)
-    status = _status_for_result(result)
+def _result_event(tool: ChatTool, call: ToolCall, result: Any) -> ToolResultEvent:
     return ToolResultEvent(
         id=call.id,
         tool=tool,
-        label=_label_for_result(tool, call.arguments, status),
-        status=status,
+        # The same label the call reported. A declined filter is not a step of
+        # its own: `status` already says it was refused, and a second label for
+        # the same tool made a client choose between two ways to learn one fact.
+        label=label_for_call(tool, call.arguments),
+        status=_status_for_result(result),
         detail=_detail_for_result(tool, result),
     )
 
@@ -328,15 +320,19 @@ async def run_chat_agent(
             ):
                 match event:
                     case ToolCallStarted(call=call):
-                        yield _call_event(call)
+                        # A name that is not one of ours has no progress to
+                        # report; the loop raises ToolExecutionError for it on
+                        # the next line, which is the failure worth logging.
+                        if (tool := _tool_or_none(call.name)) is not None:
+                            yield _call_event(tool, call)
                     case ToolCallFinished(call=call, result=result):
-                        if ChatTool(call.name) is ChatTool.QUERY_CORPUS and isinstance(
-                            result, dict
-                        ):
+                        if (tool := _tool_or_none(call.name)) is None:
+                            continue
+                        if tool is ChatTool.QUERY_CORPUS and isinstance(result, dict):
                             # Before the result event, so a client that renders
                             # the query can do so while the label is on screen.
                             yield _sql_event(result, state)
-                        yield _result_event(call, result)
+                        yield _result_event(tool, call, result)
                     case ToolLoopFinished(result=loop_result):
                         # An ending with no tool call is the model answering in
                         # prose — a greeting, a thank-you, a question about what

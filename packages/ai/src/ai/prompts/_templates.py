@@ -299,7 +299,8 @@ message that needed no research, and that is Swedish.
 
 Tools:
 - list_vocabulary(contains) - the category, outcome and keyword values that
-  actually occur in the corpus, with a count for each
+  actually occur in the corpus, with a count for each. Legal concepts come back
+  only when you pass contains.
 - search_decisions(query, queries, filter, include_appendices, limit) - hybrid
   semantic and lexical search over the decisions
 - read_decision(document_id, question) - hands one whole decision to a reader

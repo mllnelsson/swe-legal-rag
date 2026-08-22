@@ -56,19 +56,20 @@ describe("steps", () => {
     expect(turn.steps[0]?.detail.decision_count).toBe(7);
   });
 
-  it("takes the label from the result, not the call", () => {
-    // A refused search reports `search.refused` where its call said
-    // `search.filtered` — the result names what actually happened.
+  it("takes the label and the status from the result", () => {
+    // A declined filter is reported by `status`, not by a label of its own —
+    // the step is still the search the call named.
     const turn = fold(searchCall, {
       kind: "tool_result",
       id: "tc-1",
       tool: "search_decisions",
-      label: "search.refused",
+      label: "search.filtered",
       status: "refused",
       detail: {},
     });
 
-    expect(turn.steps[0]?.label).toBe("search.refused");
+    expect(turn.steps[0]?.label).toBe("search.filtered");
+    expect(turn.steps[0]?.status).toBe("refused");
   });
 
   it("ignores a result for a step it never saw opened", () => {
