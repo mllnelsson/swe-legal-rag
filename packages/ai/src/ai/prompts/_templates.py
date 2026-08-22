@@ -110,7 +110,9 @@ Regler:
   säger det, utan läs efter i utdraget självt.
 - Luckorna är sådant underlaget inte räcker till. Skriv ut dem hellre än att
   fylla igen dem.
-- Returnera löpande text, inga förklaringar utanför svarstexten"""
+- Returnera löpande text: inga rubriker, ingen markdown, inga punktlistor och
+  inga förklaringar utanför svarstexten. Klienten visar texten precis som den
+  står, så ## och ** hamnar på skärmen som tecken."""
 
 _ANSWER_SYNTHESIS_USER = """\
 Fråga: {question}

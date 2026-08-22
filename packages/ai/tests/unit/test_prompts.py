@@ -134,6 +134,18 @@ class TestQueryDecomposition:
 
 
 class TestAnswerSynthesis:
+    def test_it_asks_for_plain_text(self):
+        """The client renders the answer as text, so markdown reaches a reader
+        as literal ## and **. The prompt has to say so."""
+        system = ANSWER_SYNTHESIS.system_prompt
+        assert "inga rubriker" in system
+        assert "ingen markdown" in system
+
+    def test_it_asks_for_a_handle_after_each_claim(self):
+        """Inline citations exist only if the writer is told to emit them."""
+        system = ANSWER_SYNTHESIS.system_prompt
+        assert "[c3]" in system
+
     def test_no_unrendered_placeholders_in_user_message(self):
         messages = render(
             ANSWER_SYNTHESIS,
