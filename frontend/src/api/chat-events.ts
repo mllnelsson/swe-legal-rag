@@ -22,8 +22,7 @@ export type ChatTool =
   | "read_decision"
   | "inspect_decision"
   | "query_corpus"
-  | "answer"
-  | "reply_from_context";
+  | "answer";
 
 /** What a client may say is happening — a key, never a sentence.
  *
@@ -38,8 +37,7 @@ export type ProgressLabel =
   | "sql.query"
   | "decision.read"
   | "decision.inspect"
-  | "answer.compose"
-  | "answer.direct";
+  | "answer.compose";
 
 /** `refused` is a policy decline the agent repairs from on its next iteration —
  *  an ungrounded filter, a spent reading budget. It is a step, not a failure. */

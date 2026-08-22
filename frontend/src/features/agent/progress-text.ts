@@ -23,7 +23,6 @@ const RUNNING: Record<ProgressLabel, string> = {
   "decision.read": "Läser ett beslut i sin helhet",
   "decision.inspect": "Följer begrepp och hänvisningar",
   "answer.compose": "Väljer ut underlaget",
-  "answer.direct": "Svarar utifrån samtalet",
 };
 
 /** What happened, once it has. */
@@ -38,7 +37,6 @@ const FINISHED: Record<ProgressLabel, string> = {
   "decision.read": "Läste ett beslut i sin helhet",
   "decision.inspect": "Följde begrepp och hänvisningar",
   "answer.compose": "Valde ut underlaget",
-  "answer.direct": "Svarade utifrån samtalet",
 };
 
 const UNKNOWN_RUNNING = "Arbetar";

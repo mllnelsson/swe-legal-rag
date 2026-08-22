@@ -509,19 +509,15 @@ class TestConversationalTurn:
     """A message that is not a research question.
 
     A greeting, a thank-you, or "förklara det enklare" has nothing to retrieve.
-    Before `reply_from_context` existed, such a turn reached the evidence gate
-    empty-handed and was answered with "jag hittade inget i besluten" — which is
-    a report on a search that was never worth running.
+    The orchestrator ends such a turn the way any tool loop ordinarily ends —
+    by calling no tool and writing the reply itself — and that message is what
+    reaches the user.
     """
 
     @staticmethod
     def _run(*, history: list[dict] | None = None, question: str = "Tack!"):
         provider = ScriptedProvider(
-            _tool_call(
-                ChatTool.REPLY_FROM_CONTEXT,
-                notes="Användaren tackar för föregående svar.",
-            ),
-            stream=("Varsågod!",),
+            Message(role=Role.assistant, content="Varsågod!"),
         )
         toolset = FakeToolset()
         return (
@@ -540,13 +536,7 @@ class TestConversationalTurn:
 
         events = await _collect(agent)
 
-        assert [event.type for event in events] == [
-            "tool_call",
-            "tool_result",
-            "token",
-            "sources",
-            "done",
-        ]
+        assert [event.type for event in events] == ["token", "sources", "done"]
         assert "".join(e.text for e in events if isinstance(e, TokenEvent)) == (
             "Varsågod!"
         )
@@ -555,26 +545,38 @@ class TestConversationalTurn:
         assert toolset.vocabulary_calls == 0
         assert toolset.read_calls == []
 
+    async def test_it_costs_exactly_one_model_call(self) -> None:
+        """The reply is the loop's own message, not a second call to write it."""
+        provider, _, agent = self._run()
+
+        await _collect(agent)
+
+        assert len(provider.seen_messages) == 1
+
+    async def test_it_reports_no_step_at_all(self) -> None:
+        """The absence is the point.
+
+        The agent called no tool, so there is no work to report. A step here
+        would tell the reader about a search nobody ran.
+        """
+        _, _, agent = self._run()
+
+        events = await _collect(agent)
+
+        assert not any(isinstance(e, (ToolCallEvent, ToolResultEvent)) for e in events)
+
     async def test_it_is_not_the_no_evidence_message(self) -> None:
-        """The bug this path exists to fix, stated as an assertion."""
+        """The bug this path exists to fix, stated as an assertion.
+
+        A loop that ends in prose used to have that prose discarded and the
+        evidence gate answer in its place — a report on a search nobody wanted.
+        """
         _, _, agent = self._run()
 
         events = await _collect(agent)
 
         tokens = "".join(e.text for e in events if isinstance(e, TokenEvent))
         assert "hittade inget" not in tokens
-
-    async def test_it_reports_a_label_of_its_own(self) -> None:
-        """A client must be able to say "svarar direkt", not "söker"."""
-        _, _, agent = self._run()
-
-        events = await _collect(agent)
-
-        call = next(e for e in events if isinstance(e, ToolCallEvent))
-        result = next(e for e in events if isinstance(e, ToolResultEvent))
-        assert call.label is ProgressLabel.ANSWER_DIRECT
-        assert result.label is ProgressLabel.ANSWER_DIRECT
-        assert result.status is ToolStatus.OK
 
     async def test_sources_are_empty_because_the_answer_cites_nothing(self) -> None:
         _, _, agent = self._run()
@@ -583,7 +585,7 @@ class TestConversationalTurn:
 
         assert next(e for e in events if isinstance(e, SourcesEvent)).sources == []
 
-    async def test_the_previous_turn_reaches_the_writing_step(self) -> None:
+    async def test_the_previous_turn_reaches_the_orchestrator(self) -> None:
         """ "Förklara det enklare" is answerable only from what was already said."""
         history = [
             {"role": "user", "content": "Vad gäller vid jäv?"},
@@ -595,9 +597,9 @@ class TestConversationalTurn:
 
         await _collect(agent)
 
-        reply_prompt = provider.seen_messages[-1][-1].content
-        assert "Enligt beslut 12/2024 gäller..." in reply_prompt
-        assert "Förklara det enklare." in reply_prompt
+        prompt = provider.seen_messages[-1][-1].content
+        assert "Enligt beslut 12/2024 gäller..." in prompt
+        assert "Förklara det enklare." in prompt
 
 
 async def test_exhausted_loop_ends_with_a_terminal_error() -> None:
@@ -728,12 +730,13 @@ class TestCorrelation:
             "ai.synthesize_answer",
         }
 
-    async def test_a_direct_reply_is_traced_as_its_own_kind_of_call(self) -> None:
-        """It is a billed call like any other, and a different one from synthesis."""
-        provider = ScriptedProvider(
-            _tool_call(ChatTool.REPLY_FROM_CONTEXT, notes="hälsning"),
-            stream=("Hej!",),
-        )
+    async def test_a_direct_reply_is_a_single_billed_call(self) -> None:
+        """One record, and that shape is itself the diagnostic.
+
+        A greeting costing five iterations and an embedding pass means the
+        orchestrator is searching when it should be replying.
+        """
+        provider = ScriptedProvider(Message(role=Role.assistant, content="Hej!"))
         await _collect(
             run_chat_agent(
                 ChatAgentRequest(question="Hej!"),
@@ -743,10 +746,7 @@ class TestCorrelation:
             )
         )
 
-        assert {r.context["source"] for r in self.records} == {
-            "agents.chat",
-            "ai.reply_from_context",
-        }
+        assert [r.context["source"] for r in self.records] == ["agents.chat"]
 
     async def test_a_run_without_a_caller_mints_its_own_interaction_id(self) -> None:
         """`scripts/run_agent.py` has no enclosing interaction to join."""

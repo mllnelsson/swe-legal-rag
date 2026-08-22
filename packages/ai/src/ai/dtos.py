@@ -107,22 +107,6 @@ class SynthesizeRequest(BaseModel):
     notes: str = ""
 
 
-class DirectReplyRequest(BaseModel):
-    """A turn answered from the conversation rather than from the corpus.
-
-    Deliberately carries no evidence field. There is none — that is the whole
-    distinction between this request and `SynthesizeRequest`, and giving it a
-    place to put some would blur it.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    question: str
-    conversation_history: list[dict] = []
-    # The orchestrator's terse handoff — what it read the message as.
-    notes: str = ""
-
-
 class SourceCitation(BaseModel):
     model_config = ConfigDict(frozen=True)
 

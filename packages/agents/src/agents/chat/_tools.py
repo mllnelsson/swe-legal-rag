@@ -79,18 +79,6 @@ class AnswerSelection:
 
 
 @dataclass
-class DirectReply:
-    """The turn ended without evidence because none was needed.
-
-    Deliberately not an `AnswerSelection` with empty lists: "the agent looked
-    and found nothing" and "the agent had nothing to look for" are different
-    answers to the user, and one type for both would collapse them.
-    """
-
-    notes: str
-
-
-@dataclass
 class ChatState:
     """What the agent has done so far in one run.
 
@@ -109,7 +97,6 @@ class ChatState:
     # recent, matching the SQL agent's own "last successful query is the answer".
     tabular: SqlAgentResult | None = None
     selection: AnswerSelection | None = None
-    direct_reply: DirectReply | None = None
 
 
 def label_for_call(tool: ChatTool, arguments: dict[str, Any]) -> ProgressLabel:
@@ -137,8 +124,6 @@ def label_for_call(tool: ChatTool, arguments: dict[str, Any]) -> ProgressLabel:
             return ProgressLabel.SQL_QUERY
         case ChatTool.ANSWER:
             return ProgressLabel.ANSWER_COMPOSE
-        case ChatTool.REPLY_FROM_CONTEXT:
-            return ProgressLabel.ANSWER_DIRECT
 
 
 def _ungrounded_fields(document_filter: DocumentFilter) -> list[str]:
@@ -405,11 +390,6 @@ async def _answer(
     }
 
 
-async def _reply_from_context(state: ChatState, *, notes: str = "") -> dict[str, Any]:
-    state.direct_reply = DirectReply(notes=notes)
-    return {"ok": True}
-
-
 _TOOL_DEFINITIONS = [
     ToolDefinition(
         name=ChatTool.LIST_VOCABULARY,
@@ -582,31 +562,6 @@ _TOOL_DEFINITIONS = [
             "required": ["chunk_ids"],
         },
     ),
-    ToolDefinition(
-        name=ChatTool.REPLY_FROM_CONTEXT,
-        description=(
-            "Ends your turn on the conversation alone, without any evidence. "
-            "For a greeting, a thank-you, or a question about what you just "
-            "said — rephrase it, explain it more simply, expand on it. Only "
-            "when the conversation history already holds what the reply needs. "
-            "Never for a legal question about the decisions: that is a search, "
-            "however small it sounds."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "notes": {
-                    "type": "string",
-                    "description": (
-                        "A sentence in Swedish for the writing step: what the "
-                        "message is asking for and what in the history answers "
-                        "it. Never a fact about the decisions."
-                    ),
-                }
-            },
-            "required": [],
-        },
-    ),
 ]
 
 
@@ -676,9 +631,6 @@ def build_chat_tools(
             notes=notes,
         )
 
-    async def reply_from_context(notes: str = "") -> dict[str, Any]:
-        return await _reply_from_context(state, notes=notes)
-
     executors = {
         ChatTool.LIST_VOCABULARY: list_vocabulary,
         ChatTool.SEARCH_DECISIONS: search_decisions,
@@ -686,6 +638,5 @@ def build_chat_tools(
         ChatTool.INSPECT_DECISION: inspect_decision,
         ChatTool.QUERY_CORPUS: query_corpus,
         ChatTool.ANSWER: answer,
-        ChatTool.REPLY_FROM_CONTEXT: reply_from_context,
     }
     return _TOOL_DEFINITIONS, executors, state

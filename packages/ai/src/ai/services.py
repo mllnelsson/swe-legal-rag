@@ -18,7 +18,6 @@ from ai.dtos import (
     ChunkContext,
     DecisionReading,
     DecomposeResult,
-    DirectReplyRequest,
     EntityResult,
     MetadataResult,
     QueryExpansionResult,
@@ -28,7 +27,6 @@ from ai.dtos import (
 )
 from ai.prompts import (
     ANSWER_SYNTHESIS,
-    CHAT_DIRECT_REPLY,
     DOCUMENT_SUMMARIZATION,
     ENTITY_EXTRACTION,
     METADATA_EXTRACTION,
@@ -49,7 +47,6 @@ _SOURCE_METADATA = "ai.extract_metadata"
 _SOURCE_ENTITIES = "ai.extract_entities"
 _SOURCE_SUMMARIZE = "ai.summarize_document"
 _SOURCE_SYNTHESIZE = "ai.synthesize_answer"
-_SOURCE_DIRECT_REPLY = "ai.reply_from_context"
 
 
 async def decompose_query(
@@ -200,29 +197,5 @@ async def synthesize_answer(
     }
     messages = render(ANSWER_SYNTHESIS, context)
     with trace_context(source=_SOURCE_SYNTHESIZE, prompt=ANSWER_SYNTHESIS.name):
-        async for token in generate_stream(messages, provider=provider):
-            yield token
-
-
-async def reply_from_context(
-    request: DirectReplyRequest,
-    *,
-    provider: LLMProvider | None = None,
-) -> AsyncIterator[str]:
-    """Answer from the conversation alone, streaming like any other answer.
-
-    The counterpart to `synthesize_answer` for a turn that needed no retrieval.
-    It streams for the same reason that one does: the caller has one shape to
-    forward, so a greeting and a researched answer reach a client the same way.
-    """
-    context = {
-        "question": request.question,
-        "conversation_history": json.dumps(
-            request.conversation_history or [], ensure_ascii=False
-        ),
-        "notes": request.notes or _NOTHING,
-    }
-    messages = render(CHAT_DIRECT_REPLY, context)
-    with trace_context(source=_SOURCE_DIRECT_REPLY, prompt=CHAT_DIRECT_REPLY.name):
         async for token in generate_stream(messages, provider=provider):
             yield token

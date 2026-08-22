@@ -10,11 +10,11 @@ what keeps it affordable: a passage placed in the loop is re-sent on every later
 iteration, while one placed here is sent once.
 
 The loop has two ways to end, because a conversation has two kinds of message in
-it. `answer` ends a turn on evidence and hands it to synthesis;
-`reply_from_context` ends a turn that needed no evidence — a greeting, a
-thank-you, "förklara det enklare" — and hands it to a prompt that may build only
-on what has already been said. Both stream, so a caller has one shape to
-forward.
+it. `answer` ends a turn on evidence and hands it to synthesis. A turn that
+needed no evidence — a greeting, a thank-you, "förklara det enklare" — ends the
+way a tool loop ordinarily ends: the model calls no tool and writes the reply
+itself, and that message is what the caller gets. It arrives whole rather than
+token by token, which for two sentences costs nothing and saves a round-trip.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ import ai
 from ai import agent_run_scope, interaction_scope
 from ai.dtos import (
     ChunkContext,
-    DirectReplyRequest,
     SynthesizeRequest,
     TabularEvidence,
 )
@@ -316,6 +315,8 @@ async def run_chat_agent(
     ):
         logger.info("Chat agent interaction %s", interaction_id)
 
+        direct_reply: str | None = None
+
         try:
             async for event in tool_loop(
                 _messages_for(request),
@@ -323,7 +324,7 @@ async def run_chat_agent(
                 executors,
                 provider=llm_provider,
                 max_iterations=settings.chat_agent_max_iterations,
-                terminal_tools={ChatTool.ANSWER, ChatTool.REPLY_FROM_CONTEXT},
+                terminal_tools={ChatTool.ANSWER},
             ):
                 match event:
                     case ToolCallStarted(call=call):
@@ -336,8 +337,14 @@ async def run_chat_agent(
                             # the query can do so while the label is on screen.
                             yield _sql_event(result, state)
                         yield _result_event(call, result)
-                    case ToolLoopFinished():
-                        pass
+                    case ToolLoopFinished(result=loop_result):
+                        # An ending with no tool call is the model answering in
+                        # prose — a greeting, a thank-you, a question about what
+                        # was just said. Kept rather than discarded: this used
+                        # to fall through to the evidence gate and reach the
+                        # user as "Jag hittade inget i besluten".
+                        if not loop_result.message.tool_calls:
+                            direct_reply = loop_result.message.content
         except MaxIterationsError:
             logger.warning(
                 "Chat agent %s exhausted its iteration budget", interaction_id
@@ -359,24 +366,10 @@ async def run_chat_agent(
             yield ErrorEvent(message=_FAILURE_MESSAGE)
             return
 
-        if state.direct_reply is not None:
-            # The turn gathered nothing because nothing was needed — a greeting,
-            # a thank-you, a question about the previous answer. Checked before
-            # the evidence gate, which would otherwise answer "tack" with "I
-            # found nothing in the decisions".
-            reply = DirectReplyRequest(
-                question=request.question,
-                conversation_history=request.history,
-                notes=state.direct_reply.notes,
-            )
-            try:
-                async for token in ai.reply_from_context(reply, provider=llm_provider):
-                    yield TokenEvent(text=token)
-            except Exception:
-                logger.exception("Chat agent %s direct reply failed", interaction_id)
-                yield ErrorEvent(message=_FAILURE_MESSAGE)
-                return
-
+        if direct_reply is not None:
+            # Checked before the evidence gate, which would otherwise answer
+            # "tack" with "I found nothing in the decisions".
+            yield TokenEvent(text=direct_reply)
             # An empty sources list, and it is the truthful one: this answer
             # rests on the conversation, not on any decision.
             yield SourcesEvent(sources=[])

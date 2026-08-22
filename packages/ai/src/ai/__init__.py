@@ -8,7 +8,6 @@ from ai.dtos import (
     DateFilter,
     DecomposeRequest,
     DecomposeResult,
-    DirectReplyRequest,
     EmbedRequest,
     EmbedResult,
     EntityRequest,
@@ -56,7 +55,6 @@ from ai.services import (
     expand_query,
     extract_entities,
     extract_metadata,
-    reply_from_context,
     summarize_document,
     synthesize_answer,
 )
@@ -89,7 +87,6 @@ __all__ = [
     "extract_entities",
     "summarize_document",
     "synthesize_answer",
-    "reply_from_context",
     # Per-task model assignment. A role is an LLMRole member plus a matching
     # entry under `roles:` in llm_config.yaml; both halves are required.
     "create_llm_provider",
@@ -130,7 +127,6 @@ __all__ = [
     "DecomposeResult",
     "ChunkContext",
     "DecisionReading",
-    "DirectReplyRequest",
     "SynthesizeRequest",
     "TabularEvidence",
     "SourceCitation",

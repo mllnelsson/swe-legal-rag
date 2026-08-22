@@ -35,7 +35,7 @@ describe("the label vocabulary the API owns", () => {
     // Guards the regex itself: an empty list would make every test below pass.
     expect(labels.length).toBeGreaterThan(5);
     expect(labels).toContain("search.broad");
-    expect(labels).toContain("answer.direct");
+    expect(labels).toContain("answer.compose");
   });
 
   it.each(labels)("has Swedish words for %s while it runs", (label) => {

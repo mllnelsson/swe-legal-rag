@@ -298,19 +298,14 @@ class TestChatEndpointSseStream:
         assert source["appendix_label"] == "Bilaga A"
 
     def test_a_direct_reply_is_a_turn_of_its_own_shape(self):
-        """A greeting: one step, prose, no sources, done — and no search frame."""
+        """A greeting: prose, no sources, done — and no step frame at all.
+
+        The absence is the assertion. The agent called no tool, so there is no
+        progress to report, and a client that showed "söker i besluten" here
+        would be describing work nobody did.
+        """
         response = self._post(
             _agent_emitting(
-                ToolCallEvent(
-                    id="tc-1",
-                    tool=ChatTool.REPLY_FROM_CONTEXT,
-                    label=ProgressLabel.ANSWER_DIRECT,
-                ),
-                ToolResultEvent(
-                    id="tc-1",
-                    tool=ChatTool.REPLY_FROM_CONTEXT,
-                    label=ProgressLabel.ANSWER_DIRECT,
-                ),
                 TokenEvent(text="Varsågod!"),
                 SourcesEvent(sources=[]),
                 DoneEvent(),
@@ -319,11 +314,11 @@ class TestChatEndpointSseStream:
         )
 
         events = _parse_sse(response.text)
-        assert events[0]["data"]["label"] == "answer.direct"
-        assert events[0]["data"]["tool"] == "reply_from_context"
-        assert events[1]["data"]["status"] == "ok"
+        names = [event["event"] for event in events]
+        assert "tool_call" not in names
+        assert "tool_result" not in names
+        assert names == ["token", "sources", "done"]
         assert events[-2]["data"]["sources"] == []
-        assert events[-1]["event"] == "done"
 
     def test_a_refused_search_says_so_in_its_label(self):
         """`search.filtered` on the result would name a search that never ran."""
@@ -634,8 +629,8 @@ class TestScriptedChat:
         response, _, _ = self._post(ChatScript.DIRECT)
 
         names = [event["event"] for event in _parse_sse(response.text)]
-        assert names[0] == "tool_call"
-        assert "token" in names
+        assert names[0] == "token"
+        assert "tool_call" not in names
         assert names[-1] == "done"
 
     def test_the_research_script_carries_sql_and_sources(self):
@@ -671,7 +666,8 @@ class TestScriptedChat:
         short, _, _ = self._post(ChatScript.AUTO, message="Tack!")
         long, _, _ = self._post(ChatScript.AUTO, message="Vad gäller vid jäv i val?")
 
-        assert "answer.direct" in short.text
+        # The direct script's signature is what it lacks: no step frames.
+        assert "tool_call" not in short.text
         assert "answer.compose" in long.text
 
     def test_off_runs_the_real_agent(self):

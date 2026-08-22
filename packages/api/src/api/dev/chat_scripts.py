@@ -83,6 +83,14 @@ class ScriptedFrame:
     event: AgentEvent
 
 
+def _after(delay: float, frames: list[ScriptedFrame]) -> list[ScriptedFrame]:
+    """`frames`, with the first one waiting `delay` instead of its own."""
+    if not frames:
+        return frames
+    first, *rest = frames
+    return [ScriptedFrame(delay, first.event), *rest]
+
+
 def stream_text(text: str, *, delay: float = TOKEN_DELAY) -> list[ScriptedFrame]:
     """One frame per word, spaces kept, so the pieces rejoin to `text` exactly.
 
@@ -313,15 +321,12 @@ _RESEARCH_SCRIPT: list[ScriptedFrame] = [
     ScriptedFrame(0.0, DoneEvent()),
 ]
 
-# Nothing to retrieve: one step, an empty sources list that is the truthful one.
+# Nothing to retrieve, and so no step at all: the agent called no tool, which is
+# exactly what a client sees. The empty sources list is the truthful one.
 _DIRECT_SCRIPT: list[ScriptedFrame] = [
-    *_step(
-        "d1",
-        ChatTool.REPLY_FROM_CONTEXT,
-        ProgressLabel.ANSWER_DIRECT,
-        duration=DIRECT_DELAY,
-    ),
-    *stream_text(_DIRECT_ANSWER),
+    # The pause rides on the first token rather than on a step frame: there is
+    # no step to show, and a reply with no thinking time at all reads as canned.
+    *_after(DIRECT_DELAY, stream_text(_DIRECT_ANSWER)),
     ScriptedFrame(0.2, SourcesEvent(sources=[])),
     ScriptedFrame(0.0, DoneEvent()),
 ]
