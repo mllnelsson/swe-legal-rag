@@ -45,6 +45,7 @@ _APPENDIX_CHUNK_ID = uuid.UUID("33333333-3333-3333-3333-333333333333")
 _BODY_TEXT = "Nämnden avslår överklagandet med hänvisning till kyrkoordningen kap. 34."
 _APPENDIX_TEXT = "Stiftet beslutade att avslå ansökan om tjänstetillsättning."
 # Long enough that a test can prove it never reaches an orchestrator message.
+_READ_CHUNK_ID = uuid.UUID("00000000-0000-0000-0000-0000000000c1")
 _FULL_DECISION_TEXT = "Beslutets fullständiga lydelse. " * 400
 
 
@@ -117,7 +118,10 @@ class FakeToolset:
             case_number="12/2024",
             chunks=[
                 DecisionTextChunk(
-                    chunk_index=0, text=_FULL_DECISION_TEXT, section=ChunkSection.BODY
+                    chunk_id=_READ_CHUNK_ID,
+                    chunk_index=0,
+                    text=_FULL_DECISION_TEXT,
+                    section=ChunkSection.BODY,
                 )
             ],
         )

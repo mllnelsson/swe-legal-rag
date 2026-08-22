@@ -166,6 +166,7 @@ class SearchOutcome(BaseModel):
 class DecisionTextChunk(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    chunk_id: uuid.UUID
     chunk_index: int
     text: str
     section: ChunkSection = ChunkSection.BODY

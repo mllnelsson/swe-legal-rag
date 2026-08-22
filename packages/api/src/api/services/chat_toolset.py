@@ -196,6 +196,7 @@ class ApiChatToolset:
             case_number=detail.document.case_number,
             chunks=[
                 DecisionTextChunk(
+                    chunk_id=chunk.chunk_id,
                     chunk_index=chunk.chunk_index,
                     text=chunk.text,
                     section=chunk.section,
