@@ -323,6 +323,21 @@ describe("rule 21 — a reopened conversation shows what was said, not what it r
     expect(screen.queryByText("Källor")).not.toBeInTheDocument();
   });
 
+  test("its prose shows no marker it cannot resolve", () => {
+    // The persisted answer still has `[c1]` in it — the passages are gone, so
+    // there is nothing for a superscript to point at, and a bare `[c1]` on
+    // screen would be a reference to nothing.
+    renderTurn(
+      restoredTurn(
+        "r0",
+        makeSessionTurn({ answer: "Fristen löper från delgivning[c1]." }),
+      ),
+    );
+
+    expect(screen.queryByText(/\[c1\]/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Fristen löper från delgivning\./)).toBeInTheDocument();
+  });
+
   test("a live turn that cited nothing keeps saying so, and carries no marker", () => {
     let turn = newTurn("t1", "tack");
     turn = applyEvent(turn, { kind: "token", text: "Varsågod!" });
