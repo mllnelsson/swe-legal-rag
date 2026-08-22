@@ -61,6 +61,16 @@ describe("parseAnswer", () => {
     }
   });
 
+  it("renders a complete marker that lands at the very end of a chunk", () => {
+    // The boundary between the two rules above: `[c1]` is finished even though
+    // nothing follows it, and suppressing it would make the last citation of
+    // every answer flicker in only when the next token arrived.
+    const { segments, citedSources } = parseAnswer("Fristen löper[c1]", [c1], true);
+
+    expect(textOf(segments)).toBe("Fristen löper[1]");
+    expect(citedSources).toHaveLength(1);
+  });
+
   it("keeps a trailing bracket once the answer is finished", () => {
     expect(textOf(parseAnswer("Se not [", [c1], false).segments)).toBe("Se not [");
   });
