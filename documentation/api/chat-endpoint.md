@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys, sources, then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the per-passage sources event a citation marker resolves against, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-22T00:00:00Z
+timestamp: 2026-08-22T21:40:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -156,12 +156,16 @@ them. Unlike the progress events, this one is not decorative.
 ```
 
 One entry per cited **passage**, not per decision — several entries may share a
-`document_id`. `handle` is the marker the answer's prose carries directly after
-the claim it supports (`[c3]`, or `[c3][c7]` when several passages support one
-sentence); a client resolves a marker against the entry with the matching
-`handle` to render an inline citation, and a marker naming a handle absent from
-this list (or a reopened conversation, whose sources were never persisted) has
-nothing to resolve against and must not be shown raw. `section: "appendix"`
+`document_id`. An entry may originate from a
+[reading](/retrieval/chat-agent.md#reading-a-decision-is-a-sub-agent) as well as
+a search — both surfaces feed the same handle assignment, so a passage never
+gets a second handle just because a reading also pointed at it. `handle` is the
+marker the answer's prose carries directly after the claim it supports (`[c3]`,
+or `[c3][c7]` when several passages support one sentence); a client resolves a
+marker against the entry with the matching `handle` to render an inline
+citation, and a marker naming a handle absent from this list (or a reopened
+conversation, whose sources were never persisted) has nothing to resolve
+against and must not be shown raw. `section: "appendix"`
 **means the appealed decision** — the lower instance's words, which
 Överklagandenämnden may have overturned — and `appendix_label` names it
 ("Bilaga A"). A client must not present such an excerpt as the nämnd's own

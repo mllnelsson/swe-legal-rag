@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-22T00:00:00Z
+timestamp: 2026-08-22T21:40:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -100,6 +100,12 @@ lives in the [ai package](/packages/ai.md).
   as that final event rather than as one; `run_tool_loop(...)` drains the generator for a
   caller that wants only the result, unchanged in shape from before (the [SQL
   agent](/api/sql-agent.md) uses this).
+
+  A non-string tool result is serialised with `json.dumps(result, ensure_ascii=False)`.
+  Escaping every non-ASCII character to `\uXXXX` would inflate a Swedish-heavy result by
+  roughly half, and the inflated string is paid for again on every later iteration since
+  it stays in `history` — the provider accepts UTF-8 directly either way, so there is
+  nothing `ensure_ascii=True` buys.
 
   `tool_loop` takes an optional `terminal_tools: set[str]`. Naming a tool there means
   the loop executes it and ends the run rather than looping again. Without it a run ends

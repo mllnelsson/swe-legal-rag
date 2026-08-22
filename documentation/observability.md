@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-22T00:00:00Z
+timestamp: 2026-08-22T21:40:00Z
 ---
 
 # LLM Observability
@@ -48,6 +48,18 @@ away.
 - **Local embeddings.** No API call, no token accounting, and a contribution of
   exactly zero to what a question cost.
 - **Structured application logging.** Out of scope; traces are not a log.
+- **Tool definitions.** A trace records which tools were *called* and with what
+  arguments, never which tools the model was *offered* — a change to a tool's
+  description or parameter schema leaves no trace of the change itself, only of
+  how the model then behaved.
+- **The last iteration's own tool results, when nothing calls again.** A
+  `tool_loop` record's `messages` carries the *previous* iteration's tool call
+  and result as history, so the final call's result is only ever written into a
+  record that never gets made. Benign for chat: the loop ordinarily ends on the
+  terminal `answer` tool, whose arguments are captured directly in
+  `response_tool_calls`, and `answer` executes no further tool. A run that
+  instead ends by raising `MaxIterationsError` loses the record of whatever its
+  last tool call actually returned.
 
 ## Record schema
 
@@ -162,6 +174,10 @@ produced traces in this repo):
   one folder rather than a scan filtered by `context.interaction_id` — `ls` shows the
   shape of a turn at a glance. See [correlation](#correlation--the-wiring-invariant)
   for who opens it.
+- **`agents.chat.read`'s record carries `operation: "generate_structured"`.** The
+  [reader](/retrieval/chat-agent.md#reading-a-decision-is-a-sub-agent) answers via a
+  JSON schema (`ReadingSelection`) rather than free text, so its record parses and
+  reads the same way `ai.expand_query`'s or `ai.extract_metadata`'s does.
 - **The filename** sorts into call order, since time-of-day comes first. `{id8}` is
   the record's own `id` truncated to 8 characters — timestamps alone would be enough
   while calls run sequentially, but this keeps filenames unique if tool calls ever run

@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Conversational Agent
-description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set with one terminal tool, `answer`, and a plain no-tool reply as the other way a turn ends; two Mistral sub-agents for reading and counting; and a streamed writing call that marks each claim with the passage handle it rests on.
+description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set with one terminal tool, `answer`, and a plain no-tool reply as the other way a turn ends; two Mistral sub-agents, one that counts and one that selects citable passages from a decision rather than summarising it; and a streamed writing call that marks each claim with the passage handle it rests on.
 tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-22T00:00:00Z
+timestamp: 2026-08-22T21:40:00Z
 ---
 
 # Conversational Agent
@@ -47,7 +47,7 @@ placed in the loop is re-sent on every later iteration, while one placed in the
 synthesis prompt is sent once.
 
 The synthesis prompt is **fresh and compact** — the selected passages, each
-marked with its handle, plus the reader's extracts, the SQL rows and the
+marked with its handle, plus the readings' guidance, the SQL rows and the
 agent's annotations and gaps — not the loop's own history. It is also where the
 answer becomes Swedish: the orchestrator reasons in English over Swedish
 passages and tool results, and the synthesis step writes the Swedish prose the
@@ -199,17 +199,40 @@ documents exceed 20,000.
 
 Putting whole decisions in the orchestrator's context would make cost scale with
 `documents × loop iterations × session turns`. Instead `read_decision` hands the
-document, the user's question and the orchestrator's instructions to the `read`
-role and returns only a focused extract. The orchestrator's context never holds
-a decision, which is what makes the size of the worst document uninteresting and
-why no character budget is needed.
+document — shown as numbered passages, `[0] …`, `[1] …` — the user's question and
+the orchestrator's instructions to the `read` role. The reader does not
+summarise: it returns a `ReadingSelection` (`agents/chat/_dtos.py`) —
+`relevance` (`"carries"`, `"mentions"` or `"nothing"`), the `chunk_indices` that
+bear on the question, and a short `summary` of how they connect. The text of
+each selected index is then fetched from `DecisionText.chunks` by position, never
+written by the model, which is what makes reader hallucination structurally
+impossible rather than merely discouraged. The orchestrator's context still never
+holds a decision, which is what makes the size of the worst document
+uninteresting.
+
+Selected passages go through the same `_assign_chunk_handle` that search results
+do, so they get ordinary `c` handles and are citable — and a passage both search
+and a reading surface keeps the one handle it already has rather than appearing
+twice. `relevance == "nothing"` records nothing: no handles, no reading, nothing
+for the writing step to read. An index outside the decision is dropped and
+logged rather than failing the call, and a `generate_structured` call the schema
+cannot parse comes back to the orchestrator as a refusal (`{"error": …,
+"refused": True}`) for the loop to repair from, not a failed turn.
+
+**The invariant this establishes.** Every factual claim in an answer traces to
+either a verbatim passage present in `sources`, or the query shown in the `sql`
+frame. A reading is guidance about which passages of a decision answer the
+question and how they connect — it is never itself evidence; see [what the
+answer may assert](#what-the-answer-may-assert).
 
 **It reads chunks, never `raw_text`.** `raw_text` is the flattened PDF, with the
 nämnd's ruling and the appealed decision concatenated and no marker between
 them. Appendices average 5,888 characters and 168 of 184 documents have one, so
 this is the common case, not an edge. The reader is given body text by default,
 appendices only on request, and each appendix boundary marked in the text it
-sees. Everything downstream — `chunks.section`, `appendix_label`, the [sources
+sees — `format_numbered_chunks` keeps the same `--- Bilaga (det överklagade
+beslutet) ---` markers the passage numbering is laid over. Everything
+downstream — `chunks.section`, `appendix_label`, the [sources
 event](/api/chat-endpoint.md#event-sources) — depends on that distinction
 surviving.
 
@@ -229,6 +252,10 @@ agent's annotations, and its gaps. Rules that matter:
   claim against the passage text itself. Freeform notes had no enforceable line
   between guidance ("c3 carries the deadline rule") and a claim ("the deadline
   is three weeks"); structured fields have nowhere to put the second.
+- **A reading has the same status.** It names which passages of a decision
+  answer the question and how they connect, never what those passages say; the
+  writer reads that from the passages themselves, the same way it does for an
+  annotation.
 - **Every claim is marked with the handle it rests on.** The prompt asks for
   `[c3]` directly after the sentence it supports — `[c3][c7]` when several
   passages support one sentence, no marker at all for a claim resting only on
@@ -260,6 +287,8 @@ they govern, not in [`llm_config.yaml`](/reference/llm-config.md), the same way
 | `chat_agent_max_iterations` | 8 | Tool-loop budget |
 | `chat_agent_max_documents_read` | 5 | Decisions readable in full per run; exceeding it is a refusal, not an error |
 | `chat_agent_max_chunks_cited` | 12 | Passages the answer may be built from |
+| `chat_agent_max_chunks_per_reading` | 6 | Passages one reading may point at; without a cap the reader could hand back the whole decision and undo the reason it is a sub-agent at all |
+| `chat_agent_reading_summary_words` | 80 | Words a reading's connecting `summary` may run to — long enough to say how passages relate, not long enough to be read instead of them |
 | `chat_agent_search_limit` | 8 | Decisions one search returns |
 | `chat_agent_chunks_per_decision` | 2 | Passages per decision one search returns |
 
@@ -269,17 +298,21 @@ verbatim text into a single tool result — which the loop then re-sends on ever
 later iteration; two brings it to ~26,000. Two is enough to judge a decision's
 relevance, and the whole text is a `read_decision` away.
 
-Together with `chat_agent_max_iterations` and `chat_agent_max_documents_read` they are
-also the latency levers. A turn is budgeted at **under a minute**
-([NFR1b](/prd.md)), and a turn that misses it is usually one that went round more
-times, or read more decisions, than the question needed — not a slow model.
-`read_decision` is the one to watch: each call is a whole document through the
-`read` role, so a run that spends its budget of five adds several sub-agent
-round-trips to a loop that was already several iterations long. Measured on a broad
-question ("Vad har nämnden sagt om jäv?"), four iterations plus four readings ran to
-roughly four minutes, while the same question answered from passages alone came in
-under two. The prompt tells the orchestrator to read only when the passages leave the
-question open; the cap is what holds when it reads anyway.
+**Latency is dominated by the loop, not by the sub-agents.** A turn is budgeted at
+**under a minute** ([NFR1b](/prd.md)) and a broad question does not meet it. The
+trace records say where the time goes, and it is not where the tool names suggest:
+on two measured turns against the real corpus, the orchestrator's own iterations
+were 52% and 65% of the wall clock, at roughly 30–60 seconds and ~1,000 output
+tokens *each*, while the whole reading sub-agent was 21% and 2%. One reading costs
+about six seconds.
+
+So `chat_agent_max_documents_read` is a latency lever only indirectly: what a
+reading really costs is the extra **iteration** the loop must take to use its
+result, and an iteration is the expensive unit here. `chat_agent_max_iterations` is
+the lever that bounds the thing actually being paid for. Reducing what the
+orchestrator emits per iteration — or running it on a faster model, keeping the
+`chat` role for synthesis where prose quality is the point — is the change that
+would move NFR1b; capping reads is not.
 
 Search itself runs under [`SearchSettings`](/packages/api.md), the same bounds
 `POST /api/search` uses, so the two paths cannot drift apart.

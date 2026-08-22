@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-22T00:00:00Z
+timestamp: 2026-08-22T21:40:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -48,16 +48,18 @@ cover every use case:
 | `QUERY_EXPANSION` | JSON (`QueryExpansionResult` schema) | `{question}`, `{max_variants}` |
 | `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{readings}`, `{tabular}`, `{annotations}`, `{gaps}`, `{conversation_history}` |
 | `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — **the one English prompt here** | `{question}`, `{today}`, `{conversation_history}` |
-| `DECISION_READING` | Plain Swedish text | `{question}`, `{case_number}`, `{decision_text}` |
+| `DECISION_READING` | JSON (`ReadingSelection` schema) | `{question}`, `{case_number}`, `{numbered_chunks}`, `{max_selected}`, `{max_summary_words}` |
 | `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
 | `ENTITY_EXTRACTION` | JSON (`EntityResult` schema) | `{raw_text}`, `{case_number}` |
 | `DOCUMENT_SUMMARIZATION` | Plain Swedish text | `{raw_text}` |
 | `TEXT_TO_SQL` | Plain text (tool loop, no JSON schema) | `{question}`, `{schema}` |
 
-`QUERY_EXPANSION`'s cap on variant count and `TEXT_TO_SQL`'s schema block both live in the
-user template, not the system prompt, for the same reason: `render()` only formats the
-user template with `context`, so a `{max_variants}` or `{schema}` placeholder in the system
-prompt would reach the model verbatim instead of being substituted.
+`QUERY_EXPANSION`'s cap on variant count, `DECISION_READING`'s caps on selected-passage
+count and summary length, and `TEXT_TO_SQL`'s schema block all live in the user
+template, not the system prompt, for the same reason: `render()` only formats the
+user template with `context`, so a `{max_variants}`, `{max_selected}` or `{schema}`
+placeholder in the system prompt would reach the model verbatim instead of being
+substituted.
 
 `TEXT_TO_SQL` is rendered directly by [`agents.run_sql_agent`](/packages/agents.md) via
 `render()`, not through a function in `ai/services.py` — the agent owns its own tool loop
@@ -80,11 +82,15 @@ all prompts instruct the model to work in Swedish.
 
 `synthesize_answer` is an async generator (SSE critical path): it renders
 `ANSWER_SYNTHESIS` and yields tokens without buffering. Its request carries an evidence
-bundle, not just passages — `chunks`, `readings` (what a document reader found),
-`tabular` (a SQL result with the query that produced it), `annotations` (one
-`PassageNote` per selected passage: what it carries, and an optional caution) and
-`gaps` (what the evidence does not reach) — and each section renders as `(inget)` when
-empty, so an absent count reads as "not established" rather than "not mentioned".
+bundle, not just passages — `chunks`, `readings` (which passages of a decision a
+reader selected, and how they connect — guidance, never itself a source, the same
+status as an annotation), `tabular` (a SQL result with the query that produced it),
+`annotations` (one `PassageNote` per selected passage: what it carries, and an
+optional caution) and `gaps` (what the evidence does not reach) — and each section
+renders as `(inget)` when empty, so an absent count reads as "not established"
+rather than "not mentioned". `ANSWER_SYNTHESIS` states the readings rule
+explicitly, alongside the annotations one it already had: never assert something
+because a genomläsning says it, read it in the utdrag it names.
 Passages are prefixed `[c3 · Mål {case_number}]`, and an appendix passage additionally
 names itself as the appealed decision, because the model would otherwise present the
 lower instance's words as the nämnd's own. The prompt asks the model to mark each claim
@@ -125,6 +131,12 @@ removed or renamed.
 `case_number`, `handle` (the orchestrator's passage handle, e.g. `c3`, which the writer
 marks a claim with), `section` and `appendix_label`. Nothing else: the writer quotes a
 passage and attributes it, and grades nothing.
+
+`DecisionReading` carries `handles` (the passages a reading selected, as ordinary
+`c`-style handles already present in `chunks`) and `summary` (how those passages
+connect, in Swedish) — never the decision's own text. The writer reads the named
+passages from `chunks`; `summary` is guidance about where a finding lives, not the
+finding itself.
 
 ## Configuration (`ai/llm_config.py`)
 
