@@ -1,1 +1,1 @@
-- [Repo facts: OKF bundle mapping](repo_facts_okf.md) — worktree/untracked-diff gotcha, frontend/ concept mapping, chat/frontend contradiction pattern, PRD left alone on purpose.
+- [Repo facts: OKF bundle mapping](repo_facts_okf.md) — fan-out sets (one code change, many docs), where each kind of thing gets documented, bundle anchor/log conventions, standing scope rules, recurring drift to grep for.
