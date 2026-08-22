@@ -15,14 +15,10 @@ it. `answer` ends a turn on evidence and hands it to synthesis;
 thank-you, "förklara det enklare" — and hands it to a prompt that may build only
 on what has already been said. Both stream, so a caller has one shape to
 forward.
-
-The loop runs as a task pushing to a queue this generator drains, because
-`tool_loop`'s progress callbacks are awaited inside it and so cannot yield.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -43,7 +39,10 @@ from llm_core import (
     MaxIterationsError,
     Message,
     ToolCall,
+    ToolCallFinished,
+    ToolCallStarted,
     ToolExecutionError,
+    ToolLoopFinished,
     tool_loop,
 )
 
@@ -245,53 +244,8 @@ def _has_evidence(state: ChatState) -> bool:
     )
 
 
-async def _drive_loop(
-    request: ChatAgentRequest,
-    tools: list[Any],
-    executors: dict[str, Any],
-    state: ChatState,
-    settings: ChatAgentSettings,
-    provider: LLMProvider | None,
-    queue: asyncio.Queue[AgentEvent | None],
-) -> None:
-    """Run the tool loop, pushing progress events as it goes.
-
-    Always closes the queue with a sentinel, including on failure — the drain
-    loop terminates on it, and the exception is re-raised to the caller when it
-    awaits this task.
-    """
-
-    async def on_tool_call(call: ToolCall, _history: list[Message]) -> None:
-        tool = ChatTool(call.name)
-        await queue.put(
-            ToolCallEvent(
-                id=call.id,
-                tool=tool,
-                label=label_for_call(tool, call.arguments),
-                detail=_detail_for_call(tool, call.arguments),
-            )
-        )
-
-    async def on_tool_result(
-        call: ToolCall, result: Any, _history: list[Message]
-    ) -> None:
-        tool = ChatTool(call.name)
-        if tool is ChatTool.QUERY_CORPUS and isinstance(result, dict):
-            # Before the result event, so a client that renders the query can
-            # do so while the label is still on screen.
-            await queue.put(_sql_event(result, state))
-        status = _status_for_result(result)
-        await queue.put(
-            ToolResultEvent(
-                id=call.id,
-                tool=tool,
-                label=_label_for_result(tool, call.arguments, status),
-                status=status,
-                detail=_detail_for_result(tool, result),
-            )
-        )
-
-    messages = render(
+def _messages_for(request: ChatAgentRequest) -> list[Message]:
+    return render(
         CHAT_ORCHESTRATION,
         {
             "question": request.question,
@@ -300,19 +254,27 @@ async def _drive_loop(
         },
     )
 
-    try:
-        await tool_loop(
-            messages,
-            tools,
-            executors,
-            provider=provider,
-            max_iterations=settings.chat_agent_max_iterations,
-            terminal_tools={ChatTool.ANSWER, ChatTool.REPLY_FROM_CONTEXT},
-            on_tool_call=on_tool_call,
-            on_tool_result=on_tool_result,
-        )
-    finally:
-        await queue.put(None)
+
+def _call_event(call: ToolCall) -> ToolCallEvent:
+    tool = ChatTool(call.name)
+    return ToolCallEvent(
+        id=call.id,
+        tool=tool,
+        label=label_for_call(tool, call.arguments),
+        detail=_detail_for_call(tool, call.arguments),
+    )
+
+
+def _result_event(call: ToolCall, result: Any) -> ToolResultEvent:
+    tool = ChatTool(call.name)
+    status = _status_for_result(result)
+    return ToolResultEvent(
+        id=call.id,
+        tool=tool,
+        label=_label_for_result(tool, call.arguments, status),
+        status=status,
+        detail=_detail_for_result(tool, result),
+    )
 
 
 def _format_history(history: list[dict]) -> str:
@@ -354,15 +316,28 @@ async def run_chat_agent(
     ):
         logger.info("Chat agent interaction %s", interaction_id)
 
-        queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
-        loop_task = asyncio.create_task(
-            _drive_loop(request, tools, executors, state, settings, llm_provider, queue)
-        )
-
         try:
-            while (event := await queue.get()) is not None:
-                yield event
-            await loop_task
+            async for event in tool_loop(
+                _messages_for(request),
+                tools,
+                executors,
+                provider=llm_provider,
+                max_iterations=settings.chat_agent_max_iterations,
+                terminal_tools={ChatTool.ANSWER, ChatTool.REPLY_FROM_CONTEXT},
+            ):
+                match event:
+                    case ToolCallStarted(call=call):
+                        yield _call_event(call)
+                    case ToolCallFinished(call=call, result=result):
+                        if ChatTool(call.name) is ChatTool.QUERY_CORPUS and isinstance(
+                            result, dict
+                        ):
+                            # Before the result event, so a client that renders
+                            # the query can do so while the label is on screen.
+                            yield _sql_event(result, state)
+                        yield _result_event(call, result)
+                    case ToolLoopFinished():
+                        pass
         except MaxIterationsError:
             logger.warning(
                 "Chat agent %s exhausted its iteration budget", interaction_id
@@ -383,9 +358,6 @@ async def run_chat_agent(
             logger.exception("Chat agent %s failed", interaction_id)
             yield ErrorEvent(message=_FAILURE_MESSAGE)
             return
-        finally:
-            if not loop_task.done():
-                loop_task.cancel()
 
         if state.direct_reply is not None:
             # The turn gathered nothing because nothing was needed — a greeting,

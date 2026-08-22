@@ -7,7 +7,16 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from llm_core._exceptions import MaxIterationsError, ProviderError, ToolExecutionError
-from llm_core._service import generate, generate_stream, generate_structured, tool_loop
+from llm_core._service import (
+    ToolCallFinished,
+    ToolCallStarted,
+    ToolLoopFinished,
+    generate,
+    generate_stream,
+    generate_structured,
+    run_tool_loop,
+    tool_loop,
+)
 from llm_core._tracing import LLMCallRecord, LLMOperation, set_trace_recorder
 from llm_core._types import (
     LLMResponse,
@@ -105,7 +114,7 @@ async def test_tool_loop_single_iteration() -> None:
     tools = [ToolDefinition(name="search", description="Search", parameters={})]
     messages = [Message(role=Role.user, content="Search for test")]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         messages, tools, {"search": executor}, provider=mock_provider
     )
 
@@ -135,7 +144,7 @@ async def test_tool_loop_multi_iteration() -> None:
     ]
     messages = [Message(role=Role.user, content="Go")]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         messages, tools, {"step1": noop, "step2": noop}, provider=mock_provider
     )
 
@@ -169,7 +178,7 @@ async def test_tool_loop_terminal_tool_ends_the_run() -> None:
         ToolDefinition(name="answer", description="Finish", parameters={}),
     ]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         [Message(role=Role.user, content="Go")],
         tools,
         {"search": search, "answer": answer},
@@ -200,7 +209,7 @@ async def test_tool_loop_terminal_tool_executes_before_returning() -> None:
 
     tools = [ToolDefinition(name="answer", description="Finish", parameters={})]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         [Message(role=Role.user, content="Go")],
         tools,
         {"answer": answer},
@@ -224,7 +233,7 @@ async def test_tool_loop_without_terminal_tools_is_unchanged() -> None:
 
     tools = [ToolDefinition(name="answer", description="Finish", parameters={})]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         [Message(role=Role.user, content="Go")],
         tools,
         {"answer": answer},
@@ -248,7 +257,7 @@ async def test_tool_loop_max_iterations_raises() -> None:
     tools = [ToolDefinition(name="loop", description="Loop", parameters={})]
 
     with pytest.raises(MaxIterationsError):
-        await tool_loop(
+        await run_tool_loop(
             [Message(role=Role.user, content="Go")],
             tools,
             {"loop": executor},
@@ -269,7 +278,7 @@ async def test_tool_loop_unknown_tool_raises_tool_execution_error() -> None:
     tools = [ToolDefinition(name="missing_tool", description="Missing", parameters={})]
 
     with pytest.raises(ToolExecutionError, match="missing_tool"):
-        await tool_loop(
+        await run_tool_loop(
             [Message(role=Role.user, content="Go")],
             tools,
             {},
@@ -290,7 +299,7 @@ async def test_tool_loop_executor_error_raises_tool_execution_error() -> None:
     tools = [ToolDefinition(name="bad_tool", description="Bad", parameters={})]
 
     with pytest.raises(ToolExecutionError) as exc_info:
-        await tool_loop(
+        await run_tool_loop(
             [Message(role=Role.user, content="Go")],
             tools,
             {"bad_tool": failing_executor},
@@ -301,7 +310,13 @@ async def test_tool_loop_executor_error_raises_tool_execution_error() -> None:
     assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
-async def test_tool_loop_callbacks_invoked() -> None:
+async def test_tool_loop_yields_a_call_and_its_result_in_order() -> None:
+    """The progress a caller forwards, and the order it may rely on.
+
+    `ToolCallStarted` before the executor runs and `ToolCallFinished` after it
+    is what lets an SSE caller show a step opening and then closing; a single
+    event carrying both would only ever arrive once the work was already done.
+    """
     tc = ToolCall(id="tc-1", name="search", arguments={"q": "test"})
     first_response = _make_response("", tool_calls=(tc,))
     final_response = _make_response("Done")
@@ -309,31 +324,64 @@ async def test_tool_loop_callbacks_invoked() -> None:
     mock_provider = AsyncMock()
     mock_provider.generate = AsyncMock(side_effect=[first_response, final_response])
 
-    on_tool_call = AsyncMock()
-    on_tool_result = AsyncMock()
-
     async def executor(q: str) -> str:
         return "found it"
 
     tools = [ToolDefinition(name="search", description="Search", parameters={})]
 
-    await tool_loop(
-        [Message(role=Role.user, content="Search")],
-        tools,
-        {"search": executor},
-        provider=mock_provider,
-        on_tool_call=on_tool_call,
-        on_tool_result=on_tool_result,
+    events = [
+        event
+        async for event in tool_loop(
+            [Message(role=Role.user, content="Search")],
+            tools,
+            {"search": executor},
+            provider=mock_provider,
+        )
+    ]
+
+    assert [type(event) for event in events] == [
+        ToolCallStarted,
+        ToolCallFinished,
+        ToolLoopFinished,
+    ]
+
+    started, finished, done = events
+    assert isinstance(started, ToolCallStarted)
+    assert isinstance(finished, ToolCallFinished)
+    assert isinstance(done, ToolLoopFinished)
+
+    assert started.call is tc
+    assert finished.call is tc
+    # The executor's own return value, not the JSON the loop puts in `history`:
+    # a caller reading a dict off a tool result should not have to parse it back.
+    assert finished.result == "found it"
+    assert done.result.message.content == "Done"
+
+
+async def test_tool_loop_finished_is_always_last() -> None:
+    """The result arrives as an event, so it has to be the terminal one."""
+    tc = ToolCall(id="tc-1", name="answer", arguments={"x": 1})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        return_value=_make_response("", tool_calls=(tc,))
     )
 
-    on_tool_call.assert_awaited_once()
-    call_args = on_tool_call.call_args
-    assert call_args[0][0] is tc
+    async def answer(x: int) -> str:
+        return "ok"
 
-    on_tool_result.assert_awaited_once()
-    result_args = on_tool_result.call_args
-    assert result_args[0][0] is tc
-    assert result_args[0][1] == "found it"
+    events = [
+        event
+        async for event in tool_loop(
+            [Message(role=Role.user, content="Go")],
+            [ToolDefinition(name="answer", description="", parameters={})],
+            {"answer": answer},
+            provider=mock_provider,
+            terminal_tools={"answer"},
+        )
+    ]
+
+    assert isinstance(events[-1], ToolLoopFinished)
+    assert not any(isinstance(event, ToolLoopFinished) for event in events[:-1])
 
 
 async def test_tool_loop_result_serialized_as_json() -> None:
@@ -350,7 +398,7 @@ async def test_tool_loop_result_serialized_as_json() -> None:
     tools = [ToolDefinition(name="get_data", description="Get data", parameters={})]
     messages = [Message(role=Role.user, content="Get")]
 
-    result = await tool_loop(
+    result = await run_tool_loop(
         messages, tools, {"get_data": executor}, provider=mock_provider
     )
 
@@ -470,7 +518,7 @@ class TestTracing:
             ]
         )
 
-        result = await tool_loop(
+        result = await run_tool_loop(
             [Message(role=Role.user, content="Hi")],
             [ToolDefinition(name="search", description="", parameters={})],
             {"search": AsyncMock(return_value="hit")},

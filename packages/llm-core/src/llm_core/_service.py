@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,8 +20,6 @@ from llm_core._tracing import (
 from llm_core._types import LLMResponse, Message, Role, ToolCall, ToolDefinition
 
 ToolExecutor = Callable[..., Awaitable[Any]]
-ToolCallCallback = Callable[[ToolCall, list[Message]], Awaitable[None]]
-ToolResultCallback = Callable[[ToolCall, Any, list[Message]], Awaitable[None]]
 
 # Safety bound on the agentic tool-calling loop before giving up.
 DEFAULT_MAX_ITERATIONS = 10
@@ -32,6 +30,33 @@ class ToolLoopResult:
     message: Message
     history: list[Message]
     iterations: int
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallStarted:
+    """The model asked for a tool; the executor has not run yet."""
+
+    call: ToolCall
+    history: list[Message]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallFinished:
+    """The executor returned. `result` is whatever it returned, unserialized."""
+
+    call: ToolCall
+    result: Any
+    history: list[Message]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolLoopFinished:
+    """The run is over. Always the last event, and the only one carrying a result."""
+
+    result: ToolLoopResult
+
+
+ToolLoopEvent = ToolCallStarted | ToolCallFinished | ToolLoopFinished
 
 
 def _resolve_provider(
@@ -121,16 +146,24 @@ async def tool_loop(
     config: LLMConfig | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     terminal_tools: set[str] | None = None,
-    on_tool_call: ToolCallCallback | None = None,
-    on_tool_result: ToolResultCallback | None = None,
-) -> ToolLoopResult:
+) -> AsyncIterator[ToolLoopEvent]:
     """Drive the model until it stops calling tools, or calls a terminal one.
+
+    Yields its progress rather than reporting it through callbacks, so a caller
+    that needs to `yield` per step — an SSE generator, say — is an ordinary
+    `async for` over this. A generator cannot return a value, so the run's
+    result arrives as the final `ToolLoopFinished` event; `run_tool_loop` is the
+    convenience for callers that only want that.
 
     `terminal_tools` names tools whose call ends the run. Without it a loop ends
     only when the model happens to stop calling tools, which leaves termination
     incidental and the final message throwaway prose. Naming a terminal tool
     makes the ending deliberate and the handoff machine-readable: the tool's
     arguments are the result the caller wanted.
+
+    The two endings are both legitimate and a caller must tell them apart:
+    `message.tool_calls` is empty when the model chose to answer in prose, and
+    carries the terminal call when it chose to finish through a tool.
     """
     p = _resolve_provider(provider, config)
     history = list(messages)
@@ -145,19 +178,20 @@ async def tool_loop(
                 p, history, LLMOperation.tool_loop, tools=tools
             )
 
-        if not response.message.tool_calls:
-            history.append(response.message)
-            return ToolLoopResult(
-                message=response.message,
-                history=history,
-                iterations=iteration,
-            )
-
         history.append(response.message)
 
+        if not response.message.tool_calls:
+            yield ToolLoopFinished(
+                ToolLoopResult(
+                    message=response.message,
+                    history=history,
+                    iterations=iteration,
+                )
+            )
+            return
+
         for tc in response.message.tool_calls:
-            if on_tool_call is not None:
-                await on_tool_call(tc, history)
+            yield ToolCallStarted(call=tc, history=history)
 
             if tc.name not in executors:
                 raise ToolExecutionError(
@@ -180,8 +214,7 @@ async def tool_loop(
                 )
             )
 
-            if on_tool_result is not None:
-                await on_tool_result(tc, result, history)
+            yield ToolCallFinished(call=tc, result=result, history=history)
 
             if tc.name in terminal:
                 # The assistant message is returned rather than the tool result
@@ -190,10 +223,42 @@ async def tool_loop(
                 # left unexecuted — the model has said it is done — so `history`
                 # can end on an assistant message with an unanswered tool call
                 # and is not safe to resume a provider round-trip with.
-                return ToolLoopResult(
-                    message=response.message,
-                    history=history,
-                    iterations=iteration,
+                yield ToolLoopFinished(
+                    ToolLoopResult(
+                        message=response.message,
+                        history=history,
+                        iterations=iteration,
+                    )
                 )
+                return
 
     raise MaxIterationsError(f"Tool loop exceeded {max_iterations} iterations")
+
+
+async def run_tool_loop(
+    messages: list[Message],
+    tools: list[ToolDefinition],
+    executors: dict[str, ToolExecutor],
+    *,
+    provider: LLMProvider | None = None,
+    config: LLMConfig | None = None,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    terminal_tools: set[str] | None = None,
+) -> ToolLoopResult:
+    """`tool_loop` for a caller that wants the result and not the progress."""
+    result: ToolLoopResult | None = None
+    async for event in tool_loop(
+        messages,
+        tools,
+        executors,
+        provider=provider,
+        config=config,
+        max_iterations=max_iterations,
+        terminal_tools=terminal_tools,
+    ):
+        if isinstance(event, ToolLoopFinished):
+            result = event.result
+    # Unreachable: the loop either yields ToolLoopFinished or raises. Asserted
+    # rather than cast so a future edit that breaks the invariant says so.
+    assert result is not None, "tool_loop ended without a result"
+    return result

@@ -11,7 +11,12 @@ import logging
 
 from ai import LLMRole, agent_run_scope, create_llm_provider, interaction_scope
 from ai.prompts import TEXT_TO_SQL, render
-from llm_core import LLMProvider, MaxIterationsError, ToolExecutionError, tool_loop
+from llm_core import (
+    LLMProvider,
+    MaxIterationsError,
+    ToolExecutionError,
+    run_tool_loop,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.config import SqlAgentSettings, get_sql_agent_settings
@@ -102,7 +107,7 @@ async def run_sql_agent(
         logger.info("SQL agent interaction %s", interaction_id)
 
         try:
-            loop_result = await tool_loop(
+            loop_result = await run_tool_loop(
                 messages,
                 tools,
                 executors,
