@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Frontend
-description: The React SPA at frontend/ — two surfaces over the same corpus: deterministic search, and agent mode, an SSE client for the conversational agent. No LLM call is made from the browser; both surfaces go through the API.
+description: 'The React SPA at frontend/ — two surfaces over the same corpus: deterministic search, and agent mode, an SSE client for the conversational agent that resolves inline citation markers to the sources event. No LLM call is made from the browser; both surfaces go through the API.'
 tags: [frontend, ui, search, agent, sse, react, spa]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # Frontend
@@ -57,13 +57,14 @@ React state.
 
 ## Agent mode
 
-`/agent` is the client for [`POST /api/chat`](/api/chat-endpoint.md). Three
+`/agent` is the client for [`POST /api/chat`](/api/chat-endpoint.md). Four
 files carry it:
 
 | File | Job |
 |---|---|
 | `src/api/chat-events.ts` | The event contract, as TypeScript |
 | `src/api/chat-stream.ts` | `openChatStream` — fetch, then an SSE parser over the response body |
+| `src/features/agent/citations.ts` | `parseAnswer` — splits the answer's `[c3]`-style markers into resolved citation segments and plain text, numbered in first-appearance order |
 | `src/features/agent/` | The hook, the reducer, the rail and the components |
 
 **Why fetch and not `EventSource`.** The question travels in a request body and
@@ -87,7 +88,10 @@ in `src/features/agent/progress-text.ts`. Nothing type-checks that pairing
 across the language boundary, so `progress-labels.test.ts` reads
 `packages/agents/src/agents/chat/_dtos.py` as text and fails when the backend
 adds a label the client has no words for. A label that reaches the client
-unrecognised anyway renders neutral prose, never the raw key.
+unrecognised anyway renders neutral prose, never the raw key. A turn needing no
+retrieval carries no label at all — it reaches the client as no step frames,
+just `sources`, `token` and `done` — so `progress-text.ts` only ever has to
+speak for a step that actually ran.
 
 ### Conversation state
 
@@ -231,8 +235,9 @@ app; everything else is fairly generic search UI.
 
 Agent mode adds a harder version of the same question, because the words on
 screen are written by a language model rather than lifted from a decision. Rules
-13–20 cover it: what a source may be presented as, when a count may be shown,
-and how a reader can tell a finished answer from a half-written one.
+13–22 cover it: what a source may be presented as, when a count may be shown,
+how a reader can tell a finished answer from a half-written one, and how an
+inline citation marker resolves to the passage it points at.
 
 ## Where relevance comes from
 
@@ -272,11 +277,12 @@ costs time rather than money, but the API still constructs the `structured`/
 
 **Seeing agent mode without a key and without a corpus.** Add `CHAT_SCRIPT=auto`
 and the API replays a canned event stream instead of running the agent — the
-real progress steps, the real pauses, a token-by-token answer, three sources.
-A short message ("tack") plays the one-step conversational shape, a longer one
-the full research shape, and `CHAT_SCRIPT=error` the mid-stream failure. The
-client is untouched and unaware; the session row and the rail are real. See
-[live testing](/playbooks/live-testing.md#driving-the-ui-without-a-model).
+real progress steps, the real pauses, three cited sources arriving before a
+token-by-token answer that marks its claims with them. A short message ("tack")
+plays the no-step conversational shape, a longer one the full research shape,
+and `CHAT_SCRIPT=error` the mid-stream failure. The client is untouched and
+unaware; the session row and the rail are real. See [live
+testing](/playbooks/live-testing.md#driving-the-ui-without-a-model).
 
 ## Out of scope
 

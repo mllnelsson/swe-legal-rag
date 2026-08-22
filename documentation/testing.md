@@ -346,7 +346,7 @@ frontend's own concept page:
   `src/features/browse/VocabularyPage.test.tsx`) are the tested form of [the honesty
   rules](/frontend/honesty-rules.md) — one `describe("rule N — …")` block per rule,
   asserting the claim the UI is and is not allowed to make about a search result or
-  an agent-written answer. All 21 are covered, and [the page says how to
+  an agent-written answer. All 22 are covered, and [the page says how to
   check](/frontend/honesty-rules.md#checking-the-mapping) rather than asking a
   reader to take it on trust.
 

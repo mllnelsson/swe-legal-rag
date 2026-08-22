@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -46,7 +46,7 @@ cover every use case:
 |---|---|---|
 | `QUERY_DECOMPOSITION` | JSON (`DecomposeResult` schema) | `{question}`, `{conversation_history}` |
 | `QUERY_EXPANSION` | JSON (`QueryExpansionResult` schema) | `{question}`, `{max_variants}` |
-| `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{readings}`, `{tabular}`, `{notes}`, `{conversation_history}` |
+| `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{readings}`, `{tabular}`, `{annotations}`, `{gaps}`, `{conversation_history}` |
 | `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — **the one English prompt here** | `{question}`, `{today}`, `{conversation_history}` |
 | `DECISION_READING` | Plain Swedish text | `{question}`, `{case_number}`, `{decision_text}` |
 | `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
@@ -81,11 +81,16 @@ all prompts instruct the model to work in Swedish.
 `synthesize_answer` is an async generator (SSE critical path): it renders
 `ANSWER_SYNTHESIS` and yields tokens without buffering. Its request carries an evidence
 bundle, not just passages — `chunks`, `readings` (what a document reader found),
-`tabular` (a SQL result with the query that produced it) and `notes` — and each section
-renders as `(inget)` when empty, so an absent count reads as "not established" rather
-than "not mentioned". Passages are prefixed `[Mål {case_number}]`, and an appendix
-passage additionally names itself as the appealed decision, because the model would
-otherwise present the lower instance's words as the nämnd's own.
+`tabular` (a SQL result with the query that produced it), `annotations` (one
+`PassageNote` per selected passage: what it carries, and an optional caution) and
+`gaps` (what the evidence does not reach) — and each section renders as `(inget)` when
+empty, so an absent count reads as "not established" rather than "not mentioned".
+Passages are prefixed `[c3 · Mål {case_number}]`, and an appendix passage additionally
+names itself as the appealed decision, because the model would otherwise present the
+lower instance's words as the nämnd's own. The prompt asks the model to mark each claim
+with the handle of the passage it rests on, directly after the sentence (`[c3]`,
+adjacent markers `[c3][c7]` for a claim resting on several) — the same handle
+`SourceReference` carries, which is what lets a client resolve the mark.
 
 `CHAT_ORCHESTRATION` is written in English, alone among the prompts here. That model
 plans and calls tools and never writes a word the user reads: it reads Swedish input and
@@ -110,13 +115,16 @@ removed or renamed.
 |---|---|---|
 | Query decomposition | `DecomposeRequest` | `DecomposeResult` (with `DateFilter`) |
 | Query expansion | `QueryExpansionRequest` (`question`, `max_variants`) | `QueryExpansionResult` (`variants: list[str]` — alternative phrasings only, deliberately no filters and no rewritten "best" query) |
-| Answer synthesis | `SynthesizeRequest` (with `ChunkContext`, `DecisionReading`, `TabularEvidence`) | streaming `str` tokens; `SourceCitation` for UI |
+| Answer synthesis | `SynthesizeRequest` (with `ChunkContext`, `PassageNote`, `DecisionReading`, `TabularEvidence`) | streaming `str` tokens; `SourceCitation` for UI |
 | Metadata extraction | `MetadataRequest` | `MetadataResult` |
 | Entity & reference extraction | `EntityRequest` | `EntityResult` (with `ExtractedEntity`, `ExtractedReference`) |
 | Summarization | `SummarizeRequest` | `SummarizeResult` |
 | Embedding | `EmbedRequest` | `EmbedResult` |
 
-`ChunkContext.score: float` is required (no default).
+`ChunkContext` carries only what the synthesis prompt actually renders: `chunk_text`,
+`case_number`, `handle` (the orchestrator's passage handle, e.g. `c3`, which the writer
+marks a claim with), `section` and `appendix_label`. Nothing else: the writer quotes a
+passage and attributes it, and grades nothing.
 
 ## Configuration (`ai/llm_config.py`)
 

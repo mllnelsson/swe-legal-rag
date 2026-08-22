@@ -1,14 +1,14 @@
 ---
 type: Concept
 title: Honesty rules
-description: The frontend's tested constraints on what it claims — twelve about a search result, nine more about an answer a language model wrote. Each exists because the data does not support the more convenient alternative.
+description: The frontend's tested constraints on what it claims — twelve about a search result, ten more about an answer a language model wrote. Each exists because the data does not support the more convenient alternative.
 tags: [frontend, ui, honesty, search, agent, appendix, rrf]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # Honesty rules
 
-Twenty-one constraints the frontend enforces on what it puts on screen, each
+Twenty-two constraints the frontend enforces on what it puts on screen, each
 backed by a `describe` block that names its rule number. They are not generic UI
 polish — each exists because the corpus or an API's response shape does not
 support the more convenient alternative, and getting one wrong would put a claim
@@ -20,7 +20,7 @@ Two groups, three test files:
 |---|---|---|
 | 1–5, 7–12 | [Search](/api/search.md) results and decisions | `src/components/research/honesty-rules.test.tsx`, one named `describe` block per rule |
 | 6 | Vocabulary index (declared vs. inferred entities) | `src/features/browse/VocabularyPage.test.tsx` — **not** `honesty-rules.test.tsx` |
-| 13–21 | [Agent mode](/frontend/overview.md) | `src/features/agent/agent-honesty-rules.test.tsx` |
+| 13–22 | [Agent mode](/frontend/overview.md) | `src/features/agent/agent-honesty-rules.test.tsx` |
 
 The second group is the harder one. In search, every word on screen is either
 the nämnd's own text or a label this app wrote; in agent mode the prose is
@@ -126,7 +126,7 @@ what the component did with the response it actually received.
     asked for, and without the note it is indistinguishable from a plain
     search.
 
-## Agent mode (13–21)
+## Agent mode (13–22)
 
 These govern an answer a language model wrote, streamed over the [chat
 endpoint](/api/chat-endpoint.md). The reader cannot check that prose against the
@@ -138,7 +138,9 @@ screen.
     decision — often the one Överklagandenämnden overturned — and every such
     source carries the marker, using the same `SectionBadge` the search results
     do. The excerpt is 200 characters of a passage the model saw in full, so it
-    is a label for the reader, not the evidence.
+    is a label for the reader, not the evidence. The same badge survives on an
+    inline citation (rule 22): a superscript pointing at an appendix passage
+    must not let the reader take it for the nämnd's own reasoning.
 14. **A count is never shown without the query behind it.** Whenever a turn
     emitted `event: sql`, the generated query, its rows, its `assumptions` and
     its `truncated` flag render beside the answer, and **not behind a collapsed
@@ -158,15 +160,19 @@ screen.
     stops on it: the failed turn is marked, whatever tokens arrived are kept —
     they are what the agent actually said — and nothing goes on claiming the
     answer is still being written.
-16. **A `refused` tool result is a step, not a failure.** It is a policy decline
-    the agent repairs from on its next iteration — an ungrounded filter, a spent
-    reading budget. It renders as an ordinary step ("Avvaktade med filtret tills
-    värdena var kända"), never as an error, and is visually distinct from a
-    `status: "error"` result.
-17. **Streaming text is not a finished answer.** A turn still receiving tokens
-    carries a writing marker, and sources are not rendered until the frame
-    carrying them has arrived. A sentence on screen may be about to be qualified
-    by the next one.
+16. **A `ToolStatus.REFUSED` result is a step, not a failure.** It is a policy
+    decline the agent repairs from on its next iteration — an ungrounded
+    filter, a spent reading budget. It carries the same label its call did (the
+    contract names no label of its own for a refusal), renders as an ordinary
+    step, never as an error, and is visually distinct from a `status: "error"`
+    result.
+17. **Streaming text is not a finished answer.** `sources` arrives before the
+    prose, so a turn is not shown as sourced the moment that frame lands —
+    it is the writing marker on a turn still receiving tokens, not the presence
+    of sources, that says the answer is unfinished. `received` still gates
+    rendering the source list at all, so a turn that has not reached `sources`
+    yet shows nothing rather than the previous turn's citations. A sentence on
+    screen may be about to be qualified by the next one.
 18. **An aborted turn says the agent will not remember it.** The API appends a
     turn to the [session](/data-model/sessions.md) only after `done`, so a
     question stopped mid-answer is absent from the history the *next* question
@@ -191,7 +197,20 @@ screen.
     rule 19 requires would be a different claim — "this answer cited nothing"
     rather than "we did not keep what it cited" — and only the second is true
     here. The turn's `interaction_id` survives, so the answer is still traceable
-    even though its evidence is not on screen.
+    even though its evidence is not on screen. The persisted prose can still
+    carry `[c1]`-style markers from when it was written; with no sources to
+    resolve them against, rule 22 strips them the same way it strips a marker
+    naming a handle the model never selected — a bare `[c1]` on screen would
+    point at nothing.
+22. **An inline citation resolves to a passage the reader can see.** The
+    synthesis prompt marks each claim with the handle of the passage it rests
+    on — `[c3]`, or `[c3][c7]` for a claim resting on several. The client turns
+    a resolvable marker into a superscript, numbered in first-appearance order
+    to match the source list beneath the answer, so counting down the list
+    lands on the passage the mark pointed at. A marker that cannot be resolved
+    — a handle the model never selected, or a marker surviving in a restored
+    turn whose sources were not persisted (rule 21) — is removed from the
+    prose entirely rather than shown as raw text.
 
 One more thing the interface shows for a reason rather than for polish: each
 finished turn prints its `X-Interaction-Id`. That id spans everything the turn
@@ -207,7 +226,7 @@ the table at the top is verifiable rather than asserted:
 cd frontend && grep -rho 'describe("rule [0-9]*' src | sort -t' ' -k2 -n -u
 ```
 
-Twenty-one blocks, 1 through 21, across the three files. A gap in that sequence
+Twenty-two blocks, 1 through 22, across the three files. A gap in that sequence
 is a rule this page claims and the suite does not hold.
 
 The tests that carry no rule number are not missing one — "summary is optional,

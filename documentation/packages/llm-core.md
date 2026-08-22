@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-14T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -84,26 +84,37 @@ lives in the [ai package](/packages/ai.md).
   [`llm_config.yaml`](/reference/llm-config.md) or `LLM_PROVIDER=none`; what each
   pipeline step then does is tabulated there.
 - **`_service.py`** — the higher-level API: `generate()`, `generate_structured()`,
-  `generate_stream()`, `tool_loop()` with optional callbacks. All four emit one trace
-  record per billed provider round-trip. Note the asymmetry that shapes every agent
-  built on this: **`generate_stream` takes no `tools`**, so there is no streaming
-  tool-call path — an agent that streams gathers with `tool_loop` and then makes one
-  streaming call (see [the conversational agent](/retrieval/chat-agent.md)).
+  `generate_stream()`, `tool_loop()`, `run_tool_loop()`. All emit one trace record per
+  billed provider round-trip. `generate_stream` takes no `tools` — a limit of this
+  project's own OpenAI-compatible wrapper, not the underlying API, which streams tool
+  calls fine — so an agent that both plans with tools and streams a written answer still
+  does it as two calls: gather with `tool_loop`, then write with one `generate_stream`
+  call over what was gathered. [The conversational agent](/retrieval/chat-agent.md)
+  explains why that split is worth keeping even where the wrapper's limit is not.
+
+  `tool_loop` is an **async generator**, not a coroutine returning a value: it yields
+  `ToolCallStarted`, `ToolCallFinished` and, always last, `ToolLoopFinished` (carrying
+  the `ToolLoopResult`) as the run goes, so a caller that needs to *yield* per step — an
+  SSE generator, say — drives it with a plain `async for` instead of routing a callback
+  through a queue. A generator cannot `return` a value, which is why the result travels
+  as that final event rather than as one; `run_tool_loop(...)` drains the generator for a
+  caller that wants only the result, unchanged in shape from before (the [SQL
+  agent](/api/sql-agent.md) uses this).
 
   `tool_loop` takes an optional `terminal_tools: set[str]`. Naming a tool there means
-  the loop executes it and returns rather than looping again. Without it a run ends
+  the loop executes it and ends the run rather than looping again. Without it a run ends
   only when the model happens to stop calling tools, which makes termination incidental
   and the final assistant message throwaway prose; with it the ending is deliberate and
   the *arguments* of the terminal call are the result. `ToolLoopResult.message` is then
   the assistant message carrying that call. Any later call in the same turn is left
   unexecuted, so the returned `history` can end on an assistant message with an
-  unanswered tool call and is not safe to resume a provider round-trip with.
-
-  `on_tool_call` / `on_tool_result` are awaited inside the loop, so a caller that needs
-  to *yield* per step — an SSE generator, say — runs `tool_loop` as a task and has the
-  callbacks push to a queue it drains. `generate_structured[T: BaseModel]` is generic
-  in its `response_model`, so callers get the model they asked for and need no cast,
-  `assert isinstance`, or `type: ignore` to narrow it.
+  unanswered tool call and is not safe to resume a provider round-trip with. A run can
+  also end with **no terminal call at all** — the model simply stops calling tools and
+  answers in prose — and `ToolLoopFinished.result.message.tool_calls` is empty in that
+  case; a caller has to check for it rather than assume every ending named a terminal
+  tool. `generate_structured[T: BaseModel]` is generic in its `response_model`, so
+  callers get the model they asked for and need no cast, `assert isinstance`, or `type:
+  ignore` to narrow it.
 
 Both providers map the token usage the SDK reports onto `Usage`, and record the model
 the API says it **served** rather than the one configured — hosts resolve aliases to

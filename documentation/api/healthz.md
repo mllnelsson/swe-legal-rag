@@ -1,7 +1,7 @@
 ---
 type: API Endpoint
 title: Health Endpoint (GET /healthz)
-description: The GET /healthz liveness check — always {"status": "ok"} when the process is up, with no dependency probe behind it.
+description: 'The GET /healthz liveness check — always {"status": "ok"} when the process is up, with no dependency probe behind it.'
 resource: GET /healthz
 tags: [api, health, deploy]
 timestamp: 2026-08-16T00:00:00Z

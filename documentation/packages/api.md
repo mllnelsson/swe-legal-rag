@@ -4,7 +4,7 @@ title: api Package
 description: The FastAPI application and the deterministic search/browse/traversal REST API — search/document/concept/keyword services, the session service, the chat toolset the conversational agent is driven through, and their routes.
 resource: packages/api
 tags: [package, api, fastapi, retrieval, sse, search, rest]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # api Package (`packages/api/`)
@@ -200,7 +200,10 @@ client can be looked at without a model run.
 The frames are built from the DTOs in `agents.chat`, not from dicts, so a
 renamed `ProgressLabel` breaks them at import rather than letting a fixture
 drift from the contract it stands in for. Between them the three scripts cover
-every `ProgressLabel` member, which a unit test asserts.
+every `ProgressLabel` member, which a unit test asserts. `direct` emits no
+`tool_call`/`tool_result` frames at all — a no-tool reply is genuinely
+stepless, so the fixture that stands in for it is too — just `sources` (empty),
+a `token` and `done`.
 
 ## Sessions routes (`api/routes/sessions.py`)
 

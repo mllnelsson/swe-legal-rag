@@ -1,10 +1,10 @@
 ---
 type: API Endpoint
 title: Chat Endpoint (POST /api/chat)
-description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the terminal error semantics, and the X-Interaction-Id correlation header.
+description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys, sources, then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the per-passage sources event a citation marker resolves against, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -52,27 +52,32 @@ event: done          data: {"session_id"}
 event: error         data: {"message"}
 ```
 
-Ordering: `tool_call`/`tool_result` pairs (with `sql` among them) → `token`* →
-`sources` → `done`. A run that finds nothing still emits `token`, `sources` (an
-empty list) and `done` — the corpus not addressing a question is an answer.
+Ordering: `tool_call`/`tool_result` pairs (with `sql` among them) → `sources` →
+`token`* → `done`. `sources` precedes the prose on every path — the passages
+were fixed the moment `answer` was called, and the answer marks its claims with
+a passage handle as it streams (`[c3]`), so a marker should be resolvable the
+instant it arrives rather than the instant the stream ends. A run that finds
+nothing still emits `sources` (an empty list), `token` and `done` — the corpus
+not addressing a question is an answer.
 
 ### Not every turn is a research question
 
 A greeting, a thank-you, or a question about the previous answer — "förklara det
-enklare" — has nothing to retrieve. Such a turn ends on `reply_from_context`
-instead of `answer` and looks like this:
+enklare" — has nothing to retrieve. Such a turn ends with the model calling no
+tool at all and writing the reply itself, and it reaches the client with **no
+step frames whatsoever** — no `tool_call`, no `tool_result`:
 
 ```
-event: tool_call     {"tool":"reply_from_context","label":"answer.direct",…}
-event: tool_result   {"tool":"reply_from_context","label":"answer.direct","status":"ok",…}
-event: token         …
 event: sources       {"sources":[]}
+event: token         …
 event: done          {"session_id":…}
 ```
 
-One step, no search, and an empty `sources` list that is the truthful one: the
-answer rests on the conversation, not on a decision. It arrives token by token
-like any other answer, so a client has one shape to handle rather than two.
+No step, no search, and an empty `sources` list that is the truthful one: the
+answer rests on the conversation, not on a decision. Unlike a researched
+answer it arrives as one `token` frame rather than many — a caller still reads
+it the same way, since a client already has to accumulate `token` frames into
+one answer.
 
 The empty `sources` list therefore means two different things depending on the
 turn, and both are real answers — "I looked and found nothing" and "there was
@@ -95,18 +100,15 @@ more than one kind of step:
 | `vocabulary.list` | `list_vocabulary` | Reading the category, outcome and keyword values that occur |
 | `search.broad` | `search_decisions` | Searching, no filter |
 | `search.filtered` | `search_decisions` | Searching a narrowed set |
-| `search.refused` | `search_decisions` | A filter was declined pending grounding |
 | `sql.query` | `query_corpus` | Counting or aggregating |
 | `decision.read` | `read_decision` | Reading one decision in full |
 | `decision.inspect` | `inspect_decision` | Following entities and citations |
 | `answer.compose` | `answer` | Selecting the evidence and finishing |
-| `answer.direct` | `reply_from_context` | Answering from the conversation, without retrieving |
 
-**A result may report a different label from its call.** A `search_decisions`
-call goes out as `search.broad` or `search.filtered`; if the filter is declined,
-its result comes back as `search.refused`, because `search.filtered` would name
-a search that never ran. The result's label is the one that describes what
-happened, so a client renders that.
+**A `tool_result` carries the same label as the `tool_call` it closes.** A
+declined filter is not a step of its own — `search_decisions` still goes out as
+`search.broad` or `search.filtered` and comes back under that same label, and
+`status` alone says what happened to it.
 
 `status` on a `tool_result` is `ok`, `refused` or `error`. **`refused` is not a
 failure** — it is a policy decline (an ungrounded filter, a spent reading
@@ -140,6 +142,7 @@ them. Unlike the progress events, this one is not decorative.
 
 ```json
 {
+  "handle": "string, e.g. \"c3\"",
   "document_id": "uuid",
   "case_number": "string",
   "decision_date": "date",
@@ -152,8 +155,14 @@ them. Unlike the progress events, this one is not decorative.
 }
 ```
 
-One entry per cited decision, first selected passage winning. `section:
-"appendix"` **means the appealed decision** — the lower instance's words, which
+One entry per cited **passage**, not per decision — several entries may share a
+`document_id`. `handle` is the marker the answer's prose carries directly after
+the claim it supports (`[c3]`, or `[c3][c7]` when several passages support one
+sentence); a client resolves a marker against the entry with the matching
+`handle` to render an inline citation, and a marker naming a handle absent from
+this list (or a reopened conversation, whose sources were never persisted) has
+nothing to resolve against and must not be shown raw. `section: "appendix"`
+**means the appealed decision** — the lower instance's words, which
 Överklagandenämnden may have overturned — and `appendix_label` names it
 ("Bilaga A"). A client must not present such an excerpt as the nämnd's own
 reasoning. See [body-first retrieval](/decisions/body-first-retrieval.md).
@@ -246,8 +255,8 @@ session row and the persisted turn are all the real ones, which is what makes it
 worth doing at this seam rather than mocking in the browser.
 
 `auto` picks per turn from the message length, so both the research shape and
-the `reply_from_context` shape are reachable without a restart; `error` is
-reachable only by name. The fixtures live in
+the no-tool-call shape are reachable without a restart; `error` is reachable
+only by name. The fixtures live in
 `packages/api/src/api/dev/chat_scripts.py` and are built from the DTOs in
 `agents.chat`, so they cannot drift from this contract silently. Every scripted
 request logs at WARNING, the answers state that they are fabricated, and the

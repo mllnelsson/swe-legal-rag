@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-14T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # LLM Observability
@@ -236,7 +236,7 @@ and its own directory.
 `source` says **what the call is**, not who asked for it — *who* is
 `interaction_id` or `document_id`. Values: `ai.decompose_query`,
 `ai.expand_query`, `ai.extract_metadata`, `ai.extract_entities`,
-`ai.summarize_document`, `ai.synthesize_answer`, `ai.reply_from_context`,
+`ai.summarize_document`, `ai.synthesize_answer`,
 `ai.embed`, `agents.sql`,
 `agents.chat`, `agents.chat.read`, `api.chat`, `api.search`, `worker-chunk`,
 `worker-embed`, `worker-extract`, `worker-metadata`, `scripts.run_step`,
@@ -251,10 +251,12 @@ wins" means in practice — the outer value is the one a nested call replaces.
 billed call — a five-step run produces five records under that source, plus one
 `ai.synthesize_answer` for the streamed answer, plus `agents.sql` and
 `agents.chat.read` for whichever sub-agents it reached for. A turn that needed
-no retrieval is two records: one `agents.chat` iteration and one
-`ai.reply_from_context`. That shape is itself diagnostic — a greeting costing
-five iterations and an embedding pass means the orchestrator is searching when
-it should be replying. All of them carry
+no retrieval is **one** `agents.chat` record: the model calls no tool and
+writes the reply itself in the same iteration that decided not to search, so
+there is no second call to trace separately — verified against the real
+corpus at one record, 4.8 s. That shape is itself diagnostic — a greeting
+costing five iterations and an embedding pass means the orchestrator is
+searching when it should be replying. All of them carry
 the same `interaction_id`: `run_chat_agent` and `run_sql_agent` both open an
 `interaction_scope`, which **inherits** the id the API already put in context
 rather than minting a second one. A run started outside the API — from

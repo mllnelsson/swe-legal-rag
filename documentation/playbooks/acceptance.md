@@ -3,7 +3,7 @@ type: Playbook
 title: Acceptance Walkthrough
 description: Turns the PRD's requirements into checks a human performs against the real system — a live agent turn on a real BERGET_API_KEY, against the real ingested corpus — as distinct from the scripted, model-free walkthrough in live testing.
 tags: [acceptance, verification, prd, playbook]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # Acceptance Walkthrough
@@ -71,18 +71,20 @@ Watch for `event: tool_call` / `event: tool_result` pairs carrying `label:
 "search.filtered"` — see [the progress label
 table](/api/chat-endpoint.md#the-api-emits-keys-the-client-owns-the-words).
 
-**A `label: "search.refused"` is a correct outcome, not a failure.** It means
-the agent declined to filter on a guessed `category`/`decision_outcome`/
-`entity_names` value until [`list_vocabulary` grounded
-it](/retrieval/chat-agent.md#grounding-why-a-filter-can-be-refused) — the
-same turn should then repair itself and either search grounded or fall back to
-broad search, visible as a later `tool_result`.
+**A `tool_result` carrying `status: "refused"` is a correct outcome, not a
+failure.** It means the agent declined to filter on a guessed
+`category`/`decision_outcome`/`entity_names` value until [`list_vocabulary`
+grounded it](/retrieval/chat-agent.md#grounding-why-a-filter-can-be-refused) —
+the label on that result matches the `search.filtered`/`search.broad` label its
+call reported, and `status` alone says it was declined. The same turn should
+then repair itself and either search grounded or fall back to broad search,
+visible as a later `tool_result`.
 
 ## S6/S7 — a cited answer, and a reachable PDF
 
-Check the finished answer for a specific case number (`Ärendenummer`) it
-cites, then check `event: sources` for the matching entry's `pdf_url` and
-confirm it resolves:
+Check the finished answer for an inline `[c…]` citation marker and a specific
+case number (`Ärendenummer`) it cites, then check `event: sources` for the
+entry whose `handle` matches the marker and confirm its `pdf_url` resolves:
 
 ```bash
 curl -sI "http://localhost:8000$PDF_URL" | grep -i content-type
@@ -95,9 +97,9 @@ endpoint](/api/document-pdf.md).
 ## S8 — a conversational follow-up needing no retrieval
 
 Send a greeting ("hej") or, after a real answer, "förklara det enklare".
-Expect the turn to end on `label: "answer.direct"`
-(`reply_from_context`/`answer.direct` — see [the two ways a turn can
-end](/retrieval/chat-agent.md#two-ways-a-turn-can-end)) rather than any
+Expect the turn to end with **no `tool_call`/`tool_result` frames at all** —
+the model calls no tool and writes the reply itself (see [the two ways a turn
+can end](/retrieval/chat-agent.md#two-ways-a-turn-can-end)) — rather than any
 `search.*` step, with `sources: []` — a real empty list, not a search that
 found nothing.
 

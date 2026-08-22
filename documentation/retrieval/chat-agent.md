@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Conversational Agent
-description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set, two terminal tools for the two kinds of message a conversation holds, two Mistral sub-agents for reading and counting, and one streamed writing call.
+description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set with one terminal tool, `answer`, and a plain no-tool reply as the other way a turn ends; two Mistral sub-agents for reading and counting; and a streamed writing call that marks each claim with the passage handle it rests on.
 tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-15T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # Conversational Agent
@@ -21,31 +21,39 @@ against a fake toolset with no database at all.
 
 ```
 run_chat_agent(request, toolset)
-  ├─ tool_loop(..., terminal_tools={"answer", "reply_from_context"})
-  │                                                 GLM-5.2, blocking
+  ├─ tool_loop(..., terminal_tools={"answer"})       GLM-5.2, blocking
   │    list_vocabulary()          → tool_call / tool_result
   │    search_decisions(...)      → tool_call / tool_result
   │    query_corpus(...)          → tool_call / sql / tool_result   [Mistral-M]
   │    read_decision(...)         → tool_call / tool_result         [Mistral-M]
-  │    answer(chunk_ids, document_ids, notes)       ─┐ terminal,
-  │    reply_from_context(notes)                    ─┘ loop returns
+  │    answer(annotations, gaps)  ─┐ terminal, loop ends
+  │    (model writes prose, calls no tool) ─┘ loop ends, that message is the reply
   │
   ├─ ai.synthesize_answer(evidence bundle)          GLM-5.2, streaming
-  │    → token* → sources → done
-  └─ ai.reply_from_context(conversation)            GLM-5.2, streaming
-       → token* → sources(empty) → done
+  │    → sources → token* → done
+  └─ (no evidence gathered: the orchestrator's own message is the reply)
+       → sources(empty) → token(whole) → done
 ```
 
-**Two phases, and the split is the point.** `LLMProvider.generate_stream` takes
-no tools, so there is no streaming tool-call path to use — the loop gathers
-evidence without streaming, and one final call writes the prose. Carrying the
-evidence in a single synthesis prompt rather than in the loop is what keeps it
-affordable: a passage placed in the loop is re-sent on every later iteration,
-while one placed in the synthesis prompt is sent once.
+**Two phases, and the split is the point.** The loop gathers evidence without
+streaming, and one final call writes the prose. Not because
+`LLMProvider.generate_stream` cannot take tools — that is a limit of this
+project's own OpenAI-compatible wrapper, not the underlying API, which streams
+tool calls fine — but because a synthesis prompt built fresh from the selected
+evidence beats writing from the loop's own history, which carries every search
+result verbatim and every dead end. Carrying the evidence in a single synthesis
+prompt rather than in the loop is also what keeps it affordable: a passage
+placed in the loop is re-sent on every later iteration, while one placed in the
+synthesis prompt is sent once.
 
-The synthesis prompt is **fresh and compact** — the selected passages, the
-reader's extracts, the SQL rows and the agent's notes — not the loop's own
-history, which carries dead ends and verbose tool results.
+The synthesis prompt is **fresh and compact** — the selected passages, each
+marked with its handle, plus the reader's extracts, the SQL rows and the
+agent's annotations and gaps — not the loop's own history. It is also where the
+answer becomes Swedish: the orchestrator reasons in English over Swedish
+passages and tool results, and the synthesis step writes the Swedish prose the
+user reads. The one exception is a turn that needed no evidence — there the
+orchestrator writes the (Swedish) reply itself, since there is no second call
+to hand it to.
 
 ## Models
 
@@ -59,7 +67,7 @@ See [LLM configuration](/reference/llm-config.md).
 
 ## Tools
 
-Ten callable services collapse to five, plus two terminal tools that call
+Ten callable services collapse to five, plus one terminal tool that calls
 nothing. `list_concepts`/`list_keywords` and their
 document traversals are *filter values* —
 `search_decisions(document_filter={"keywords": […]})` does the traversal.
@@ -73,8 +81,12 @@ a model.
 | `read_decision(document_id, question, include_appendices?)` | `document_service.get_document_chunks` → the reading sub-agent |
 | `inspect_decision(document_id)` | `document_service.get_document_detail` |
 | `query_corpus(question)` | `agents.run_sql_agent` |
-| `answer(chunk_ids, document_ids, notes)` | — terminal |
-| `reply_from_context(notes)` | — terminal |
+| `answer(annotations, gaps)` | — terminal |
+
+`list_vocabulary` lists categories, outcomes and keywords unconditionally, but
+legal concepts only for a `contains` lookup — `DocumentFacets` carries no
+`concepts` field, so a bare call carries a `concepts_note` explaining that
+rather than an empty list, which would read as "the corpus has none".
 
 Search results carry `vector_similarity` and the search diagnostics, not just
 the fused `score`. That is deliberate: RRF derives `score` from rank alone, so
@@ -90,41 +102,54 @@ a short handle reliably and a UUID unreliably, and an unknown handle is
 *detectable*: it comes back as a refusal listing the valid ones, rather than
 silently selecting nothing.
 
+A passage handle does double duty: it is also the marker the synthesis prompt
+writes into the answer (`[c3]`) and the field a client resolves that marker
+against in `event: sources`. See [what the answer may
+assert](#what-the-answer-may-assert).
+
 ## Two ways a turn can end
 
-A conversation holds two kinds of message, and collapsing them was a real
-defect rather than a missing nicety. Before `reply_from_context` existed, every
-turn entered the tool loop with "Search first" as its first instruction, so
-"tack" either spent an embedding pass and ~18 seconds searching for nothing, or
-called `answer` with no chunks and fell through the evidence gate to the canned
-*"Jag hittade inget i besluten som besvarar frågan"* — a report on a search
-nobody wanted. [PRD S8](/prd.md), conversational follow-ups, was not actually
-met.
+A conversation holds two kinds of message, and collapsing them is a real defect
+rather than a missing nicety: a greeting driven into the tool loop spends an
+embedding pass and ~18 seconds searching for nothing, and answers "tack" with a
+report on a search nobody wanted. [PRD S8](/prd.md), conversational follow-ups,
+is what the second ending exists to meet.
 
-| Terminal tool | For | Written by |
+It needs no machinery of its own. [`tool_loop`](/packages/llm-core.md) returns
+when the model calls no tool, so a turn needing no evidence ends the way a tool
+loop ordinarily ends: the model writes the reply itself and calls nothing, and
+that message is what the caller gets. **A caller must therefore read
+`message.tool_calls` to tell the two endings apart** — empty means the model
+chose to answer in prose, and discarding that message sends the user the
+no-evidence line instead of the answer it just wrote.
+
+| Ending | For | Written by |
 |---|---|---|
-| `answer(chunk_ids, document_ids, notes)` | A question the corpus answers | `ANSWER_SYNTHESIS`, from the selected evidence |
-| `reply_from_context(notes)` | A greeting, a thank-you, a question about the previous answer | `CHAT_DIRECT_REPLY`, from the conversation alone |
+| `answer(annotations, gaps)` | A question the corpus answers | `ANSWER_SYNTHESIS`, from the selected evidence, streamed |
+| No tool call | A greeting, a thank-you, a question about the previous answer | `CHAT_ORCHESTRATION` itself, in the same call that decided not to search, delivered whole |
 
-Both stream, so the API forwards one shape either way. Both end with `sources`
-— empty for a direct reply, and truthfully so.
+Both endings carry `sources`, empty for the second and truthfully so — that
+answer rests on the conversation, not on any decision. Only the first streams
+token by token; the second is one message, which for a couple of sentences
+costs nothing and saves a second model round-trip.
 
-**The direct-reply prompt's whole risk is the opposite of the synthesis
-prompt's.** With no underlag in front of it, a model asked to be helpful will
-invent the law, so `CHAT_DIRECT_REPLY` may build only on the conversation
-history and the user's message: no case number, no date, no rule that is not
-already in what has been said. Asked something the history does not cover, it
-says the question needs looking up rather than guessing. The tool description
-carries the same rule for the orchestrator — a legal question it has not
-researched is a search, however small it sounds.
+**The honesty rules for a no-tool reply now live in the orchestration
+prompt**, since that model is the one writing it. With no evidence in front of
+it, a model asked to be helpful will invent the law, so `CHAT_ORCHESTRATION`
+says the reply may build only on the conversation history and the user's
+message: no case number, no date, no rule that is not already in what has been
+said. Asked something the history does not cover, it says the question needs
+looking up rather than guessing. The same section says never to use this as a
+shortcut past research — a legal question it has not looked up is a search,
+however small it sounds.
 
 The check is ordered before the evidence gate, so the three empty-handed
 endings stay distinct:
 
 | State | What the user gets |
 |---|---|
-| `direct_reply` set | A conversational reply, streamed |
-| No evidence, no direct reply | "Jag hittade inget i besluten…" — no model call |
+| No tool call | The reply the model wrote, delivered whole |
+| `answer` called with no passages | "Jag hittade inget i besluten…" — no model call |
 | Loop exhausted | A terminal `ErrorEvent`, no `done` |
 
 ### The terminal `answer` tool is the reranking
@@ -136,6 +161,13 @@ deliberate and the handoff machine-readable — and the selection *is* the
 reranking: the agent names which passages carry the answer as a tool call, not
 as a separate LLM round-trip. The rerank step the previous chat pipeline had was
 not carried over.
+
+Each named passage is structured, not a bare handle: `carries` says what it
+establishes and an optional `caution` says what the writer must watch for
+("bilaga, underinstansens ord"). A handle cannot be cited without saying what
+it carries, which is what keeps the writing step's guidance structured all the
+way through rather than degrading into freeform prose the model could smuggle
+a finding through.
 
 ## Grounding: why a filter can be refused
 
@@ -183,17 +215,39 @@ surviving.
 
 ## What the answer may assert
 
-The synthesis prompt is given four sections, any of which may be empty:
-passages, readings, tabular data, and the agent's notes. Two rules matter:
+The synthesis prompt is given five sections, any of which may be empty:
+passages (each marked with its handle and case), readings, tabular data, the
+agent's annotations, and its gaps. Rules that matter:
 
 - **Counts come only from tabular data.** The passages are a relevance-ranked
   sample of the corpus, so a total derived from them is wrong in a way that
   reads as authoritative. With no tabular evidence, the answer gives no number.
 - **An appendix passage is attributed.** The prompt is told whose words each
   excerpt holds, and never to present an appendix as the nämnd's position.
+- **An annotation is guidance, never a source.** `carries` says what a passage
+  establishes and `caution` what to watch for, but the writer verifies every
+  claim against the passage text itself. Freeform notes had no enforceable line
+  between guidance ("c3 carries the deadline rule") and a claim ("the deadline
+  is three weeks"); structured fields have nowhere to put the second.
+- **Every claim is marked with the handle it rests on.** The prompt asks for
+  `[c3]` directly after the sentence it supports — `[c3][c7]` when several
+  passages support one sentence, no marker at all for a claim resting only on
+  tabular data.
+- **`gaps` says what the evidence does not reach**, in place of the answer
+  papering over it.
+- **Plain text only.** No headings, markdown or bullet lists — the client
+  renders the answer as text, so any markup the model wrote would reach the
+  reader as literal characters on screen.
 
 Empty sections render as `(inget)` rather than as blank, so an absent count
 reads as "not established" rather than "not mentioned".
+
+`event: sources` carries one entry per cited **passage**, not per decision —
+collapsing two passages of the same decision would leave one handle
+unresolvable — and it is emitted **before** the token stream, since the
+selection is fixed the moment `answer()` runs and a marker should be
+resolvable the instant it arrives. See [the sources
+event](/api/chat-endpoint.md#event-sources).
 
 ## Settings
 
@@ -215,10 +269,17 @@ verbatim text into a single tool result — which the loop then re-sends on ever
 later iteration; two brings it to ~26,000. Two is enough to judge a decision's
 relevance, and the whole text is a `read_decision` away.
 
-Together with `chat_agent_max_iterations` they are also the latency levers. A turn is
-budgeted at **under a minute** ([NFR1b](/prd.md)); a turn that misses that is a loop
-going round more times than the question needs, not a slow model, so the iteration cap
-and the amount of text each search puts in front of it are what to reach for.
+Together with `chat_agent_max_iterations` and `chat_agent_max_documents_read` they are
+also the latency levers. A turn is budgeted at **under a minute**
+([NFR1b](/prd.md)), and a turn that misses it is usually one that went round more
+times, or read more decisions, than the question needed — not a slow model.
+`read_decision` is the one to watch: each call is a whole document through the
+`read` role, so a run that spends its budget of five adds several sub-agent
+round-trips to a loop that was already several iterations long. Measured on a broad
+question ("Vad har nämnden sagt om jäv?"), four iterations plus four readings ran to
+roughly four minutes, while the same question answered from passages alone came in
+under two. The prompt tells the orchestrator to read only when the passages leave the
+question open; the cap is what holds when it reads anyway.
 
 Search itself runs under [`SearchSettings`](/packages/api.md), the same bounds
 `POST /api/search` uses, so the two paths cannot drift apart.
@@ -228,8 +289,10 @@ Search itself runs under [`SearchSettings`](/packages/api.md), the same bounds
 Traced with `source="agents.chat"` — one record per loop iteration, since each
 is its own billed call — plus `agents.chat.read` for the reader,
 [`agents.sql`](/api/sql-agent.md#observability) for counting, and
-`ai.synthesize_answer` for the streamed answer, or
-`ai.reply_from_context` when the turn ended on the conversation instead. All of them share one
+`ai.synthesize_answer` for the streamed answer. A turn that ends with no tool
+call writes no separate record for the reply: it is part of the same
+`agents.chat` iteration that decided not to search, so a greeting is one record
+total rather than two. All of them share one
 `interaction_id`, which is what makes "what did this question cost" a sum over
 one key: `run_chat_agent` opens an `interaction_scope` that **inherits** the id
 the API already put in the trace context rather than minting its own, so

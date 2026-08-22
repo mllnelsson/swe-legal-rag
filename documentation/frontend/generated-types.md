@@ -3,7 +3,7 @@ type: Concept
 title: Generated API types
 description: How src/api/schema.d.ts is generated from the FastAPI app's OpenAPI schema, and why a backend contract change surfaces as a TypeScript error rather than a runtime surprise.
 tags: [frontend, typescript, openapi, codegen]
-timestamp: 2026-08-15T00:00:00Z
+timestamp: 2026-08-22T00:00:00Z
 ---
 
 # Generated API types
@@ -34,6 +34,12 @@ rather than tolerated:
   reads `packages/agents/src/agents/chat/_dtos.py` as raw text and asserts the
   client has Swedish words for every `ProgressLabel` the API can emit — so an
   added label fails the build instead of reaching a reader as `decision.audit`.
+  A *removed* label is caught from the other side: `progress-text.ts` types its
+  two tables as `Record<ProgressLabel, string>`, so the words for a label that
+  no longer exists are an excess property rather than dead code nobody notices.
+  Fields are covered the same way — `makeSource` in `src/test/factories.ts`
+  returns a `SourceReference`, so a field added to the contract fails to
+  compile until the factory carries it.
 * An unrecognised event name is skipped by the parser rather than thrown on,
   because the contract states that new event types may be added.
 

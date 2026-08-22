@@ -423,8 +423,8 @@ npm run dev        # in frontend/
 | Value | What a turn does |
 |---|---|
 | `auto` | Picks per turn: a message of three words or fewer plays `direct`, anything longer plays `research`. Both shapes without a restart |
-| `research` | Seven steps over ~20 s — including a refused filter and an `event: sql` — then a streamed answer and three sources |
-| `direct` | One `answer.direct` step, ~1.5 s, an empty `sources` list |
+| `research` | Seven steps over ~20 s — including a refused filter and an `event: sql` — then three sources, followed by a streamed answer that marks its claims with them |
+| `direct` | No step frames at all: a pause, then an empty `sources` list and a reply delivered whole |
 | `error` | Two steps, then `event: error` and **no** `done` |
 | `off` | The real agent. The default |
 
