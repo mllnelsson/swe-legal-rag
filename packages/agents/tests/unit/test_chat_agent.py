@@ -201,9 +201,9 @@ async def test_search_then_answer_streams_prose_and_sources() -> None:
         "tool_result",
         "tool_call",
         "tool_result",
-        "token",
-        "token",
         "sources",
+        "token",
+        "token",
         "done",
     ]
 
@@ -563,7 +563,7 @@ class TestConversationalTurn:
 
         events = await _collect(agent)
 
-        assert [event.type for event in events] == ["token", "sources", "done"]
+        assert [event.type for event in events] == ["sources", "token", "done"]
         assert "".join(e.text for e in events if isinstance(e, TokenEvent)) == (
             "Varsågod!"
         )
@@ -645,6 +645,65 @@ async def test_exhausted_loop_ends_with_a_terminal_error() -> None:
 
     assert isinstance(events[-1], ErrorEvent)
     assert not any(isinstance(event, DoneEvent) for event in events)
+
+
+async def test_every_cited_passage_is_resolvable_by_its_handle() -> None:
+    """The invariant inline citations rest on.
+
+    Sources used to be deduplicated by decision, so two passages of one
+    decision produced one reference — and a claim marked with the dropped
+    handle pointed at nothing. One reference per passage, handle included.
+    """
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[
+                {"handle": "c1", "carries": "bär svaret"},
+                {"handle": "c2", "carries": "bär undantaget"},
+            ],
+        ),
+    )
+
+    events = await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad är jäv?"),
+            FakeToolset(),
+            llm_provider=provider,
+            settings=_settings(),
+        )
+    )
+
+    sources = next(e for e in events if isinstance(e, SourcesEvent)).sources
+    assert [s.handle for s in sources] == ["c1", "c2"]
+    # The fake toolset returns both passages under one decision; that must not
+    # collapse them, or one of the two marks becomes unresolvable.
+    assert len({s.document_id for s in sources}) == 1
+
+
+async def test_sources_arrive_before_the_first_token() -> None:
+    """A marker cannot resolve against evidence that has not been sent."""
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[{"handle": "c1", "carries": "bär svaret"}],
+        ),
+    )
+
+    events = await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad är jäv?"),
+            FakeToolset(),
+            llm_provider=provider,
+            settings=_settings(),
+        )
+    )
+
+    kinds = [event.type for event in events]
+    assert kinds.index("sources") < kinds.index("token")
 
 
 async def test_a_caution_and_a_gap_reach_the_writing_step() -> None:

@@ -102,8 +102,9 @@ def _agent_emitting(*events):
     return _gen
 
 
-def _source() -> SourceReference:
+def _source(handle: str = "c1") -> SourceReference:
     return SourceReference(
+        handle=handle,
         document_id=_DOCUMENT_ID,
         case_number="12/2024",
         excerpt="Nämnden avslår överklagandet.",
@@ -174,7 +175,7 @@ class TestChatEndpointSseStream:
         ):
             return self.client.post("/api/chat", json={"message": message})
 
-    def test_progress_then_tokens_then_sources_then_done(self):
+    def test_progress_then_sources_then_tokens_then_done(self):
         response = self._post(
             _agent_emitting(
                 ToolCallEvent(
@@ -189,21 +190,24 @@ class TestChatEndpointSseStream:
                     label=ProgressLabel.SEARCH_BROAD,
                     detail={"decision_count": 7},
                 ),
+                SourcesEvent(sources=[_source()]),
                 TokenEvent(text="Hej"),
                 TokenEvent(text=" världen"),
-                SourcesEvent(sources=[_source()]),
                 DoneEvent(),
             )
         )
 
         assert response.status_code == 200
         events = _parse_sse(response.text)
+        # Sources before the prose: the answer marks its claims with passage
+        # handles as it streams, and a mark arriving before the thing it points
+        # at is a citation the client can only render as nothing.
         assert [e["event"] for e in events] == [
             "tool_call",
             "tool_result",
-            "token",
-            "token",
             "sources",
+            "token",
+            "token",
             "done",
         ]
 
@@ -280,6 +284,7 @@ class TestChatEndpointSseStream:
                 SourcesEvent(
                     sources=[
                         SourceReference(
+                            handle="c1",
                             document_id=_DOCUMENT_ID,
                             case_number="12/2024",
                             excerpt="Stiftet beslutade...",
@@ -293,6 +298,8 @@ class TestChatEndpointSseStream:
         )
 
         source = _parse_sse(response.text)[0]["data"]["sources"][0]
+        # The handle is what an inline marker in the prose resolves against.
+        assert source["handle"] == "c1"
         assert source["pdf_url"] == f"/api/documents/{_DOCUMENT_ID}/pdf"
         assert source["section"] == "appendix"
         assert source["appendix_label"] == "Bilaga A"
@@ -629,7 +636,7 @@ class TestScriptedChat:
         response, _, _ = self._post(ChatScript.DIRECT)
 
         names = [event["event"] for event in _parse_sse(response.text)]
-        assert names[0] == "token"
+        assert names[0] == "sources"
         assert "tool_call" not in names
         assert names[-1] == "done"
 

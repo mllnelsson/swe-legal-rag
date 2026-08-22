@@ -20,7 +20,6 @@ token by token, which for two sentences costs nothing and saves a round-trip.
 from __future__ import annotations
 
 import logging
-import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -206,24 +205,25 @@ def _tabular_evidence(state: ChatState) -> TabularEvidence | None:
 
 
 def _sources(state: ChatState) -> list[SourceReference]:
-    """One reference per cited decision, first selected passage winning.
+    """One reference per cited passage, in the order the agent selected them.
 
-    Deduplicated by document because a reader wants the decisions the answer
-    rests on, not every passage that happened to match.
+    Not deduplicated by decision. The answer marks each claim with a passage
+    handle, so every handle it can name has to be resolvable — collapsing two
+    passages of one decision would leave one of those marks pointing at
+    nothing. A client that wants the decisions groups by `document_id`.
     """
     if state.selection is None:
         return []
-    seen: set[uuid.UUID] = set()
     sources: list[SourceReference] = []
     for handle in state.selection.chunk_handles:
         record = state.chunks.get(handle)
-        if record is None or record.document_id in seen:
+        if record is None:
             continue
-        seen.add(record.document_id)
         decision_handle = state.handle_by_document.get(record.document_id)
         decision = state.decisions.get(decision_handle or "")
         sources.append(
             SourceReference(
+                handle=handle,
                 document_id=record.document_id,
                 case_number=decision.case_number if decision else None,
                 decision_date=decision.decision_date if decision else None,
@@ -369,18 +369,18 @@ async def run_chat_agent(
         if direct_reply is not None:
             # Checked before the evidence gate, which would otherwise answer
             # "tack" with "I found nothing in the decisions".
-            yield TokenEvent(text=direct_reply)
             # An empty sources list, and it is the truthful one: this answer
             # rests on the conversation, not on any decision.
             yield SourcesEvent(sources=[])
+            yield TokenEvent(text=direct_reply)
             yield DoneEvent()
             return
 
         if not _has_evidence(state):
             # The honest answer to a question the corpus does not address. Said
             # plainly rather than by asking a model to improvise around nothing.
-            yield TokenEvent(text=_NO_EVIDENCE_MESSAGE)
             yield SourcesEvent(sources=[])
+            yield TokenEvent(text=_NO_EVIDENCE_MESSAGE)
             yield DoneEvent()
             return
 
@@ -399,6 +399,12 @@ async def run_chat_agent(
             gaps=list(state.selection.gaps) if state.selection else [],
         )
 
+        # Before the prose, not after it. The answer marks its claims with
+        # passage handles as it streams, and a mark a client cannot resolve yet
+        # is a citation it has to render as nothing. The evidence was chosen
+        # when `answer` was called, so this is also the truthful order.
+        yield SourcesEvent(sources=_sources(state))
+
         try:
             async for token in ai.synthesize_answer(synthesis, provider=llm_provider):
                 yield TokenEvent(text=token)
@@ -407,5 +413,4 @@ async def run_chat_agent(
             yield ErrorEvent(message=_FAILURE_MESSAGE)
             return
 
-        yield SourcesEvent(sources=_sources(state))
         yield DoneEvent()

@@ -214,8 +214,18 @@ class DecisionProfile(BaseModel):
 
 
 class SourceReference(BaseModel):
+    """One passage the answer rests on.
+
+    The grain is the passage, not the decision: `handle` is what the answer
+    marks a claim with, so a reader can ask which sentence a claim came from
+    and be shown the words it came from. Several references may share a
+    `document_id` — a client groups them.
+    """
+
     model_config = ConfigDict(frozen=True)
 
+    # The marker the answer text carries, e.g. "c3".
+    handle: str
     document_id: uuid.UUID
     case_number: str | None = None
     decision_date: date | None = None

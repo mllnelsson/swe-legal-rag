@@ -83,14 +83,6 @@ class ScriptedFrame:
     event: AgentEvent
 
 
-def _after(delay: float, frames: list[ScriptedFrame]) -> list[ScriptedFrame]:
-    """`frames`, with the first one waiting `delay` instead of its own."""
-    if not frames:
-        return frames
-    first, *rest = frames
-    return [ScriptedFrame(delay, first.event), *rest]
-
-
 def stream_text(text: str, *, delay: float = TOKEN_DELAY) -> list[ScriptedFrame]:
     """One frame per word, spaces kept, so the pieces rejoin to `text` exactly.
 
@@ -155,6 +147,7 @@ def _step(
 
 _DEMO_SOURCES = [
     SourceReference(
+        handle="c1",
         document_id=uuid.UUID("d0000000-0000-4000-8000-000000000001"),
         case_number="DEMO-2024-001",
         decision_date=date(2024, 3, 14),
@@ -168,6 +161,7 @@ _DEMO_SOURCES = [
         section=ChunkSection.BODY,
     ),
     SourceReference(
+        handle="c2",
         document_id=uuid.UUID("d0000000-0000-4000-8000-000000000002"),
         case_number="DEMO-2023-118",
         decision_date=date(2023, 11, 2),
@@ -180,6 +174,7 @@ _DEMO_SOURCES = [
         section=ChunkSection.BODY,
     ),
     SourceReference(
+        handle="c3",
         document_id=uuid.UUID("d0000000-0000-4000-8000-000000000003"),
         case_number="DEMO-2023-047",
         decision_date=date(2023, 5, 22),
@@ -242,7 +237,8 @@ _RESEARCH_ANSWER = (
     "Jäv bedöms utifrån om den som deltagit i beslutet haft en sådan koppling "
     "till saken att opartiskheten kan sättas i fråga. I den påhittade "
     "exempelsamlingen ovan undanröjs beslutet när en ledamot varit närstående "
-    "till en sökande, medan ett avlägset släktskap inte i sig räckt.\n\n"
+    "till en sökande[c1], medan ett avlägset släktskap inte i sig räckt[c2]. "
+    "Underinstansen gjorde motsatt bedömning[c3].\n\n"
     "Av de tre exemplen rör två kyrkoval och ett en anställning. Sifferunderlaget "
     "i frågerutan ovan är lika påhittat som resten."
 )
@@ -316,18 +312,18 @@ _RESEARCH_SCRIPT: list[ScriptedFrame] = [
         duration=TOOL_DELAY,
         result_detail={"cited_chunks": 3},
     ),
-    *stream_text(_RESEARCH_ANSWER),
     ScriptedFrame(0.3, SourcesEvent(sources=_DEMO_SOURCES)),
+    *stream_text(_RESEARCH_ANSWER),
     ScriptedFrame(0.0, DoneEvent()),
 ]
 
 # Nothing to retrieve, and so no step at all: the agent called no tool, which is
 # exactly what a client sees. The empty sources list is the truthful one.
 _DIRECT_SCRIPT: list[ScriptedFrame] = [
-    # The pause rides on the first token rather than on a step frame: there is
-    # no step to show, and a reply with no thinking time at all reads as canned.
-    *_after(DIRECT_DELAY, stream_text(_DIRECT_ANSWER)),
-    ScriptedFrame(0.2, SourcesEvent(sources=[])),
+    # The pause rides on the sources frame: there is no step to show, and a
+    # reply with no thinking time at all reads as canned.
+    ScriptedFrame(DIRECT_DELAY, SourcesEvent(sources=[])),
+    *stream_text(_DIRECT_ANSWER),
     ScriptedFrame(0.0, DoneEvent()),
 ]
 
