@@ -50,15 +50,36 @@ class QueryExpansionResult(BaseModel):
 
 
 class ChunkContext(BaseModel):
+    """One passage as the writing step sees it.
+
+    Only what the prompt actually renders. A date, an outcome and a fused score
+    used to travel here and reach no template — the writer quotes the passage
+    and attributes it, and grades nothing.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     chunk_text: str
     case_number: str
-    decision_date: str | None = None
-    decision_outcome: str | None = None
-    score: float
+    # The orchestrator's handle for this passage, e.g. "c3". The writer marks
+    # each claim with it, which is what makes a sentence traceable to a source.
+    handle: str
     section: ChunkSection = ChunkSection.BODY
     appendix_label: str | None = None
+
+
+class PassageNote(BaseModel):
+    """The orchestrator's guidance about one passage.
+
+    Guidance, never a source: the writer verifies everything in the passage
+    text itself. Structured so that a claim has nowhere to hide.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    handle: str
+    carries: str
+    caution: str | None = None
 
 
 class DecisionReading(BaseModel):
@@ -103,8 +124,10 @@ class SynthesizeRequest(BaseModel):
     # path, which is what the deterministic search surface produces.
     readings: list[DecisionReading] = []
     tabular: TabularEvidence | None = None
-    # The agent's own terse handoff — why these passages, what to be careful of.
-    notes: str = ""
+    # The agent's handoff: why each passage was chosen, and what the evidence
+    # does not reach. Guidance for the writer, never something it may assert.
+    annotations: list[PassageNote] = []
+    gaps: list[str] = []
 
 
 class SourceCitation(BaseModel):

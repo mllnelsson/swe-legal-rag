@@ -40,7 +40,8 @@ _TABULAR = (
     "Fråga: SELECT count(*) FROM documents WHERE decision_outcome ILIKE '%avslag%'\n"
     "Rader: 1\nantal\n12"
 )
-_NOTES = "Mål 2023/456 bär avgörandet. Antalet kommer från tabelldatan, inte utdragen."
+_ANNOTATIONS = "c1: bär avgörandet — obs: bilaga, underinstansens ord"
+_GAPS = "- Underlaget säger inget om tidsfristen."
 _TODAY = "2026-08-13"
 
 # The evidence bundle every ANSWER_SYNTHESIS render needs. Spread into a context
@@ -49,7 +50,8 @@ _EVIDENCE = {
     "chunks": _CHUNKS,
     "readings": _READINGS,
     "tabular": _TABULAR,
-    "notes": _NOTES,
+    "annotations": _ANNOTATIONS,
+    "gaps": _GAPS,
 }
 
 

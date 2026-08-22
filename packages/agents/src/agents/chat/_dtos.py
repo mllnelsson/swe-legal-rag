@@ -40,6 +40,26 @@ class ChatTool(StrEnum):
     ANSWER = "answer"
 
 
+class PassageNote(BaseModel):
+    """What the orchestrator has to say about one passage it selected.
+
+    Structured rather than prose, and that is the whole point. The writing step
+    is forbidden from treating guidance as a source, but freeform notes have no
+    enforceable line between "c3 carries the deadline rule" (guidance, wanted)
+    and "the deadline is three weeks" (a claim, forbidden). These fields have
+    nowhere to put the second, so the rule is a shape rather than a request.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    handle: str
+    # What this passage establishes, in Swedish. A pointer, never the finding.
+    carries: str
+    # What the writer must watch for — "bilaga, underinstansens ord", "obiter",
+    # "gäller bara församlingar". None when there is nothing to flag.
+    caution: str | None = None
+
+
 class ProgressLabel(StrEnum):
     """What a client may say is happening, as a key rather than a sentence.
 

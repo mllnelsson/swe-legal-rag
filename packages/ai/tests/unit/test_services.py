@@ -142,7 +142,7 @@ async def test_synthesize_answer_streams_tokens() -> None:
             ChunkContext(
                 case_number="12/2023",
                 chunk_text="Nämnden beslutar att bifalla överklagandet.",
-                score=0.95,
+                handle="c1",
             )
         ],
     )
@@ -167,7 +167,7 @@ async def test_synthesize_answer_uses_answer_synthesis_template() -> None:
         question="Vad händer om man missar en deadline?",
         chunks=[
             ChunkContext(
-                case_number="7/2022", chunk_text="Överklagandet avvisas.", score=0.8
+                case_number="7/2022", chunk_text="Överklagandet avvisas.", handle="c1"
             )
         ],
     )
@@ -198,14 +198,14 @@ async def test_synthesize_answer_marks_appendix_excerpts() -> None:
             ChunkContext(
                 case_number="1/2026",
                 chunk_text="Stiftet avslår begäran.",
-                score=0.8,
+                handle="c1",
                 section=ChunkSection.APPENDIX,
                 appendix_label="Bilaga A",
             ),
             ChunkContext(
                 case_number="1/2026",
                 chunk_text="Nämnden undanröjer beslutet.",
-                score=0.8,
+                handle="c2",
             ),
         ],
     )
@@ -215,9 +215,9 @@ async def test_synthesize_answer_marks_appendix_excerpts() -> None:
             pass
 
     prompt = "\n".join(m.content for m in captured_messages)
-    assert "Bilaga A, det överklagade beslutet" in prompt
-    # The body excerpt keeps the plain label.
-    assert "[Mål 1/2026]" in prompt
+    assert "c1 · Mål 1/2026 - Bilaga A, det överklagade beslutet" in prompt
+    # The body excerpt keeps the plain label, and its own handle.
+    assert "[c2 · Mål 1/2026]" in prompt
 
 
 class TestTraceAttribution:

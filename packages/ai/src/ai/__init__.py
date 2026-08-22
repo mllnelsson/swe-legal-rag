@@ -4,6 +4,7 @@ from ai._observability import LLMTraceConfig, install_file_tracing
 from ai._tracing_scope import agent_run_scope, interaction_scope
 from ai.dtos import (
     ChunkContext,
+    PassageNote,
     DecisionReading,
     DateFilter,
     DecomposeRequest,
@@ -126,6 +127,7 @@ __all__ = [
     "DecomposeRequest",
     "DecomposeResult",
     "ChunkContext",
+    "PassageNote",
     "DecisionReading",
     "SynthesizeRequest",
     "TabularEvidence",

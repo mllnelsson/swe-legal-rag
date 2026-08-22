@@ -20,6 +20,7 @@ from ai.dtos import (
     DecomposeResult,
     EntityResult,
     MetadataResult,
+    PassageNote,
     QueryExpansionResult,
     SummarizeResult,
     SynthesizeRequest,
@@ -131,22 +132,47 @@ _NOTHING = "(inget)"
 
 
 def _chunk_label(chunk: ChunkContext) -> str:
-    """Tag each excerpt with whose words it holds.
+    """Tag each excerpt with its handle and whose words it holds.
 
-    An appendix excerpt is the appealed decision — often the very reasoning
-    Överklagandenämnden went on to overturn — so the model has to be told, or it
-    will present it as the nämnd's own.
+    The handle leads because the model marks its claims with it; the
+    attribution follows because an appendix excerpt is the appealed decision —
+    often the very reasoning Överklagandenämnden went on to overturn — and the
+    model has to be told, or it will present it as the nämnd's own.
     """
     if chunk.section is ChunkSection.APPENDIX:
         label = chunk.appendix_label or "bilaga"
-        return f"Mål {chunk.case_number} - {label}, det överklagade beslutet"
-    return f"Mål {chunk.case_number}"
+        return (
+            f"{chunk.handle} · Mål {chunk.case_number} - {label}, "
+            "det överklagade beslutet"
+        )
+    return f"{chunk.handle} · Mål {chunk.case_number}"
 
 
 def _format_chunks(chunks: list[ChunkContext]) -> str:
     if not chunks:
         return _NOTHING
     return "".join(f"[{_chunk_label(chunk)}] {chunk.chunk_text}\n" for chunk in chunks)
+
+
+def _format_annotations(notes: list[PassageNote]) -> str:
+    """The guidance, one line per passage, handle first.
+
+    Rendered as a list rather than prose so its status is visible: these are
+    labels on the evidence, not sentences the writer may lift.
+    """
+    if not notes:
+        return _NOTHING
+    lines = []
+    for note in notes:
+        caution = f" — obs: {note.caution}" if note.caution else ""
+        lines.append(f"{note.handle}: {note.carries}{caution}")
+    return "\n".join(lines)
+
+
+def _format_gaps(gaps: list[str]) -> str:
+    if not gaps:
+        return _NOTHING
+    return "\n".join(f"- {gap}" for gap in gaps)
 
 
 def _format_readings(readings: list[DecisionReading]) -> str:
@@ -190,7 +216,8 @@ async def synthesize_answer(
         "chunks": _format_chunks(request.chunks),
         "readings": _format_readings(request.readings),
         "tabular": _format_tabular(request.tabular),
-        "notes": request.notes or _NOTHING,
+        "annotations": _format_annotations(request.annotations),
+        "gaps": _format_gaps(request.gaps),
         "conversation_history": json.dumps(
             request.conversation_history or [], ensure_ascii=False
         ),

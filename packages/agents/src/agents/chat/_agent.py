@@ -29,6 +29,7 @@ import ai
 from ai import agent_run_scope, interaction_scope
 from ai.dtos import (
     ChunkContext,
+    PassageNote,
     SynthesizeRequest,
     TabularEvidence,
 )
@@ -98,7 +99,7 @@ def _detail_for_call(tool: ChatTool, arguments: dict[str, Any]) -> dict[str, Any
         case ChatTool.READ_DECISION | ChatTool.INSPECT_DECISION:
             return {"document_id": arguments.get("document_id")}
         case ChatTool.ANSWER:
-            return {"cited_chunks": len(arguments.get("chunk_ids") or [])}
+            return {"cited_chunks": len(arguments.get("annotations") or [])}
         case _:
             return {}
 
@@ -164,6 +165,11 @@ def _sql_event(result: dict[str, Any], state: ChatState) -> SqlEvent:
 
 
 def _selected_chunk_contexts(state: ChatState) -> list[ChunkContext]:
+    """The selected passages, in the order the agent named them.
+
+    The handle travels with each one: it is what the writer marks a claim with
+    and what the client resolves that mark back to a source.
+    """
     if state.selection is None:
         return []
     contexts: list[ChunkContext] = []
@@ -177,13 +183,7 @@ def _selected_chunk_contexts(state: ChatState) -> list[ChunkContext]:
             ChunkContext(
                 chunk_text=record.chunk.text,
                 case_number=(decision.case_number if decision else None) or handle,
-                decision_date=str(decision.decision_date)
-                if decision and decision.decision_date
-                else None,
-                decision_outcome=decision.decision_outcome if decision else None,
-                # Ordering is the agent's selection order; there is no fused
-                # score left to carry by this point.
-                score=0.0,
+                handle=handle,
                 section=record.chunk.section,
                 appendix_label=record.chunk.appendix_label,
             )
@@ -390,7 +390,13 @@ async def run_chat_agent(
             conversation_history=request.history,
             readings=list(state.readings),
             tabular=_tabular_evidence(state),
-            notes=state.selection.notes if state.selection else "",
+            annotations=[
+                PassageNote(
+                    handle=note.handle, carries=note.carries, caution=note.caution
+                )
+                for note in (state.selection.annotations if state.selection else [])
+            ],
+            gaps=list(state.selection.gaps) if state.selection else [],
         )
 
         try:

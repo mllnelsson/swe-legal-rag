@@ -34,6 +34,7 @@ from shared.enums import ChunkSection
 from agents.chat._dtos import (
     ChatTool,
     DecisionText,
+    PassageNote,
     ProgressLabel,
     SearchedChunk,
     SearchedDecision,
@@ -73,9 +74,19 @@ class ChunkRecord:
 
 @dataclass
 class AnswerSelection:
-    chunk_handles: list[str]
-    document_handles: list[str]
-    notes: str
+    """The passages the answer rests on, each with why it was chosen.
+
+    The annotations *are* the selection — a handle cannot be cited without
+    saying what it carries, which is what keeps the writing step's guidance
+    structured all the way through.
+    """
+
+    annotations: list[PassageNote]
+    gaps: list[str]
+
+    @property
+    def chunk_handles(self) -> list[str]:
+        return [note.handle for note in self.annotations]
 
 
 @dataclass
@@ -365,27 +376,34 @@ async def _answer(
     state: ChatState,
     settings: ChatAgentSettings,
     *,
-    chunk_ids: list[str] | None = None,
-    document_ids: list[str] | None = None,
-    notes: str = "",
+    annotations: list[dict[str, Any]] | None = None,
+    gaps: list[str] | None = None,
 ) -> dict[str, Any]:
-    requested_chunks = chunk_ids or []
-    known = [handle for handle in requested_chunks if handle in state.chunks]
-    unknown = [handle for handle in requested_chunks if handle not in state.chunks]
+    known: list[PassageNote] = []
+    unknown: list[str] = []
 
-    requested_documents = document_ids or []
-    known_documents = [h for h in requested_documents if h in state.decisions]
+    for raw in annotations or []:
+        try:
+            note = PassageNote.model_validate(raw)
+        except Exception:
+            # A malformed annotation is a dropped passage, not a failed turn:
+            # the rest of the selection is still good evidence.
+            logger.info("Chat agent sent an unreadable annotation: %r", raw)
+            continue
+        if note.handle in state.chunks:
+            known.append(note)
+        else:
+            unknown.append(note.handle)
 
     state.selection = AnswerSelection(
-        chunk_handles=known[: settings.chat_agent_max_chunks_cited],
-        document_handles=known_documents,
-        notes=notes,
+        annotations=known[: settings.chat_agent_max_chunks_cited],
+        gaps=list(gaps or []),
     )
     if unknown:
         logger.info("Chat agent selected unknown chunk handles: %s", unknown)
     return {
         "ok": True,
-        "cited_chunks": len(state.selection.chunk_handles),
+        "cited_chunks": len(state.selection.annotations),
         "ignored_unknown_handles": unknown,
     }
 
@@ -530,36 +548,58 @@ _TOOL_DEFINITIONS = [
     ToolDefinition(
         name=ChatTool.ANSWER,
         description=(
-            "Ends your turn. Name the passages that carry the answer and any "
-            "decisions you read in full, and leave short notes for the writing "
-            "step. Call this exactly once, when you have enough."
+            "Ends your turn. Name each passage that carries the answer and say "
+            "what it carries. Call this exactly once, when you have enough."
         ),
         parameters={
             "type": "object",
             "properties": {
-                "chunk_ids": {
+                "annotations": {
                     "type": "array",
-                    "items": {"type": "string"},
                     "description": (
-                        "Passage handles, e.g. ['c1', 'c7']. These are quoted "
-                        "verbatim, so choose few and choose well."
+                        "One entry per passage the answer rests on. These are "
+                        "quoted verbatim by the writing step, so choose few and "
+                        "choose well."
                     ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "handle": {
+                                "type": "string",
+                                "description": (
+                                    "A passage handle from search_decisions, e.g. c1."
+                                ),
+                            },
+                            "carries": {
+                                "type": "string",
+                                "description": (
+                                    "What this passage establishes, in Swedish. "
+                                    "A pointer for the writer — never the "
+                                    "finding itself, which it reads for itself."
+                                ),
+                            },
+                            "caution": {
+                                "type": "string",
+                                "description": (
+                                    "What the writer must watch for, e.g. "
+                                    "'bilaga, underinstansens ord'. Omit when "
+                                    "there is nothing to flag."
+                                ),
+                            },
+                        },
+                        "required": ["handle", "carries"],
+                    },
                 },
-                "document_ids": {
+                "gaps": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Decision handles you read in full, e.g. ['d2'].",
-                },
-                "notes": {
-                    "type": "string",
                     "description": (
-                        "A few sentences in Swedish: which passage carries "
-                        "what, what to be careful of, what the evidence does "
-                        "not support."
+                        "What the evidence does not support, in Swedish. One "
+                        "short sentence each. Empty when it covers the question."
                     ),
                 },
             },
-            "required": ["chunk_ids"],
+            "required": ["annotations"],
         },
     ),
 ]
@@ -619,17 +659,10 @@ def build_chat_tools(
         return await _query_corpus(toolset, state, question=question)
 
     async def answer(
-        chunk_ids: list[str] | None = None,
-        document_ids: list[str] | None = None,
-        notes: str = "",
+        annotations: list[dict[str, Any]] | None = None,
+        gaps: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await _answer(
-            state,
-            settings,
-            chunk_ids=chunk_ids,
-            document_ids=document_ids,
-            notes=notes,
-        )
+        return await _answer(state, settings, annotations=annotations, gaps=gaps)
 
     executors = {
         ChatTool.LIST_VOCABULARY: list_vocabulary,

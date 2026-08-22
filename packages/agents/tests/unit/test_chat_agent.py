@@ -181,8 +181,7 @@ async def test_search_then_answer_streams_prose_and_sources() -> None:
         _tool_call(
             ChatTool.ANSWER,
             call_id="call-2",
-            chunk_ids=["c1"],
-            notes="c1 bär avgörandet.",
+            annotations=[{"handle": "c1", "carries": "bär avgörandet"}],
         ),
     )
     toolset = FakeToolset()
@@ -225,7 +224,11 @@ async def test_progress_events_carry_keys_not_prose() -> None:
             query="jäv",
             document_filter={"keywords": ["jäv"]},
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[{"handle": "c1", "carries": "bär svaret"}],
+        ),
     )
 
     events = await _collect(
@@ -267,7 +270,11 @@ async def test_filtering_on_free_text_is_refused_until_grounded() -> None:
             query="tjänstetillsättning",
             document_filter={"category": "Tjänstetillsättning"},
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-4", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-4",
+            annotations=[{"handle": "c1", "carries": "bär svaret"}],
+        ),
     )
     toolset = FakeToolset()
 
@@ -310,7 +317,11 @@ async def test_keyword_filter_needs_no_grounding() -> None:
             query="jäv",
             document_filter={"keywords": ["jäv"]},
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[{"handle": "c1", "carries": "bär svaret"}],
+        ),
     )
     toolset = FakeToolset()
 
@@ -350,7 +361,11 @@ async def test_counting_emits_the_query_before_the_answer() -> None:
             call_id="call-2",
             question="hur många avslogs 2024?",
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            annotations=[{"handle": "c1", "carries": "bär svaret"}],
+        ),
     )
 
     events = await _collect(
@@ -390,7 +405,11 @@ async def test_full_decision_text_never_enters_an_orchestrator_message() -> None
             document_id="d1",
             question="Vad beslutade nämnden?",
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            annotations=[{"handle": "c1", "carries": "bär svaret"}],
+        ),
     )
     toolset = FakeToolset()
 
@@ -428,7 +447,11 @@ async def test_reading_budget_refuses_rather_than_raising() -> None:
             document_id="d1",
             question="Vad beslutade nämnden?",
         ),
-        _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            annotations=[{"handle": "c1", "carries": "bär svaret"}],
+        ),
     )
     reader = ScriptedProvider(Message(role=Role.assistant, content="extract"))
 
@@ -454,7 +477,11 @@ async def test_unknown_handle_is_refused_with_the_valid_ones() -> None:
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
         _tool_call(ChatTool.INSPECT_DECISION, call_id="call-2", document_id="d99"),
-        _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            annotations=[{"handle": "c1", "carries": "bär svaret"}],
+        ),
     )
 
     events = await _collect(
@@ -485,7 +512,7 @@ async def test_unknown_handle_is_refused_with_the_valid_ones() -> None:
 async def test_no_evidence_says_so_rather_than_improvising() -> None:
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="tomater"),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=[]),
+        _tool_call(ChatTool.ANSWER, call_id="call-2", annotations=[]),
     )
 
     events = await _collect(
@@ -620,11 +647,76 @@ async def test_exhausted_loop_ends_with_a_terminal_error() -> None:
     assert not any(isinstance(event, DoneEvent) for event in events)
 
 
+async def test_a_caution_and_a_gap_reach_the_writing_step() -> None:
+    """The two things an annotation exists to carry, end to end."""
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[
+                {
+                    "handle": "c1",
+                    "carries": "definierar jäv",
+                    "caution": "bilaga, underinstansens ord",
+                }
+            ],
+            gaps=["Underlaget säger inget om tidsfristen."],
+        ),
+    )
+
+    await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad är jäv?"),
+            FakeToolset(),
+            llm_provider=provider,
+            settings=_settings(),
+        )
+    )
+
+    synthesis_prompt = provider.seen_messages[-1][-1].content
+    assert "c1: definierar jäv" in synthesis_prompt
+    assert "bilaga, underinstansens ord" in synthesis_prompt
+    assert "Underlaget säger inget om tidsfristen." in synthesis_prompt
+
+
+async def test_an_unreadable_annotation_costs_one_passage_not_the_turn() -> None:
+    """A malformed entry is dropped; the rest is still good evidence."""
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[
+                {"handle": "c1", "carries": "bär svaret"},
+                {"carries": "saknar handtag"},
+            ],
+        ),
+    )
+
+    events = await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad är jäv?"),
+            FakeToolset(),
+            llm_provider=provider,
+            settings=_settings(),
+        )
+    )
+
+    assert not any(isinstance(event, ErrorEvent) for event in events)
+    sources = next(e for e in events if isinstance(e, SourcesEvent)).sources
+    assert len(sources) == 1
+
+
 async def test_appendix_selection_keeps_its_label() -> None:
     """A cited appendix passage must stay attributable to the lower instance."""
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="stiftets beslut"),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c2"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[{"handle": "c2", "carries": "bär svaret"}],
+        ),
     )
 
     events = await _collect(
@@ -644,7 +736,14 @@ async def test_appendix_selection_keeps_its_label() -> None:
 async def test_citations_are_capped() -> None:
     provider = ScriptedProvider(
         _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
-        _tool_call(ChatTool.ANSWER, call_id="call-2", chunk_ids=["c1", "c2"]),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[
+                {"handle": "c1", "carries": "bär svaret"},
+                {"handle": "c2", "carries": "bär svaret"},
+            ],
+        ),
     )
 
     await _collect(
@@ -699,7 +798,11 @@ class TestCorrelation:
                 document_id="d1",
                 question="Vad beslutade nämnden?",
             ),
-            _tool_call(ChatTool.ANSWER, call_id="call-3", chunk_ids=["c1"]),
+            _tool_call(
+                ChatTool.ANSWER,
+                call_id="call-3",
+                annotations=[{"handle": "c1", "carries": "bär svaret"}],
+            ),
         )
         await _collect(
             run_chat_agent(
@@ -789,7 +892,11 @@ class TestCorrelation:
                 document_id="d1",
                 question="Vilka skäl angavs?",
             ),
-            _tool_call(ChatTool.ANSWER, call_id="call-4", chunk_ids=["c1"]),
+            _tool_call(
+                ChatTool.ANSWER,
+                call_id="call-4",
+                annotations=[{"handle": "c1", "carries": "bär svaret"}],
+            ),
         )
 
         await _collect(
