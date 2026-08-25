@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -9,6 +9,8 @@ from pydantic import BaseModel, ValidationError
 
 from llm_core._exceptions import MaxIterationsError, ProviderError, ToolExecutionError
 from llm_core._service import (
+    _refusal_for_unbindable_call,
+    ToolExecutor,
     ToolCallFinished,
     ToolCallStarted,
     ToolLoopFinished,
@@ -412,6 +414,29 @@ async def test_tool_loop_a_refusal_is_still_a_finished_call() -> None:
 
     assert len(finished) == 1
     assert finished[0].result["refused"] is True
+
+
+def test_a_callable_with_no_readable_signature_is_not_refused() -> None:
+    """Nothing to check the call against, so invoking is the only way to find out.
+
+    `llm_core` types an executor as any awaitable callable; a C builtin cannot
+    report a signature, and refusing every call to one would be worse than the
+    behaviour this replaced.
+    """
+    call = ToolCall(id="tc-1", name="dir", arguments={"x": 1})
+
+    # Cast because the branch exists for callables the annotation excludes:
+    # `dir` is a C builtin, which is exactly what cannot report a signature.
+    assert _refusal_for_unbindable_call(cast(ToolExecutor, dir), call) is None
+
+
+def test_a_call_that_fits_is_not_refused() -> None:
+    async def executor(q: str) -> str:
+        return q
+
+    call = ToolCall(id="tc-1", name="search", arguments={"q": "x"})
+
+    assert _refusal_for_unbindable_call(executor, call) is None
 
 
 def test_tool_definition_summary_is_optional() -> None:

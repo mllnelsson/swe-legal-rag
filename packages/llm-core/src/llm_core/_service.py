@@ -138,6 +138,42 @@ async def generate_stream(
                 yield chunk.text
 
 
+def _refusal_for_unbindable_call(
+    executor: ToolExecutor, call: ToolCall
+) -> dict[str, Any] | None:
+    """The tool result a call that does not fit its executor comes back as.
+
+    `None` when the call binds — and when the callable cannot report a
+    signature at all, a C builtin or an exotic wrapper, where there is nothing
+    to check it against and invoking is the only way to find out.
+
+    Executors are called by keyword, so a wrong or missing argument name was
+    the one kind of bad call `tool_loop` could not repair from: it raised
+    `TypeError`, became a `ToolExecutionError` and ended the run, while every
+    refusal an executor makes for itself comes back as an ordinary result the
+    model fixes on its next iteration. Binding first puts the two on the same
+    footing, and keeps a `TypeError` raised from *inside* an executor a defect.
+    """
+    try:
+        signature = inspect.signature(executor)
+    except (TypeError, ValueError):
+        return None
+
+    try:
+        signature.bind(**call.arguments)
+    except TypeError as exc:
+        # The valid names are spelled out because `bind` reports only the first
+        # thing wrong: given a wrong name *and* a missing one it names the
+        # missing one, leaving the model no way to learn which of its arguments
+        # was rejected.
+        valid = ", ".join(signature.parameters) or "none"
+        return {
+            "error": f"{call.name}: {exc}. Valid arguments: {valid}.",
+            "refused": True,
+        }
+    return None
+
+
 async def tool_loop(
     messages: list[Message],
     tools: list[ToolDefinition],
@@ -206,25 +242,9 @@ async def tool_loop(
                 )
 
             executor = executors[tc.name]
-            signature = inspect.signature(executor)
-            try:
-                signature.bind(**tc.arguments)
-            except TypeError as exc:
-                # The model named an argument the executor does not have, or
-                # left out one it needs. Returned rather than raised: that is a
-                # bad call, not a defect here, and it was the only kind of bad
-                # call this loop could not repair from — every other refusal an
-                # executor makes already comes back as an ordinary tool result.
-                #
-                # The valid names are spelled out because `bind` reports only
-                # the first thing wrong: given a wrong name *and* a missing one
-                # it names the missing one, leaving the model no way to learn
-                # which of its arguments was rejected.
-                valid = ", ".join(signature.parameters) or "none"
-                result: Any = {
-                    "error": f"{tc.name}: {exc}. Valid arguments: {valid}.",
-                    "refused": True,
-                }
+            refusal = _refusal_for_unbindable_call(executor, tc)
+            if refusal is not None:
+                result: Any = refusal
             else:
                 # Binding is what separates the two: a call that does not fit
                 # the signature is refused above, so anything raising here came
