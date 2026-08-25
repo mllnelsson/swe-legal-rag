@@ -193,6 +193,13 @@ async def list_documents(
         session, document_filter, limit=limit, offset=offset, newest_first=newest_first
     )
     total = await search_repo.count_filtered_documents(session, document_filter)
+    logger.debug(
+        "documents listed count=%d total=%d limit=%d offset=%d",
+        len(documents),
+        total,
+        limit,
+        offset,
+    )
     return Page(
         items=[_to_summary(document) for document in documents],
         total=total,
@@ -219,6 +226,13 @@ async def get_document_detail(
     )
     chunks = await _read_chunks(session, document_id)
     buckets = _bucket_entities(entities)
+    logger.debug(
+        "document %s detail: entities=%d references=%d chunks=%d",
+        document_id,
+        len(entities),
+        len(references.outgoing) + len(references.incoming),
+        len(chunks),
+    )
 
     return DocumentDetail(
         document=_to_summary(document),
@@ -253,8 +267,17 @@ async def get_document_chunks(
         return None
     chunks = await _read_chunks(session, document_id)
     if section is None:
+        logger.debug("document %s chunks=%d section=all", document_id, len(chunks))
         return chunks
-    return [chunk for chunk in chunks if chunk.section == section]
+    selected = [chunk for chunk in chunks if chunk.section == section]
+    logger.debug(
+        "document %s chunks=%d of %d section=%s",
+        document_id,
+        len(selected),
+        len(chunks),
+        section,
+    )
+    return selected
 
 
 async def get_document_pdf(

@@ -8,6 +8,7 @@
  * under a new one.
  */
 
+import { StrictMode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
@@ -66,20 +67,30 @@ function LocationProbe() {
   return <span data-testid="location">{useLocation().pathname}</span>;
 }
 
-function renderAt(path: string) {
+/** Rendered inside `StrictMode`, like `main.tsx` does.
+ *
+ *  Not incidental fidelity: the page's whole conversation lifecycle is effects
+ *  and refs, and StrictMode's mount → cleanup → mount is the one thing that
+ *  tells an effect keyed on a *change* apart from one that merely re-runs.
+ *  Without it a first question could be cleared off the screen while its stream
+ *  kept going and the suite saw nothing. */
+function renderAt(path: string, state?: { question: string }) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  const entry = state === undefined ? path : { pathname: path, state };
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[path]}>
-        <LocationProbe />
-        <Routes>
-          <Route path="/agent" element={<AgentPage />} />
-          <Route path="/agent/:sessionId" element={<AgentPage />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[entry]}>
+          <LocationProbe />
+          <Routes>
+            <Route path="/agent" element={<AgentPage />} />
+            <Route path="/agent/:sessionId" element={<AgentPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </StrictMode>,
   );
 }
 
@@ -178,6 +189,44 @@ describe("a new conversation", () => {
       ),
     );
 
+    expect(screen.getAllByText("Svar.")).toHaveLength(1);
+  });
+});
+
+describe("a question handed over from the home page", () => {
+  test("is asked once and its answer is on screen", async () => {
+    // The regression this file did not have. The home page navigates with the
+    // question in router state; the page asks it on arrival. What used to
+    // happen instead: the turn was appended, an effect that could not tell a
+    // remount from a change of conversation cleared it, and the stream ran on
+    // with nothing to fold into — a question that looked like it had done
+    // nothing, and an empty state offering to ask it again.
+    const chatCalls = stubApi();
+
+    renderAt("/agent", { question: "Hur ofta bifaller nämnden?" });
+
+    expect(await screen.findByText("Hur ofta bifaller nämnden?")).toBeInTheDocument();
+    expect(await screen.findByText("Svar.")).toBeInTheDocument();
+
+    // Once, not twice: StrictMode mounts this page two times.
+    await waitFor(() => expect(chatCalls).toHaveLength(1));
+    expect(chatCalls[0]?.session_id).toBeNull();
+  });
+
+  test("is not re-asked when the conversation claims its URL", async () => {
+    // The claim is a route change, and a route change is what clears the
+    // transcript. The one it must not clear is the conversation doing the
+    // claiming.
+    const chatCalls = stubApi();
+
+    renderAt("/agent", { question: "Hur ofta bifaller nämnden?" });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location")).toHaveTextContent(`/agent/${SESSION_ID}`),
+    );
+
+    expect(chatCalls).toHaveLength(1);
+    expect(screen.getByText("Hur ofta bifaller nämnden?")).toBeInTheDocument();
     expect(screen.getAllByText("Svar.")).toHaveLength(1);
   });
 });

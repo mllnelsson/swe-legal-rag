@@ -91,7 +91,10 @@ at the end, so a long run shows how much is left. `scripts/run_pipeline.py` clos
 Formatting is not each entry point's business: `shared.logging_config.configure_logging()`
 installs one timestamped root handler and every `main()` calls it **at startup rather than
 at import**, so composing workers into one process cannot leave the configuration to
-import order.
+import order. How verbose it is comes from `LOG_LEVEL`, read from the environment or from
+`.env` — the file is read directly precisely because `configure_logging()` runs before
+`load_dotenv()` here. The API's equivalent envelope, the level table for it, and the rule
+against logging payloads are all in [application logging](/logging.md).
 
 ## Startup envelope (`shared.worker.subscribe_step` / `serve`)
 

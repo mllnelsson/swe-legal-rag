@@ -68,3 +68,72 @@
     display: none;
   }
 }
+
+/* Motion.
+ *
+ * The app had none. That was defensible everywhere except one place: agent mode
+ * spends roughly eighteen seconds working before the first word of an answer
+ * appears, and a still, grey, 13px list is indistinguishable from a page that
+ * has hung. These two animations exist to say "still going", and nothing else
+ * in the app uses them.
+ *
+ * Both are switched off under `prefers-reduced-motion`, where the steps still
+ * arrive, still tick over, and still carry the elapsed counter — the
+ * information is in the text, and the motion only makes it noticeable. */
+@keyframes step-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes step-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.step-active-marker {
+  animation: step-pulse 1400ms var(--ease-standard) infinite;
+}
+
+/* A slow warm sweep across the running step's words. Text-clipped rather than
+   drawn as a bar, so nothing on the page moves or changes size while it runs. */
+.step-active-label {
+  background: linear-gradient(
+    90deg,
+    var(--text-body) 40%,
+    var(--apricot-600) 50%,
+    var(--text-body) 60%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: step-sweep 2600ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-active-marker,
+  .step-active-label {
+    animation: none;
+  }
+
+  .step-active-label {
+    background: none;
+    color: var(--text-body);
+  }
+
+  /* The box travelling from the home page to the composer is motion too. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -15,6 +16,8 @@ from shared.dtos.session import (
     SessionTurn,
 )
 from shared.repositories import session as session_repo
+
+logger = logging.getLogger(__name__)
 
 # DEPRECATED — chat-surface service, slated to move out of the api package with
 # POST /api/chat and /api/sessions. See /api/chat-endpoint.md. Conversation state
@@ -39,8 +42,18 @@ async def get_or_create_session(
     if session_id is not None:
         existing = await session_repo.get_by_id(session, session_id)
         if existing is not None:
+            logger.debug(
+                "session %s resumed with %d entries",
+                session_id,
+                len(existing.history),
+            )
             return existing
-    return await session_repo.create(session, SessionCreate())
+        # Not an error: an unrecognised id silently starts a fresh conversation,
+        # so this is the only place that fact is visible.
+        logger.debug("session %s unknown, starting a fresh one", session_id)
+    created = await session_repo.create(session, SessionCreate())
+    logger.debug("session %s created", created.id)
+    return created
 
 
 async def append_turn(
@@ -68,6 +81,12 @@ async def append_turn(
             {"role": "assistant", "content": answer, "interaction_id": interaction_id},
         ],
         datetime.now(timezone.utc),
+    )
+    logger.debug(
+        "turn appended session=%s question_chars=%d answer_chars=%d",
+        session_id,
+        len(question),
+        len(answer),
     )
 
 
@@ -202,6 +221,7 @@ def history_for_llm(session: SessionRead, max_turns: int) -> list[dict]:
     history = session.history
     max_entries = max_turns * ENTRIES_PER_TURN
     recent = history[-max_entries:] if len(history) > max_entries else history
+    logger.debug("history window %d of %d entries", len(recent), len(history))
     return [_entry_for_llm(entry) for entry in recent]
 
 

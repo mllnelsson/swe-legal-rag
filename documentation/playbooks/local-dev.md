@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-19T00:00:00Z
+timestamp: 2026-08-20T00:00:00Z
 ---
 
 # Local Development Environment
@@ -256,6 +256,10 @@ A root `.env` file provides all configuration. Each interface reads from environ
 variables to select the local implementation.
 
 ```
+# How much every process says about what it is doing: DEBUG, INFO, WARNING,
+# ERROR or CRITICAL. Anything else refuses to start. See /logging.md.
+LOG_LEVEL=info
+
 # Database
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/overklagan
 # TEST_DATABASE_URL=…/overklagan_test   # integration tests only; defaults to
@@ -283,6 +287,10 @@ GEMINI_API_KEY=                 # required if any role uses provider: gemini
 # column width (e5-large=1024, e5-base=768). Checked at startup.
 EMBEDDING_DIMENSION=1024
 
+# Skip the HuggingFace hub revalidation the local embedding provider does on
+# every model load. Cuts API startup from ~90s to ~9s on WSL; see the note below.
+HF_HUB_OFFLINE=1
+
 # LLM trace capture (see /observability.md). On by default; one file per billed
 # call, under {LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{date}/{interaction_id}/,
 # so one directory holds everything a request cost. Records carry model + tokens;
@@ -297,6 +305,34 @@ LLM_STREAM_USAGE=true
 MINIO_ENDPOINT=http://localhost:9000
 REDIS_URL=redis://localhost:6379
 ```
+
+### Startup stalls on the HuggingFace hub
+
+With the shipped `embedding.provider: local`, both the API and worker-embed build a
+`SentenceTransformer` at startup, and `sentence-transformers` revalidates every file of
+`intfloat/multilingual-e5-large` against huggingface.co *even when the cache is warm*.
+Those probes are serial and each one waits out `HF_HUB_ETAG_TIMEOUT` (10s by default) on
+a network that stalls rather than refuses — the usual case under WSL2. The result is
+`uvicorn` printing `Waiting for application startup.` and then nothing for ~90 seconds,
+which reads as a hang. It is not one; the process is alive and does eventually serve.
+
+Since the API logs each startup stage, the wait is now visible rather than silent: at
+`LOG_LEVEL=debug` it reports `Embedding provider ready in 8.4s`, and every run closes with
+one `API ready in <n>s` line at INFO. See [application logging](/logging.md).
+
+`HF_HUB_OFFLINE=1` makes the loader trust the cache and skip the revalidation entirely:
+
+| Setting | Model load | API ready |
+|---|---|---|
+| default | ~88s | ~92s |
+| `HF_HUB_ETAG_TIMEOUT=1` | ~14s | ~18s |
+| `HF_HUB_OFFLINE=1` | ~3s | ~9s |
+
+The cost is that a *missing* file raises `LocalEntryNotFoundError` instead of being
+downloaded, so the cache has to be warm first — see the worker-embed note under
+[worker environment variables](#worker-environment-variables) on populating it, and drop
+the variable for the one run that fetches a new embedding model. It applies to
+worker-chunk's tokenizer load the same way.
 
 An `.env` still setting `LOCAL_STORAGE_PATH=./data/pdfs` (the old default) keeps working
 unchanged, since the env var always wins over the code default; anyone dropping that line
@@ -333,6 +369,7 @@ one level to match.
 | `SEARCH_ARM_LIMIT` | `50` | Results per arm (vector + text) before fusion (`api`) |
 | `SEARCH_MIN_VECTOR_SIMILARITY` | `0.78` | Cosine similarity a chunk must reach before `/api/search`'s vector arm returns it — what decides "no match". Model- and corpus-specific; re-measure when the [embedding model](/decisions/embedding-model.md) changes. `0` disables the floor. See [the similarity floor](/retrieval/deterministic-search.md#the-similarity-floor) (`api`) |
 | `API_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins for the API server; Vite dev server default |
+| `LOG_LEVEL` | `info` | `debug`/`info`/`warning`/`error`/`critical`, case-insensitive. Applies to **every** process, not just the API. An unrecognised value refuses to start rather than falling back. Read from the real environment first and from `.env` second — the file is read directly, because every entry point configures logging *before* `load_dotenv()`. See [application logging](/logging.md) (all) |
 | `SESSION_MAX_HISTORY_TURNS` | `10` | Max conversation turns passed to LLM; full history stays in DB |
 | `CHAT_SCRIPT` | `off` | **Development only.** Replays a canned event stream on [`POST /api/chat`](/api/chat-endpoint.md) instead of running the agent: `auto` (picks per message length), `research`, `direct`, `error`, `off`. See [driving the UI without a model](/playbooks/live-testing.md#driving-the-ui-without-a-model) (`api`) |
 | `LLM_TRACE_ENABLED` | `true` | Capture every LLM/embedding call to a file — see [observability](/observability.md). Off means no recorder and no files |

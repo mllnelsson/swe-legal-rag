@@ -10,6 +10,7 @@ API instead of leaving callers to remember a query parameter.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,8 @@ from shared.dtos.entity import EntityWithCount
 from shared.enums import EntityType
 from shared.repositories import document_entity as document_entity_repo
 from shared.repositories import entity as entity_repo
+
+logger = logging.getLogger(__name__)
 
 
 async def list_keywords(
@@ -40,6 +43,7 @@ async def list_keywords(
     total = await entity_repo.count_entities(
         session, entity_type=EntityType.KEYWORD, name_query=name_query
     )
+    logger.debug("keywords listed count=%d total=%d", len(keywords), total)
     return Page(items=keywords, total=total, limit=limit, offset=offset)
 
 
@@ -65,4 +69,7 @@ async def list_documents_for_keyword(
         session, keyword_id, limit=limit, offset=offset
     )
     total = await document_entity_repo.count_documents_for_entity(session, keyword_id)
+    logger.debug(
+        "keyword %s documents count=%d total=%d", keyword_id, len(documents), total
+    )
     return Page(items=documents, total=total, limit=limit, offset=offset)

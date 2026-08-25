@@ -88,16 +88,33 @@ own domain failures has its own `errors.py`.
 
 Provides `run_pipeline_step(...)`, the task envelope every subscriber worker runs inside —
 see [worker patterns](/pipeline/worker-patterns.md). It logs each step's start, duration
-and outcome, so a worker that logs nothing of its own is still visible in a run.
+and outcome, so a worker that logs nothing of its own is still visible in a run. The API
+has the same shape one layer up, in `api.access_log` — see
+[application logging](/logging.md).
 
 ## `logging_config.py`
 
-Provides `configure_logging(level=logging.INFO)` — the single root-logger configuration
-(timestamped `HH:MM:SS levelname name: message`) every entry point installs. Called from
-each `main()`, never at import: `scripts/run_pipeline.py` imports six workers before it
-runs a line of its own, and `logging.basicConfig` is a no-op once the root logger has a
-handler, so import-time configuration made the format depend on import order.
-`force=True` therefore lets the entry point that is actually running win.
+Provides `configure_logging(level=None)` and `resolve_log_level()` — the single
+root-logger configuration (timestamped `HH:MM:SS levelname name: message`) every entry
+point installs. Called from each `main()`, never at import: `scripts/run_pipeline.py`
+imports six workers before it runs a line of its own, and `logging.basicConfig` is a
+no-op once the root logger has a handler, so import-time configuration made the format
+depend on import order. `force=True` therefore lets the entry point that is actually
+running win.
+
+`level=None` — what every caller passes — resolves **`LOG_LEVEL`**; an explicit level
+still wins, so the parameter keeps the meaning it had. An unparseable value raises rather
+than falling back, matching `ChatScript`'s fail-at-startup stance: a silently ignored
+logging configuration is the failure this module exists to prevent.
+
+`resolve_log_level()` reads `os.environ` first and then `.env` **directly**, via
+`dotenv_values`. That second lookup is load-bearing: every entry point calls
+`configure_logging()` *before* `load_dotenv()`, and in six of the seven workers
+`load_dotenv()` lives inside `subscribe()` rather than `main()`. Reading only
+`os.environ` would make a `.env` `LOG_LEVEL` work under Compose (which injects `env_file`
+into the process environment) and silently do nothing under `uv run`. `dotenv_values` is
+read-only and puts nothing into `os.environ`, so no other variable's resolution order
+moves. Full rules in [application logging](/logging.md).
 
 ## `repositories/`
 

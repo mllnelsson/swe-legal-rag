@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-21T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -460,18 +460,20 @@ the agent:
 
 | Surface | What to check |
 |---|---|
-| `/` | Both modes of the **Sök / Agent** toggle carry a line of prose; the keyword chips run a real search |
+| `/` | Both modes of the **Sök / Agent** switch carry a line of prose under it; the caption's keyword links run a real search |
 | `/sok?q=jäv` | Real results; cards say "Innehåller dina ord" or "Träff på betydelse"; titles are links |
 | `/sok?q=rymdfarkoster på mars` | The no-match empty state — reachable because of [the similarity floor](/retrieval/deterministic-search.md#the-similarity-floor) |
 | `/sok?q=jäv&kategori=Kyrkoval` | The *other* empty state: filters excluded everything before any search ran |
 | `/beslut/{id}` | Tabs, the sticky appendix marker, the PDF pane, "← Tillbaka" |
-| `/agent` | The three example questions; a long question plays `research`, "tack" plays `direct` |
+| `/agent` | The three example questions; a long question plays `research`, "tack" plays `direct`; the working steps show as a warm pulsing card, then fold once the answer starts; "Tidigare samtal" opens the conversation list in a slide-over panel |
 | `/sokord`, `/begrepp` | Vocabulary indexes; a row names the entity on the page it opens |
 | `/stil` | Every ported component on one page |
 
 Narrow the window past 900px to see the [stacked
-layout](/frontend/overview.md#small-screens): rails move below the content, and
-results come before filters.
+layout](/frontend/overview.md#small-screens) on `/sok` and `/beslut/{id}`:
+their rails move below the content, and results come before filters. `/agent`
+has no rail to stack — its conversation list is a slide-over panel at every
+width.
 
 ## Verifying the Pipeline
 

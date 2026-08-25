@@ -12,9 +12,10 @@ screen](/frontend/overview.md) rather than leaving it to be discovered.
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access_log import note
 from api.config import SearchSettings, get_search_settings
 from api.dependencies import get_db
 from api.pagination import Page, clamp_limit
@@ -30,6 +31,7 @@ router = APIRouter()
 
 @router.get("/api/sessions")
 async def list_sessions_endpoint(
+    request: Request,
     limit: int | None = Query(default=None, ge=1),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -45,7 +47,7 @@ async def list_sessions_endpoint(
     created before the agent runs, so a failed, aborted or rejected request
     leaves one behind with an empty history; those are not conversations.
     """
-    return await list_sessions(
+    page = await list_sessions(
         db,
         limit=clamp_limit(
             limit,
@@ -54,11 +56,20 @@ async def list_sessions_endpoint(
         ),
         offset=offset,
     )
+    note(
+        request,
+        count=len(page.items),
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+    )
+    return page
 
 
 @router.get("/api/sessions/{session_id}")
 async def session_transcript_endpoint(
     session_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> SessionTranscript:
     """One conversation, as the turns it was appended as.
@@ -69,6 +80,11 @@ async def session_transcript_endpoint(
     so rather than render an empty source list.
     """
     transcript = await get_transcript(session_id, db)
+    note(
+        request,
+        session=session_id,
+        turns=len(transcript.turns) if transcript else 0,
+    )
     if transcript is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return transcript
@@ -77,6 +93,7 @@ async def session_transcript_endpoint(
 @router.delete("/api/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session_endpoint(
     session_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Forget a conversation.
@@ -87,6 +104,7 @@ async def delete_session_endpoint(
     is the transcript, not the record of what the turns cost.
     """
     removed = await delete_session(session_id, db)
+    note(request, session=session_id, removed=removed)
     if not removed:
         raise HTTPException(status_code=404, detail="Session not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
