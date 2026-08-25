@@ -4,7 +4,7 @@ title: llm-core Package
 description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
 resource: packages/llm-core
 tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-22T21:40:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -19,6 +19,10 @@ lives in the [ai package](/packages/ai.md).
   `LLMResponse`, `StreamChunk`, `Usage`, `Role` (StrEnum). `LLMResponse` and
   `StreamChunk` each carry `usage`, `model` and `provider`; `Usage` fields are
   `None` when the provider reported nothing, which is not the same as zero.
+  `ToolDefinition.summary` is an optional one-line alternative to `description`
+  for a prompt's own tool index (falls back to `description` when unset) — never
+  serialized to a provider, since `description` is what a provider sends
+  natively on every iteration.
 - **`_exceptions.py`** — `LLMError` base, `ProviderError`, `MissingCredentialError` (a
   provider constructed without the API key or base URL it needs), `LLMDisabledError`
   (something called a provider deliberately configured as absent — the mirror image of
@@ -100,6 +104,18 @@ lives in the [ai package](/packages/ai.md).
   as that final event rather than as one; `run_tool_loop(...)` drains the generator for a
   caller that wants only the result, unchanged in shape from before (the [SQL
   agent](/api/sql-agent.md) uses this).
+
+  Executors are called by keyword, so before invoking one `tool_loop` binds the
+  call's arguments against the executor's own signature
+  (`inspect.signature(executor).bind(**tc.arguments)`). A call that does not
+  fit — an argument name the executor does not have, or a missing required one
+  — comes back as an ordinary tool result, `{"error": "<tool>: <message>. Valid
+  arguments: <names>.", "refused": True}`, rather than raising — the same shape
+  as every other refusal an executor makes. The valid names are spelled out
+  because `bind` reports only the first thing wrong, and a message naming just
+  a missing argument would leave the model no way to learn an invented one was
+  also rejected. Binding is what separates a bad call from a defect: an
+  exception raised from *inside* an executor still raises `ToolExecutionError`.
 
   A non-string tool result is serialised with `json.dumps(result, ensure_ascii=False)`.
   Escaping every non-ASCII character to `\uXXXX` would inflate a Swedish-heavy result by

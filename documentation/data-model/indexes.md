@@ -3,7 +3,7 @@ type: Reference
 title: Indexes
 description: The index catalog across all tables — HNSW/GIN for retrieval, btree for constraints and lookups.
 tags: [data-model, indexes, pgvector, performance]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # Indexes
@@ -32,7 +32,7 @@ timestamp: 2026-08-16T00:00:00Z
 
 [`sessions`](/data-model/sessions.md) is absent from the table above deliberately,
 not by omission. It carries its primary key and nothing else: a conversation is
-always reached by its own id, and [the rail's
+always reached by its own id, and [the conversation panel's
 listing](/api/sessions.md) is an unfiltered ordering of a table
 that holds one row per conversation held on a single-user, undeployed system. There
 is no predicate to index. Should the listing ever grow a filter — a date range, a

@@ -3,7 +3,7 @@ type: Concept
 title: Frontend
 description: 'The React SPA at frontend/ — two surfaces over the same corpus: deterministic search, and agent mode, an SSE client for the conversational agent that resolves inline citation markers to the sources event. No LLM call is made from the browser; both surfaces go through the API.'
 tags: [frontend, ui, search, agent, sse, react, spa]
-timestamp: 2026-08-22T00:00:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # Frontend
@@ -37,9 +37,9 @@ just `react`, `react-dom`, `react-router`, `@tanstack/react-query`.
 
 | Path | Page |
 |---|---|
-| `/` | Search home — carries the **Sök / Agent** mode toggle |
+| `/` | Search home — carries the **Sök / Agent** mode switch; the header above it is bare, with no wordmark, because the page's own display-size heading is the wordmark |
 | `/sok` | Search results |
-| `/agent` | Agent mode, a new conversation; `?q=` hands over a question from the home page and is dropped on arrival |
+| `/agent` | Agent mode, a new conversation; a question asked in Agent mode on the home page hands over in router state, not `?q=`, so a reload never re-asks it |
 | `/agent/:sessionId` | An earlier conversation, reopened |
 | `/beslut/:documentId` | Decision detail |
 | `/sokord` | Keyword (Sökord) index |
@@ -54,6 +54,12 @@ Swedish param names (`q`, `sokord`, `kategori`, `utfall`, `fran`, `tom`,
 `refs`, `sida`) matching the interface's language — so every search is a
 shareable, bookmarkable URL and nothing about the current search lives only in
 React state.
+
+`AppShell` wraps every route's `Outlet` in `ErrorBoundary`, the app's one class
+component, because that is what a render failure requires. A page that throws
+gets a statement — "Sidan kunde inte visas", a link back to `/`, nothing about
+what failed — while the cause goes to the console; a blank white document is
+the alternative it replaces.
 
 ## Agent mode
 
@@ -93,6 +99,22 @@ retrieval carries no label at all — it reaches the client as no step frames,
 just `sources`, `token` and `done` — so `progress-text.ts` only ever has to
 speak for a step that actually ran.
 
+### Watching the agent work
+
+While a turn is streaming and no prose has arrived yet, `TurnSteps` renders as
+a card, not a plain list: a warm-tinted panel with an ember rule along its top
+edge, an elapsed-seconds counter (`aria-live` deliberately absent — a screen
+reader announcing a new number every second would drown out the steps
+themselves), and the steps at body size rather than caption size. It is the
+loudest thing on the page for as long as a step is the only thing there is to
+look at, which is what roughly 18 seconds of no first token calls for.
+
+Once the answer starts landing, the same steps fold into a `<details>` under a
+one-line summary ("4 steg · 21 s") — provenance once there is prose to read,
+rather than news. This is unrelated to [honesty rule
+14](/frontend/honesty-rules.md), which governs the SQL evidence a count rests
+on: that renders separately, beside the answer, and is never collapsed.
+
 ### Conversation state
 
 **The client never re-sends the history** — the server holds it and each request
@@ -102,7 +124,8 @@ conversation, `/agent/{id}` an existing one. A conversation started at `/agent`
 claims its URL (`replace`, not push) as soon as the `done` frame names it.
 
 That is what makes a conversation a link — reloadable, bookmarkable, shareable —
-and it is also what lets the rail mark the open row without being told twice.
+and it is also what lets the conversation panel mark the open row without being
+told twice.
 
 The claim happens through an `onSessionStarted` callback the hook fires when the
 `done` frame names a conversation, **not** through an effect watching the id. An
@@ -117,17 +140,31 @@ promise.
 
 ### Earlier conversations
 
-The rail beside the transcript lists every conversation the app has held, newest
+"Tidigare samtal", beside "Nytt samtal" at the top of `/agent`, opens
+`ConversationPanel`: a slide-over from the trailing edge, dismissed by its
+backdrop or by Escape. It lists every conversation the app has held, newest
 first, from [`GET /api/sessions`](/api/sessions.md). Titles are the opening
 question verbatim; **no model writes them**, because a generated label is text in
-the navigation the reader cannot check, at a cost per conversation. "Nytt
-samtal" is a link to `/agent`; a row is a link to `/agent/{id}`; `x` deletes,
-behind a confirmation, and is the only destructive thing this app does.
+the navigation the reader cannot check, at a cost per conversation. A row is a
+link to `/agent/{id}`; `x` deletes, behind a confirmation, and is the only
+destructive thing this app does.
 
-The rail says on screen that the app has no accounts, so someone else's question
+"Nytt samtal" stays on the page itself rather than moving into the panel: a
+reader without a `q` key to the button behind it wants the back arrow, and
+starting over is a primary action rather than one worth hiding behind another
+click. The panel's own list offers no second "Nytt samtal" for the same
+reason two of them on one screen would be a reader wondering whether they
+differ.
+
+The list says on screen that the app has no accounts, so someone else's question
 appearing in it is not a surprise. And it distinguishes *empty* from *could not
-load*: a rail that renders nothing on a failed fetch tells the reader their
+load*: a panel that renders nothing on a failed fetch tells the reader their
 earlier question is gone.
+
+A conversation the route names but the server holds empty — its only turn
+never finished — renders neither the panel's list state nor the ordinary empty
+state: it says the conversation is there and empty, and invites the question
+again, rather than claiming nothing was ever asked.
 
 **A reopened turn shows what was said, not what it rested on.** The API stores
 the question and the answer only, so a restored turn carries no sources, no
@@ -175,9 +212,15 @@ The reader this is built for is not a lawyer and not a developer, so each surfac
 opens with as little as it can and offers the rest once there is something to
 refine:
 
-* **The home page asks one question** and offers one box. The **Sök / Agent**
-  choice carries a line of prose for each mode, in the same slot, because those
-  two words do not settle which promise the reader is getting.
+* **The home page asks one question** and offers one box, under its own
+  display-size wordmark rather than a header carrying one too. The **Sök /
+  Agent** switch carries a line of prose for each mode beneath it, in the same
+  slot, because the word "Agentläge" alone does not settle which promise the
+  reader is getting — and the line moves with the switch, not with the box, so
+  toggling it does not move the thing the reader is about to type into. Below
+  the box, the collection count and up to three of the nämnd's own keywords sit
+  on one caption line, a hint that a vocabulary exists rather than a browsing
+  surface — `/sokord` is that.
 * **Filters appear beside results, never before them.** `/` has no filter rail
   at all; `/sok` has one, because narrowing is something a reader reaches for
   after seeing what came back.
@@ -195,10 +238,14 @@ refine:
 
 A full phone layout is [out of scope](#out-of-scope); being unreadable on one is
 not. `src/styles/app.css` holds the three layout classes the two-column pages
-share (`layout-columns`, `layout-rail`, `layout-main`) and one media query at
-900px that stacks them — the one thing an inline style cannot express. Stacked,
-the **rail is ordered after the content**, so a phone reader meets results
-before six filter controls.
+(`/sok` and `/beslut/{id}`) share (`layout-columns`, `layout-rail`,
+`layout-main`) and one media query at 900px that stacks them — the one thing an
+inline style cannot express. Stacked, the **rail is ordered after the
+content**, so a phone reader meets results before six filter controls.
+
+`/agent` has no rail to stack — earlier conversations are a slide-over panel at
+every width, not a column beside the transcript, so it does not appear in this
+media query at all.
 
 ## Design system
 
@@ -281,7 +328,7 @@ real progress steps, the real pauses, three cited sources arriving before a
 token-by-token answer that marks its claims with them. A short message ("tack")
 plays the no-step conversational shape, a longer one the full research shape,
 and `CHAT_SCRIPT=error` the mid-stream failure. The client is untouched and
-unaware; the session row and the rail are real. See [live
+unaware; the session row and the conversation panel's list are real. See [live
 testing](/playbooks/live-testing.md#driving-the-ui-without-a-model).
 
 ## Out of scope

@@ -4,7 +4,7 @@ title: Sessions Endpoints (GET/DELETE /api/sessions)
 description: The read and delete contract for past conversations — a summary list that never loads a transcript, a transcript that carries no evidence because none is stored, the empty-history filter, and the single-user model that means every conversation is listed to everyone.
 resource: GET /api/sessions
 tags: [api, sessions, chat, contract]
-timestamp: 2026-08-15T00:00:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # Sessions Endpoints (`/api/sessions`)
@@ -29,7 +29,7 @@ There is no owner filter because there are no accounts. This is a single-user
 tool ([PRD](/prd.md): fewer than ten administrators, no auth in V1), so the list
 is the whole table. That is a product decision rather than an oversight, and
 [agent mode](/frontend/overview.md) states it on screen rather than leaving it
-to be discovered when someone else's question appears in the rail.
+to be discovered when someone else's question appears in the panel.
 
 ## A summary is not a transcript
 

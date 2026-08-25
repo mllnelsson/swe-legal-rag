@@ -4,7 +4,7 @@ title: agents Package
 description: The LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — the text-to-SQL agent behind POST /api/sql and the conversational agent behind POST /api/chat — their module layout, and the injected-toolset seam that keeps the dependency running api to agents.
 resource: packages/agents
 tags: [package, agents, sql, chat, tool-loop, llm]
-timestamp: 2026-08-22T21:40:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # agents Package (`packages/agents/`)
@@ -116,6 +116,18 @@ decision](/decisions/sql-agent.md) for why. Both markers are rendered from the Y
 format](/reference/semantic-model.md#the-words-the-file-must-never-contain). The notes
 are written in Swedish, matching the prompt they land in.
 
+## The tool index
+
+Neither prompt's tool list is hand-written. Each `ToolDefinition` in
+`chat/_tools.py` (six) and `sql/_tools.py` (three) carries a `summary` beside
+its provider-facing `description`; [`ai.prompts.render_tool_index`](/packages/ai.md)
+renders one signature line per tool from that same set — required arguments
+suffixed `*`, argument order following the schema — and the two agents place
+the result in the `{tools}` block of their user templates. A tool's
+executor, its JSON schema and the line the model reads about it come from one
+definition, so the three cannot drift apart the way a separately hand-written
+prompt list could.
+
 ## Safety layers
 
 Two independent controls, not one:
@@ -159,6 +171,11 @@ filter is not, that the terminal `answer` tool ends the run, that `event: sql` p
 the answer, that a cited appendix keeps its label, and that **no whole decision text
 ever reaches an orchestrator message** — the invariant the reading sub-agent exists to
 maintain.
+
+`TestTheToolIndexInThePrompt` in `test_chat_agent.py` closes prompt <- schema <-
+executor: every schema property is a real executor parameter, every `required`
+names a declared property, and every tool carries a `summary` — reintroducing
+the historical `filter`-argument drift fails the first of those.
 
 `TestCorrelation`, in both `test_agent.py` and `test_chat_agent.py`, installs a
 recording `TraceRecorder` and pins the correlation contract against the real agent

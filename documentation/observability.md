@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-22T21:40:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # LLM Observability
@@ -47,7 +47,13 @@ away.
   `texts_count` and `input_chars` are kept.
 - **Local embeddings.** No API call, no token accounting, and a contribution of
   exactly zero to what a question cost.
-- **Structured application logging.** Out of scope; traces are not a log.
+- **Structured application logging.** Traces are not a log; see [Application
+  Logging](/logging.md) for the split. A log line records that something
+  happened — a request came in, a route ran, a step finished — with any text it
+  carries limited to a 120-character preview, while a trace record carries the
+  full call: the whole prompt, the whole response, the token usage. Both are
+  correlated by the same `interaction_id`, so a request's log line and the
+  trace records the turn it started produced are found by the same key.
 - **Tool definitions.** A trace records which tools were *called* and with what
   arguments, never which tools the model was *offered* — a change to a tool's
   description or parameter schema leaves no trace of the change itself, only of

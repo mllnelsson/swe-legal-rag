@@ -4,7 +4,7 @@ title: api Package
 description: The FastAPI application and the deterministic search/browse/traversal REST API — search/document/concept/keyword services, the session service, the chat toolset the conversational agent is driven through, and their routes.
 resource: packages/api
 tags: [package, api, fastapi, retrieval, sse, search, rest]
-timestamp: 2026-08-22T00:00:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # api Package (`packages/api/`)
@@ -53,7 +53,15 @@ The agent's own bounds — iterations, reading budget, citation cap — are
   else is ignored and an id minted. It lives here rather than in either route because
   `api/main.py` also needs the header name — see [the CORS
   requirement](#fastapi-app-apimainpy). See [LLM Observability](/observability.md) for
-  what the id correlates.
+  what the id correlates. `interaction_id_of(request)` reads the id
+  `AccessLogMiddleware` already resolved off `request.scope["state"]`, falling back to
+  resolving it fresh only for a request built without that middleware — a route asking
+  `resolve_interaction_id` directly would mint a second id for the same turn.
+- **`api/access_log.py`** / **`api/logging_setup.py`** — the API's per-request log line
+  and the process-wide logging setup (`configure_api_logging()`, uvicorn adoption, the
+  interaction-id log filter, `preview()`'s 120-character truncation). Covered in full in
+  [Application Logging](/logging.md), which is where this behaviour belongs — it applies
+  to every process in the repo, not just this package.
 
 ## The chat surface (`api/services/`)
 
@@ -98,7 +106,7 @@ Two modules, and neither is an agent — the loop lives in
   `get_transcript(session_id, db)` → `SessionTranscript | None`, and
   `delete_session(session_id, db)` → `bool`. The two interesting parts are pure
   functions beside them, so they are unit-testable without a database:
-  `session_title(first_message)` cuts the opening question to a rail-sized label
+  `session_title(first_message)` cuts the opening question to a list-sized label
   on a word boundary, and `transcript_turns(history)` folds the flat entry array
   back into turns **totally** — `history` is untyped JSONB, so an entry that does
   not pair still renders rather than raising.
@@ -152,6 +160,16 @@ agent uses two of them — `chat` drives its loop and writes the answer, `read` 
 sub-agent it hands a whole decision to. Routes: the search, documents, concepts,
 keywords and sql routers are registered ahead of the chat router, plus `GET /healthz`.
 
+Each lifespan stage logs at DEBUG as it completes, and the whole sequence logs one INFO
+line — elapsed seconds, storage backend, embedding dimension, resolved `LOG_LEVEL` — when
+the app is ready to serve. The embedding-provider stage is timed on its own: a warm-cache
+local model still costs ~9s there and a cold or revalidating one ~90s, long enough to
+read as a hang without it. See [Application Logging](/logging.md).
+
+`create_app()` registers `AccessLogMiddleware` before `CORSMiddleware`, so — middleware
+runs outermost-added-last — CORS wraps the access log and answers a preflight `OPTIONS`
+itself, before it would otherwise reach the log.
+
 CORS is configured from `AppSettings.api_cors_origins`, and names
 `X-Interaction-Id` in `expose_headers`. That is a separate requirement from the
 permissive `allow_headers`, which governs the request direction only: a browser cannot
@@ -172,7 +190,9 @@ and nothing about how the answer is reached.
 | `chat_endpoint` | route handler | Session + toolset + `run_chat_agent()` + SSE; dispatches via `match`/`case` over `AgentEvent` |
 
 Request flow: validate `ChatRequest` (422 on empty/long/bad `session_id`) →
-`build_chat_toolset` → `get_or_create_session` → `history_for_llm` → `run_chat_agent`
+`build_chat_toolset` → `get_or_create_session` → `db.commit()` (see [why the row commits
+before the turn does](/data-model/sessions.md#a-row-exists-before-the-conversation-does))
+→ `history_for_llm` → `run_chat_agent`
 (async generator) → `_format_sse` each event → `StreamingResponse`
 (`text/event-stream`, headers `Cache-Control: no-cache`, `X-Accel-Buffering: no`); the
 `done` frame carries the `session_id`, and the turn is persisted after it. The DB

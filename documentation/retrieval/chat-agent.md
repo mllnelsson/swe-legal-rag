@@ -3,7 +3,7 @@ type: Concept
 title: Conversational Agent
 description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set with one terminal tool, `answer`, and a plain no-tool reply as the other way a turn ends; two Mistral sub-agents, one that counts and one that selects citable passages from a decision rather than summarising it; and a streamed writing call that marks each claim with the passage handle it rests on.
 tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-22T21:40:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # Conversational Agent
@@ -82,6 +82,11 @@ a model.
 | `inspect_decision(document_id)` | `document_service.get_document_detail` |
 | `query_corpus(question)` | `agents.run_sql_agent` |
 | `answer(annotations, gaps)` | — terminal |
+
+`CHAT_ORCHESTRATION`'s user template does not spell these signatures out by
+hand — its `{tools}` block is [`render_tool_index`](/packages/ai.md) run over
+this same set of `ToolDefinition`s, so the prompt and the schemas the loop
+calls against cannot disagree.
 
 `list_vocabulary` lists categories, outcomes and keywords unconditionally, but
 legal concepts only for a `contains` lookup — `DocumentFacets` carries no
@@ -190,6 +195,13 @@ sees it as one `tool_result` with `status: "refused"`.
 `keywords` is deliberately not on that list. It is the nämnd's own declared
 `Sökord` classification, published verbatim by the facets, so filtering on one
 uses a value the caller was handed rather than a guess.
+
+This is a policy refusal, distinct from the one [`tool_loop`
+itself](/packages/llm-core.md) returns when a call names an argument a tool
+does not accept — both arrive as an ordinary `tool_result` with
+`status: "refused"`, but the grounding refusal is authored here, in
+`_tools.py`, and the argument-name one is authored in the loop before any
+executor runs.
 
 ## Reading a decision is a sub-agent
 
