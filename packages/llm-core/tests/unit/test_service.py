@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,6 +9,8 @@ from pydantic import BaseModel, ValidationError
 
 from llm_core._exceptions import MaxIterationsError, ProviderError, ToolExecutionError
 from llm_core._service import (
+    _refusal_for_unbindable_call,
+    ToolExecutor,
     ToolCallFinished,
     ToolCallStarted,
     ToolLoopFinished,
@@ -308,6 +311,141 @@ async def test_tool_loop_executor_error_raises_tool_execution_error() -> None:
 
     assert exc_info.value.tool_name == "bad_tool"
     assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+async def test_tool_loop_unexpected_argument_is_refused_not_raised() -> None:
+    """A wrong argument name costs an iteration, not the run.
+
+    Executors are called by keyword, so this used to be a `TypeError` and hence
+    a `ToolExecutionError` — the one bad call the loop could not repair from,
+    while a bad *value* has always come back as a refusal the next iteration
+    fixes. A prompt that names an argument the schema does not have is exactly
+    how this arises.
+    """
+    bad = ToolCall(id="tc-1", name="search", arguments={"filter": "x"})
+    good = ToolCall(id="tc-2", name="search", arguments={"q": "x"})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[
+            _make_response("", tool_calls=(bad,)),
+            _make_response("", tool_calls=(good,)),
+            _make_response("Done"),
+        ]
+    )
+
+    calls: list[str] = []
+
+    async def executor(q: str) -> str:
+        calls.append(q)
+        return "found it"
+
+    tools = [ToolDefinition(name="search", description="Search", parameters={})]
+
+    result = await run_tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"search": executor},
+        provider=mock_provider,
+    )
+
+    # The executor never ran for the malformed call, and the run still finished.
+    assert calls == ["x"]
+    assert result.message.content == "Done"
+
+    refusal = json.loads(
+        next(m.content for m in result.history if m.tool_call_id == "tc-1")
+    )
+    assert refusal["refused"] is True
+    # `bind` reports the missing `q` before the invented `filter`, so the valid
+    # names are spelled out — otherwise the model cannot tell what was rejected.
+    assert "Valid arguments: q." in refusal["error"]
+
+
+async def test_tool_loop_missing_required_argument_is_refused_too() -> None:
+    """The same seam from the other side: an argument left out, not invented."""
+    tc = ToolCall(id="tc-1", name="search", arguments={})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[_make_response("", tool_calls=(tc,)), _make_response("Done")]
+    )
+
+    async def executor(q: str) -> str:
+        raise AssertionError("must not run")
+
+    tools = [ToolDefinition(name="search", description="Search", parameters={})]
+
+    result = await run_tool_loop(
+        [Message(role=Role.user, content="Go")],
+        tools,
+        {"search": executor},
+        provider=mock_provider,
+    )
+
+    assert result.message.content == "Done"
+
+
+async def test_tool_loop_a_refusal_is_still_a_finished_call() -> None:
+    """The refusal the loop authors is reported like any other result.
+
+    A caller rendering progress must see the call complete, or a refused step
+    stays on screen as one still running.
+    """
+    bad = ToolCall(id="tc-1", name="search", arguments={"filter": "x"})
+    mock_provider = AsyncMock()
+    mock_provider.generate = AsyncMock(
+        side_effect=[_make_response("", tool_calls=(bad,)), _make_response("Done")]
+    )
+
+    async def executor(q: str) -> str:
+        raise AssertionError("must not run")
+
+    tools = [ToolDefinition(name="search", description="Search", parameters={})]
+
+    finished = [
+        event
+        async for event in tool_loop(
+            [Message(role=Role.user, content="Go")],
+            tools,
+            {"search": executor},
+            provider=mock_provider,
+        )
+        if isinstance(event, ToolCallFinished)
+    ]
+
+    assert len(finished) == 1
+    assert finished[0].result["refused"] is True
+
+
+def test_a_callable_with_no_readable_signature_is_not_refused() -> None:
+    """Nothing to check the call against, so invoking is the only way to find out.
+
+    `llm_core` types an executor as any awaitable callable; a C builtin cannot
+    report a signature, and refusing every call to one would be worse than the
+    behaviour this replaced.
+    """
+    call = ToolCall(id="tc-1", name="dir", arguments={"x": 1})
+
+    # Cast because the branch exists for callables the annotation excludes:
+    # `dir` is a C builtin, which is exactly what cannot report a signature.
+    assert _refusal_for_unbindable_call(cast(ToolExecutor, dir), call) is None
+
+
+def test_a_call_that_fits_is_not_refused() -> None:
+    async def executor(q: str) -> str:
+        return q
+
+    call = ToolCall(id="tc-1", name="search", arguments={"q": "x"})
+
+    assert _refusal_for_unbindable_call(executor, call) is None
+
+
+def test_tool_definition_summary_is_optional() -> None:
+    """Prompt-only, and never serialized to a provider."""
+    assert ToolDefinition(name="t", description="D", parameters={}).summary is None
+    assert (
+        ToolDefinition(name="t", description="D", parameters={}, summary="s").summary
+        == "s"
+    )
 
 
 async def test_tool_loop_yields_a_call_and_its_result_in_order() -> None:

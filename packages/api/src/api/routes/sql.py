@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents import SqlAgentRequest, SqlAgentResult, run_sql_agent
-from api.correlation import INTERACTION_ID_HEADER, resolve_interaction_id
+from api.access_log import note
+from api.correlation import INTERACTION_ID_HEADER, interaction_id_of
 from api.dependencies import get_db
 
 router = APIRouter()
@@ -26,14 +27,26 @@ async def sql_endpoint(
     Never 500s on a question it cannot answer: an ungroundable or out-of-schema
     question comes back `answered: false` with the reason in `note`.
     """
-    interaction_id = resolve_interaction_id(request.headers.get(INTERACTION_ID_HEADER))
+    # Resolved by `api.access_log` before this handler ran, so the id on the log
+    # lines, in the trace directory and in this header are the same one.
+    interaction_id = interaction_id_of(request)
     response.headers[INTERACTION_ID_HEADER] = interaction_id
 
     # Opened here rather than left to the agent so a client-supplied id is
     # honoured; reached this way the agent finds an interaction and joins it.
     with interaction_scope(interaction_id):
-        return await run_sql_agent(
+        result = await run_sql_agent(
             body,
             db,
             llm_provider=request.app.state.sql_llm_provider,
         )
+
+    note(
+        request,
+        answered=result.answered,
+        rows=result.row_count,
+        truncated=result.truncated,
+        iterations=result.iterations,
+        attempts=len(result.attempts),
+    )
+    return result

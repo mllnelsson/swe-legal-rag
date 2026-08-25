@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import ai
 from ai.embedding import EmbeddingProvider
+from api.access_log import preview
 from api.config import SearchSettings
 from api.pagination import Page, clamp_limit
 from llm_core import LLMProvider
@@ -405,6 +406,15 @@ async def search_documents(
     # The candidate lookup comes first because it is cheap SQL and can end the
     # request outright — no point paying for an expansion or an embedding to
     # search a set already known to be empty.
+    logger.debug(
+        "search q=%s expand=%s include_appendices=%s limit=%d offset=%d",
+        preview(query.query),
+        query.expand,
+        query.include_appendices,
+        limit,
+        query.offset,
+    )
+
     filter_applied = not is_empty_filter(query.filter)
     candidate_ids: list[uuid.UUID] | None = None
     candidate_count: int | None = None
@@ -413,6 +423,9 @@ async def search_documents(
             session, query.filter, limit=settings.search_candidate_limit
         )
         candidate_count = len(candidate_ids)
+        logger.debug(
+            "search filter narrowed to %d candidate documents", candidate_count
+        )
         if not candidate_ids:
             # No widening. Chat prefers a wider net to no answer; a search tool
             # asked for "nothing older than 2024" must not answer with 2019.
@@ -427,6 +440,12 @@ async def search_documents(
             )
 
     queries, expanded = await _resolve_queries(query, settings, llm_provider)
+    if len(queries) > 1:
+        logger.debug(
+            "search resolved to %d queries: %s",
+            len(queries),
+            " | ".join(preview(q, limit=60) for q in queries),
+        )
     query_embeddings = await _embed_queries(
         queries,
         embedding_provider=embedding_provider,
@@ -465,10 +484,23 @@ async def search_documents(
         )
         widened = True
 
+    logger.debug(
+        "search arms vector=%d text=%s → %d chunks",
+        outcome.vector_hit_count,
+        outcome.text_hit_counts,
+        len(outcome.chunks),
+    )
+
     fused = rrf_fuse_scored(outcome.rankings)
     grouped = _group_by_document(fused, outcome)
     ranked_document_ids = _rank_documents(grouped)
     page_ids = ranked_document_ids[query.offset : query.offset + limit]
+    logger.debug(
+        "search fused %d chunks into %d documents, returning %d",
+        len(fused),
+        len(ranked_document_ids),
+        len(page_ids),
+    )
 
     # Metadata is fetched for the page only; ranking never needed it. Sequential
     # for the same reason the arms are: one session, one operation at a time.

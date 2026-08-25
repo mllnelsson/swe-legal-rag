@@ -4,7 +4,7 @@ title: sessions
 description: Conversation history backing the chat endpoint's follow-up support and the conversation list; holds the question and the answer only, never the evidence a turn gathered.
 resource: postgres://sessions
 tags: [data-model, table, sessions, chat]
-timestamp: 2026-08-15T00:00:00Z
+timestamp: 2026-08-21T00:00:00Z
 ---
 
 # `sessions`
@@ -77,6 +77,15 @@ already loads its history once at the start and the append only ever adds to the
 `append_turn` runs only after the turn reaches `done`. So a failed turn, a turn
 the user stopped mid-answer, and a request rejected at validation each leave a
 row with `history = []` behind.
+
+The route commits that row immediately, rather than leaving it flushed-only
+until the request's teardown once the whole turn finishes. The turn itself can
+run for up to a minute, but the `done` frame that names the session to the
+client fires just before the request ends — so without the early commit, a
+client that claims the id as a URL and refetches [the session
+list](/api/sessions.md) the instant `done` arrives could still beat the
+teardown's commit on the original connection and read a 404 for a conversation
+it had just been told the name of.
 
 Those are not conversations, and [the list](/api/sessions.md) filters them out
 with `jsonb_array_length(history) > 0`. Nothing cleans them up: they cost a row

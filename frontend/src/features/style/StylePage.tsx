@@ -19,6 +19,7 @@ import { ICON_PATHS, type IconName } from "../../components/display/icon-paths";
 import { Tag } from "../../components/display/Tag";
 import { Input } from "../../components/forms/Input";
 import { Select } from "../../components/forms/Select";
+import { Switch } from "../../components/forms/Switch";
 import { Tabs } from "../../components/navigation/Tabs";
 import { AskBox } from "../../components/research/AskBox";
 import { MatchBadge } from "../../components/research/MatchBadge";
@@ -58,6 +59,7 @@ export function StylePage() {
   const [tab, setTab] = useState("underline");
   const [select, setSelect] = useState("a");
   const [ask, setAsk] = useState("jäv i kyrkoråd");
+  const [agentMode, setAgentMode] = useState(false);
 
   return (
     <main
@@ -238,6 +240,11 @@ export function StylePage() {
             ]}
           />
         </div>
+        <Row>
+          <Switch checked={agentMode} onChange={setAgentMode} label="Agentläge" />
+          <Switch checked onChange={() => {}} label="På" />
+          <Switch checked={false} onChange={() => {}} label="Avstängd" disabled />
+        </Row>
       </Section>
 
       <Section title="Navigering">

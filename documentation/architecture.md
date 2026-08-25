@@ -3,7 +3,7 @@ type: Concept
 title: Architecture Overview
 description: The three-subsystem system architecture — ingestion pipeline, storage layer, and the conversational agent — plus the three ways to query the corpus and pointers into each area.
 tags: [architecture, overview, system]
-timestamp: 2026-08-14T00:00:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # Architecture Overview
@@ -21,8 +21,8 @@ Three major subsystems, all running on GCP, scale-to-zero where possible:
 The backend is a uv workspace of [packages](/packages/overview.md); the
 [frontend](/frontend/overview.md) has a surface for each of the first two — a
 search UI over the deterministic retrieval API, and agent mode, an SSE client
-for the [chat endpoint](/api/chat-endpoint.md) with a rail of past conversations
-over [`/api/sessions`](/api/sessions.md).
+for the [chat endpoint](/api/chat-endpoint.md) with a slide-over panel of past
+conversations over [`/api/sessions`](/api/sessions.md).
 
 ## Three ways to query the corpus
 

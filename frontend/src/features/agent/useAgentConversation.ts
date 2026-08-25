@@ -66,11 +66,30 @@ export function useAgentConversation(
 
   const transcript = useSessionTranscript(restore);
 
-  // The route decides which conversation is on screen, so a change of route is
+  // Which conversation the transcript on screen belongs to. Seeded from the
+  // route rather than from nothing, because on the first render the two already
+  // agree — `turns` starts empty and `sessionId` starts at the route's id — and
+  // an effect that treats mount as a change would clear a transcript that is
+  // already correct.
+  const shown = useRef(routeSessionId);
+
+  // The route decides which conversation is on screen, so a *change* of route is
   // a change of conversation — whether that is opening another one from the
   // rail or starting a fresh one. Both clear what is showing; only the first
   // has anything to put back.
+  //
+  // The comparison is against the last route this hook acted on, not against
+  // the render's own value: under StrictMode every effect runs mount → cleanup
+  // → mount, so an effect that asked "does the route differ from the
+  // conversation I started?" answered yes twice on a fresh `/agent` and cleared
+  // the turn the page had just been opened to ask. The stream stayed live with
+  // nothing on screen to fold it into, which is what made a first question look
+  // like it had silently done nothing.
   useEffect(() => {
+    if (routeSessionId === shown.current) return;
+    shown.current = routeSessionId;
+    // The URL catching up to a conversation started here is not a change of
+    // conversation — it is the same one being named.
     if (routeSessionId === ownStarted.current) return;
     ownStarted.current = null;
     setTurns([]);

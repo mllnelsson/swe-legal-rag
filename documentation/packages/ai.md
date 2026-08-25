@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-22T21:40:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -28,8 +28,8 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 | `providers/local_embeddings.py` | `LocalEmbeddingProvider` — `sentence-transformers`, the checked-in default (`embedding.provider: local`) |
 | `providers/roles.py` | `LLMRole` (the closed role set), `create_llm_provider(role)` (per-task model assignment, below) and `llm_role_is_disabled(role)` |
 | `worker.py` | `worker_trace_scope(source)` — the `MessageScope` pipeline workers hand to `shared.worker.subscribe_step`, opening an `interaction_scope` around the message so its trace records land in a directory of their own; `close_llm_clients()` — the `StepTeardown` the four LLM-calling workers hand to the same call, releasing the loop-bound OpenAI-compatible client pool before their `asyncio.run()` loop closes (see [worker patterns](/pipeline/worker-patterns.md)) |
-| `prompts/_renderer.py` | `PromptTemplate` frozen dataclass + `render()` free function |
-| `prompts/_templates.py` | The seven template constants |
+| `prompts/_renderer.py` | `PromptTemplate` frozen dataclass, `render()` free function, `render_tool_index(tools)` |
+| `prompts/_templates.py` | The nine template constants |
 | `__init__.py` | Public API — service functions, embedding types, and DTOs |
 
 ## Prompt templates (`ai/prompts/`)
@@ -47,12 +47,12 @@ cover every use case:
 | `QUERY_DECOMPOSITION` | JSON (`DecomposeResult` schema) | `{question}`, `{conversation_history}` |
 | `QUERY_EXPANSION` | JSON (`QueryExpansionResult` schema) | `{question}`, `{max_variants}` |
 | `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{readings}`, `{tabular}`, `{annotations}`, `{gaps}`, `{conversation_history}` |
-| `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — **the one English prompt here** | `{question}`, `{today}`, `{conversation_history}` |
+| `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — **the one English prompt here** | `{question}`, `{today}`, `{conversation_history}`, `{tools}` |
 | `DECISION_READING` | JSON (`ReadingSelection` schema) | `{question}`, `{case_number}`, `{numbered_chunks}`, `{max_selected}`, `{max_summary_words}` |
 | `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
 | `ENTITY_EXTRACTION` | JSON (`EntityResult` schema) | `{raw_text}`, `{case_number}` |
 | `DOCUMENT_SUMMARIZATION` | Plain Swedish text | `{raw_text}` |
-| `TEXT_TO_SQL` | Plain text (tool loop, no JSON schema) | `{question}`, `{schema}` |
+| `TEXT_TO_SQL` | Plain text (tool loop, no JSON schema) | `{question}`, `{schema}`, `{tools}` |
 
 `QUERY_EXPANSION`'s cap on variant count, `DECISION_READING`'s caps on selected-passage
 count and summary length, and `TEXT_TO_SQL`'s schema block all live in the user
@@ -65,6 +65,19 @@ substituted.
 `render()`, not through a function in `ai/services.py` — the agent owns its own tool loop
 (`llm_core.tool_loop`) rather than a single `generate`/`generate_structured` call, so there
 is no service-layer wrapper for it to go through.
+
+`CHAT_ORCHESTRATION` and `TEXT_TO_SQL` are the two prompts with a `{tools}` block, and
+neither spells its tools out by hand: `render_tool_index(tools)` builds it from the same
+[`ToolDefinition`](/packages/llm-core.md)s each agent hands `tool_loop`, one entry per
+tool — a signature line (`name(arg*, arg)`, `*` marking a required argument, argument
+order following the schema's `properties`) followed by the definition's `summary`. The
+block lives in the **user** template rather than the system prompt for both of them,
+because `render()` formats only the user template, and `CHAT_ORCHESTRATION`'s and
+`TEXT_TO_SQL`'s system prompts both embed literal JSON braces `str.format_map` would
+raise on. `render_tool_index` returns the entries alone; the heading above them and the
+legend explaining `*` belong to each template, in that template's language — which is
+what lets the Swedish `TEXT_TO_SQL` and the English `CHAT_ORCHESTRATION` share one
+renderer.
 
 All JSON-outputting templates embed the exact field schema in their system prompt, and
 all prompts instruct the model to work in Swedish.
@@ -284,7 +297,11 @@ answer. `EmbeddingRuler` is a frozen dataclass carrying `count_tokens`
 `max_sequence_tokens`. `create_embedding_ruler(config=None)` loads
 `transformers.AutoTokenizer.from_pretrained(embedding.model)` (`@lru_cache`d, since
 `scripts/run_pipeline.py` composes the chunk and embed workers into one process) and
-observes the window from `tokenizer.model_max_length`. `verify_embedding_window(ruler, *,
+observes the window from `tokenizer.model_max_length`. `from_pretrained` answers `None`
+for a model name it cannot resolve to a tokenizer class rather than raising, so the
+loader checks for that and raises `TokenizerUnavailableError` naming the model —
+otherwise the `None` travels as far as the first `count_tokens` call and surfaces as an
+unrelated `AttributeError` after the chunk worker has already started. `verify_embedding_window(ruler, *,
 reserved_tokens)` is the startup guard: it rejects a non-positive window, a window at or
 above the `int(1e30)` sentinel `transformers` reports for a tokenizer config missing
 `model_max_length`, and a window too small for the caller's fixed overhead, raising

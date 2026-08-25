@@ -13,6 +13,7 @@ An OKF knowledge bundle for a Swedish-language semantic search and chat tool ove
 * [Architecture Overview](architecture.md) - The three-subsystem system architecture — ingestion pipeline, storage layer, and the conversational agent — plus the three ways to query the corpus and pointers into each area.
 * [Testing Strategy](testing.md) - The backend's two-level (unit + integration) testing approach — what to test, what to mock, how the split is enforced, the separate database integration tests run against — plus the frontend suite and the two tests that check the contract across the language boundary.
 * [LLM Observability](observability.md) - How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
+* [Application Logging](logging.md) - What every process in this repo writes to stdout — the one LOG_LEVEL knob, the shared format, the API's per-request envelope and its route metadata, and the previews-not-payloads rule that keeps prompts out of the log.
 
 ## Sections
 

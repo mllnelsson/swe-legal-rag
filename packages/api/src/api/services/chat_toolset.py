@@ -13,6 +13,7 @@ object, threaded through five calls.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 
@@ -35,6 +36,7 @@ from shared.dtos.search import DocumentFacets, DocumentFilter, FacetValue
 from shared.enums import ChunkSection, EntityType
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access_log import preview
 from api.config import SearchSettings
 from api.services import concept_service, document_service, keyword_service
 from api.services.search_service import (
@@ -111,6 +113,9 @@ def _names(entities: list[DocumentEntityDetail]) -> list[str]:
     return [entity.name for entity in entities]
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class ApiChatToolset:
     """`ChatToolset` over the deterministic services."""
@@ -146,12 +151,24 @@ class ApiChatToolset:
             embedding_provider=self.embedding_provider,
             settings=self.search_settings,
         )
+        logger.debug(
+            "tool search q=%s limit=%d → %d decisions top_sim=%s",
+            preview(query),
+            limit,
+            len(response.items),
+            response.diagnostics.top_vector_similarity,
+        )
         return _to_search_outcome(response)
 
     async def vocabulary(self, *, contains: str | None = None) -> Vocabulary:
         facets = await get_filters(self.session)
         vocabulary = _to_vocabulary(facets)
         if contains is None:
+            logger.debug(
+                "tool vocabulary → %d categories %d keywords",
+                len(vocabulary.categories),
+                len(vocabulary.keywords),
+            )
             return vocabulary
 
         # The facets are capped, so a `contains` lookup is how the agent reaches
@@ -164,6 +181,12 @@ class ApiChatToolset:
             entity_type=EntityType.LEGAL_CONCEPT,
             name_query=contains,
             limit=_ENTITY_LOOKUP_LIMIT,
+        )
+        logger.debug(
+            "tool vocabulary contains=%s → %d keywords %d concepts",
+            preview(contains),
+            len(keywords.items),
+            len(concepts.items),
         )
         return vocabulary.model_copy(
             update={
@@ -191,6 +214,7 @@ class ApiChatToolset:
         )
         if chunks is None:
             return None
+        logger.debug("tool decision_text %s → %d chunks", document_id, len(chunks))
         return DecisionText(
             document_id=document_id,
             case_number=detail.document.case_number,
@@ -212,6 +236,7 @@ class ApiChatToolset:
         detail = await document_service.get_document_detail(self.session, document_id)
         if detail is None:
             return None
+        logger.debug("tool decision_profile %s", document_id)
         return DecisionProfile(
             document_id=document_id,
             case_number=detail.document.case_number,
@@ -238,11 +263,22 @@ class ApiChatToolset:
         )
 
     async def tabular_query(self, *, question: str) -> agents.SqlAgentResult:
-        return await agents.run_sql_agent(
+        result = await agents.run_sql_agent(
             agents.SqlAgentRequest(question=question),
             self.session,
             llm_provider=self.sql_llm_provider,
         )
+        # The generated SQL previewed rather than logged whole: it is the one
+        # thing that explains a wrong count, and the full text is in the turn's
+        # `sql` event and its trace record either way.
+        logger.debug(
+            "tool tabular_query q=%s answered=%s rows=%d sql=%s",
+            preview(question),
+            result.answered,
+            result.row_count,
+            preview(result.sql) if result.sql else "-",
+        )
+        return result
 
 
 def build_chat_toolset(

@@ -169,6 +169,9 @@ async def _note_assumption(state: GroundingState, *, assumption: str) -> dict[st
 _TOOL_DEFINITIONS = [
     ToolDefinition(
         name=TOOL_LIST_COLUMN_VALUES,
+        summary=(
+            "visar vilka värden som faktiskt finns i en kolumn, med antal per värde"
+        ),
         description=(
             "Visar vilka värden som faktiskt förekommer i en kolumn, med antal per "
             "värde. Använd detta innan du villkorar på en fritextkolumn — annars "
@@ -189,6 +192,7 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=TOOL_RUN_SQL,
+        summary=("kör en läsande fråga och returnerar raderna"),
         description=(
             "Kör en läsande SQL-fråga mot korpusen och returnerar raderna. En sats "
             "åt gången, SELECT eller WITH. Den sista lyckade frågan är ditt svar."
@@ -203,6 +207,7 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=TOOL_NOTE_ASSUMPTION,
+        summary=("registrerar ett tolkningsval du gjort"),
         description=(
             "Registrerar ett tolkningsval du gjort, t.ex. vilken kolumn ett årtal "
             "syftar på eller vilka värden en ämnesterm matchar. Anropa detta för "

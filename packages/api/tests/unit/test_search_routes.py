@@ -6,6 +6,7 @@ its import site in the route module so only the HTTP layer is under test.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import date, datetime
@@ -358,3 +359,47 @@ class TestKeywordEndpoints:
             )
 
         assert captured["filter"].keywords == ["jäv", "avvisning"]
+
+
+class TestSearchAccessLog:
+    """The search exit line, through the app's real middleware stack."""
+
+    def setup_method(self):
+        self.app, self.client = _make_client()
+
+    def teardown_method(self):
+        self.app.dependency_overrides.clear()
+
+    def _exit_line(self, caplog) -> str:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "api.access" and record.getMessage().startswith("←")
+        ][0]
+
+    def test_the_exit_line_reports_what_the_search_found(self, caplog):
+        async def fake_search(*args, **kwargs):
+            return _empty_search_response()
+
+        with caplog.at_level(logging.INFO, logger="api.access"):
+            with patch("api.routes.search.search_documents", new=fake_search):
+                self.client.post("/api/search", json={"query": "utlämnande"})
+
+        exit_line = self._exit_line(caplog)
+        assert exit_line.startswith("← POST /api/search 200 in ")
+        assert " hits=0" in exit_line
+        assert " total=0" in exit_line
+        assert " expanded=False" in exit_line
+
+    def test_a_404_is_a_status_not_an_error(self, caplog):
+        """`HTTPException` is handled inside this middleware, so no ERROR record."""
+
+        async def fake_detail(db, document_id):
+            return None
+
+        with caplog.at_level(logging.INFO):
+            with patch("api.routes.documents.get_document_detail", new=fake_detail):
+                self.client.get(f"/api/documents/{uuid.uuid4()}")
+
+        assert " 404 in " in self._exit_line(caplog)
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

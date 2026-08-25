@@ -34,6 +34,10 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any]
+    # One line for a prompt's tool index, where the full `description` would
+    # only repeat the tool payload the provider is already sending. Never
+    # serialized to a provider; falls back to `description` when unset.
+    summary: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

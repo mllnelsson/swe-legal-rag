@@ -39,6 +39,7 @@ from ai.errors import (
     LLMConfigInvalidError,
     LLMConfigNotFoundError,
     MissingApiKeyError,
+    TokenizerUnavailableError,
     UnknownLLMRoleError,
     UnsupportedEmbeddingBackendError,
 )
@@ -116,6 +117,7 @@ __all__ = [
     "AiError",
     "EmbeddingDimensionMismatchError",
     "EmbeddingWindowError",
+    "TokenizerUnavailableError",
     "UnsupportedEmbeddingBackendError",
     "MissingApiKeyError",
     "LLMConfigError",

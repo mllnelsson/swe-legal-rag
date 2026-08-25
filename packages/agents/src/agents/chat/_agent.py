@@ -32,7 +32,7 @@ from ai.dtos import (
     SynthesizeRequest,
     TabularEvidence,
 )
-from ai.prompts import CHAT_ORCHESTRATION, render
+from ai.prompts import CHAT_ORCHESTRATION, render, render_tool_index
 from llm_core import (
     LLMProvider,
     MaxIterationsError,
@@ -40,6 +40,7 @@ from llm_core import (
     ToolCall,
     ToolCallFinished,
     ToolCallStarted,
+    ToolDefinition,
     ToolExecutionError,
     ToolLoopFinished,
     tool_loop,
@@ -228,13 +229,18 @@ def _has_evidence(state: ChatState) -> bool:
     )
 
 
-def _messages_for(request: ChatAgentRequest) -> list[Message]:
+def _messages_for(
+    request: ChatAgentRequest, tools: list[ToolDefinition]
+) -> list[Message]:
     return render(
         CHAT_ORCHESTRATION,
         {
             "question": request.question,
             "today": datetime.now(UTC).date().isoformat(),
             "conversation_history": _format_history(request.history),
+            # Generated from the definitions the loop is about to be given, so
+            # the prompt cannot name an argument the executors lack.
+            "tools": render_tool_index(tools),
         },
     )
 
@@ -311,7 +317,7 @@ async def run_chat_agent(
 
         try:
             async for event in tool_loop(
-                _messages_for(request),
+                _messages_for(request, tools),
                 tools,
                 executors,
                 provider=llm_provider,

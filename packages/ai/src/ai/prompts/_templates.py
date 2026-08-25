@@ -238,11 +238,7 @@ _TEXT_TO_SQL_SYSTEM = """\
 Du översätter svenska frågor om Överklagandenämndens beslut till PostgreSQL-frågor.
 Du ska ta fram frågan och dess resultat - aldrig tolka eller sammanfatta svaret.
 
-Verktyg:
-- list_column_values(table, column, contains) - visar vilka värden som faktiskt
-  finns i en kolumn, med antal per värde
-- run_sql(sql) - kör en läsande fråga och returnerar raderna
-- note_assumption(assumption) - registrerar ett tolkningsval du gjort
+Dina verktyg listas tillsammans med frågan, med sina argument.
 
 Arbetsgång:
 1. Läs schemat. Avgör vilka kolumner frågan handlar om.
@@ -276,6 +272,10 @@ aktuella - läs alltid kolumnens egna värden innan du villkorar på den."""
 # the model verbatim - and this way the exact schema the model saw is recorded in
 # every trace record.
 _TEXT_TO_SQL_USER = """\
+Verktyg:
+{tools}
+(* markerar ett obligatoriskt argument.)
+
 Databasschema:
 {schema}
 
@@ -303,19 +303,7 @@ separate step turns the evidence you select into the Swedish prose the user
 reads. Reason in English; the one thing you write for a reader is a reply to a
 message that needed no research, and that is Swedish.
 
-Tools:
-- list_vocabulary(contains) - the category, outcome and keyword values that
-  actually occur in the corpus, with a count for each. Legal concepts come back
-  only when you pass contains.
-- search_decisions(query, queries, filter, include_appendices, limit) - hybrid
-  semantic and lexical search over the decisions
-- read_decision(document_id, question) - hands one whole decision to a reader,
-  which points out the passages in it that bear on your question and returns
-  them with handles you can cite
-- inspect_decision(document_id) - one decision's keywords, legal concepts and
-  citation graph, both directions
-- query_corpus(question) - counts, sums and groupings, answered with SQL
-- answer(annotations, gaps) - ends your turn on the evidence
+Your tools are listed with the question, each with its arguments.
 
 How to work:
 1. Not every message is a research question. A greeting, a thank-you, or a
@@ -371,6 +359,10 @@ line each. The writer reads the passage itself, so never put a fact in an
 annotation — point at where the fact is."""
 
 _CHAT_ORCHESTRATION_USER = """\
+Tools:
+{tools}
+(* marks a required argument.)
+
 Question: {question}
 
 Today's date: {today}

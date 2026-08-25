@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -137,6 +138,42 @@ async def generate_stream(
                 yield chunk.text
 
 
+def _refusal_for_unbindable_call(
+    executor: ToolExecutor, call: ToolCall
+) -> dict[str, Any] | None:
+    """The tool result a call that does not fit its executor comes back as.
+
+    `None` when the call binds — and when the callable cannot report a
+    signature at all, a C builtin or an exotic wrapper, where there is nothing
+    to check it against and invoking is the only way to find out.
+
+    Executors are called by keyword, so a wrong or missing argument name was
+    the one kind of bad call `tool_loop` could not repair from: it raised
+    `TypeError`, became a `ToolExecutionError` and ended the run, while every
+    refusal an executor makes for itself comes back as an ordinary result the
+    model fixes on its next iteration. Binding first puts the two on the same
+    footing, and keeps a `TypeError` raised from *inside* an executor a defect.
+    """
+    try:
+        signature = inspect.signature(executor)
+    except (TypeError, ValueError):
+        return None
+
+    try:
+        signature.bind(**call.arguments)
+    except TypeError as exc:
+        # The valid names are spelled out because `bind` reports only the first
+        # thing wrong: given a wrong name *and* a missing one it names the
+        # missing one, leaving the model no way to learn which of its arguments
+        # was rejected.
+        valid = ", ".join(signature.parameters) or "none"
+        return {
+            "error": f"{call.name}: {exc}. Valid arguments: {valid}.",
+            "refused": True,
+        }
+    return None
+
+
 async def tool_loop(
     messages: list[Message],
     tools: list[ToolDefinition],
@@ -164,6 +201,12 @@ async def tool_loop(
     The two endings are both legitimate and a caller must tell them apart:
     `message.tool_calls` is empty when the model chose to answer in prose, and
     carries the terminal call when it chose to finish through a tool.
+
+    Executors are called by keyword, so a call whose arguments do not fit the
+    executor's signature comes back to the model as `{"error": ..., "refused":
+    True}` rather than raising — the one tool result this loop authors itself.
+    An exception from *inside* an executor is still a `ToolExecutionError`: that
+    is a defect, and the two must not be confused.
     """
     p = _resolve_provider(provider, config)
     history = list(messages)
@@ -198,10 +241,18 @@ async def tool_loop(
                     tc.name, f"No executor registered for tool {tc.name!r}"
                 )
 
-            try:
-                result = await executors[tc.name](**tc.arguments)
-            except Exception as exc:
-                raise ToolExecutionError(tc.name, str(exc), cause=exc) from exc
+            executor = executors[tc.name]
+            refusal = _refusal_for_unbindable_call(executor, tc)
+            if refusal is not None:
+                result: Any = refusal
+            else:
+                # Binding is what separates the two: a call that does not fit
+                # the signature is refused above, so anything raising here came
+                # from inside the executor and is a defect.
+                try:
+                    result = await executor(**tc.arguments)
+                except Exception as exc:
+                    raise ToolExecutionError(tc.name, str(exc), cause=exc) from exc
 
             # `ensure_ascii=False`: a tool result on a Swedish corpus is mostly
             # å, ä and ö, and escaping each to \uXXXX inflates the payload ~48%

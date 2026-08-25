@@ -1,6 +1,7 @@
 import { useState, type KeyboardEvent } from "react";
 
 import { Icon } from "../../components/display/Icon";
+import { ASK_BOX_TRANSITION_NAME } from "./ask-box-transition";
 
 export type ComposerProps = {
   onSubmit: (question: string) => void;
@@ -52,6 +53,9 @@ export function Composer({ onSubmit, onStop, busy, autoFocus = false }: Composer
         borderRadius: "var(--radius-xl)",
         boxShadow: focus ? "var(--ring-focus), var(--shadow-md)" : "var(--shadow-md)",
         transition: "var(--transition-control)",
+        // Claimed so a question asked from the home page arrives as this box
+        // moving into place rather than as one control replacing another.
+        viewTransitionName: ASK_BOX_TRANSITION_NAME,
       }}
     >
       <textarea

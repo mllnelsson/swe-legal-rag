@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys, sources, then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the per-passage sources event a citation marker resolves against, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-22T21:40:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -112,8 +112,12 @@ declined filter is not a step of its own — `search_decisions` still goes out a
 
 `status` on a `tool_result` is `ok`, `refused` or `error`. **`refused` is not a
 failure** — it is a policy decline (an ungrounded filter, a spent reading
-budget) that the agent repairs from on its next iteration, and a client should
-present it as a step rather than a problem.
+budget) or a bad tool call the model itself made (an argument name the tool
+does not accept, or a missing required one) that the agent repairs from on its
+next iteration, and a client should present it as a step rather than a
+problem. A bad-argument refusal names the tool's valid arguments in its
+message, since a model told only that its call was rejected has no way to
+learn which argument was the problem.
 
 `detail` is structured, never prose, and **optional for a client**: it exists so
 a later frontend can enrich a label ("7 beslut") without a contract change. `id`
@@ -240,6 +244,10 @@ Each request creates or loads a [session](/data-model/sessions.md) by
 `session_id`; the `done` event returns it and subsequent requests send it back.
 `history_for_llm()` truncates to the last `SESSION_MAX_HISTORY_TURNS` turn-pairs
 before the agent sees it.
+
+The route commits a freshly created session row immediately, rather than
+leaving it flushed-only until the request tears down at the end of the turn —
+see [why](/data-model/sessions.md#a-row-exists-before-the-conversation-does).
 
 **Only the question and the answer are persisted.** The evidence a turn gathered
 is not, which is what stops turn two re-sending turn one's documents.
