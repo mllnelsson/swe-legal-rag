@@ -23,9 +23,11 @@ as it now stands, not the path taken to it.
 Your context and your turns are both finite, and this bundle is large enough to
 exhaust either. Two rules follow, and they outrank convenience:
 
-- **Never load a whole branch diff, a whole `log.md`, or a whole directory of
-  concepts.** Every step below tells you the bounded way to get what it needs.
-  A single `git diff main...HEAD` on a ten-commit branch has been 240 KB here.
+- **Never load a whole branch diff, a whole week log, a whole directory of
+  concepts — or a whole concept file when you need one section of it.** Every
+  step below tells you the bounded way to get what it needs. Measured here: a
+  branch diff has reached 240 KB, concept files reach 690 lines, and the median
+  doc edit changes under a tenth of the file it lands in.
 - **Finish each file completely before opening the next.** Edit it, re-read the
   region you changed, then move on. Never leave a pile of edits to verify at the
   end — if you run out of room, everything you have already reported must be
@@ -55,9 +57,10 @@ deciding what matters. If you were not given one, say so in your final report �
 you are working with two of three inputs and your judgment about reader impact is
 correspondingly weaker.
 
-Then read the bundle root `index.md` and the `index.md` of any relevant
-subdirectory. Use those to find the concepts you need. Do not glob the whole
-bundle into context; progressive disclosure is what indexes are for.
+Read the bundle root `index.md` to orient, and a subdirectory `index.md` only
+when you need to know what concepts exist there. Once you know *what fact* is
+wrong, stop browsing and grep for it — that is step 3. Do not glob the bundle
+into context.
 
 ## 2. Map changes to reader impact
 
@@ -81,39 +84,58 @@ Check your memory before deciding — past mappings for this repo are recorded t
 Write the list of files you intend to edit before you edit any of them. That list
 is what you report against, and what tells you whether you are running short.
 
-## 3. Edit
+## 3. Edit — search, read the region, edit
 
-- Rewrite affected sections so they describe current behavior in present tense.
-  Remove obsolete statements rather than annotating them as changed.
+The skill's **Finding what to edit** is the procedure. Follow it literally; it is
+most of the difference between finishing this pass and running out of room. For
+each concept on your list:
+
+1. **Grep the bundle for the subject of the edit** — the identifier, config key,
+   literal path, number or old wording you are correcting. Grep the *whole*
+   bundle, never just the file you assume is wrong. The same fact restated in
+   four files is ordinary here, which is why your memory carries a table of the
+   fan-out sets; the grep is what finds the copies that table does not predict.
+2. **Read only the region around each hit** — `offset`/`limit`, about forty lines
+   either side. A partial read is enough to edit with.
+3. **Edit, then re-run the same grep.** It confirms the stale fact is gone
+   everywhere rather than only where you looked first.
+
+Rewrite affected sections to describe current behavior in present tense, removing
+obsolete statements rather than annotating them as changed.
+
 - **Never narrate history in a concept doc.** No "used to", "previously", "no
   longer", "now returns", "instead of", "this changed". A reader arriving today
   has no idea what yesterday looked like and does not need one. History goes in
-  `log.md`, and nowhere else. This is the single most common way this pass goes
-  wrong, so check for it explicitly in step 5.
+  the week log, and nowhere else. This is the single most common way this pass
+  goes wrong, so check for it explicitly in step 5.
 - Beware of counts you did not recount: "three files carry it" above a table you
   just added a row to is now false. Re-read any sentence near an edit that
-  states a number, a list length, or "both"/"either".
-- Update `timestamp` only on files whose content substantively changed.
+  states a number, a list length, or "both"/"either". A widened `offset`/`limit`
+  is the cheap way to check that sentence — you do not need the file.
 - Add new concepts only for genuinely new documented things. A new internal
   helper is not a concept.
-- When you add a concept, add it to its directory's `index.md`, using the
-  concept's own `description` as the entry text.
-- When you change a concept's `description`, update every `index.md` entry
-  pointing at it. Grep for the filename to find them.
 
-## 4. log.md
+The skill's **Before finishing** checklist covers the rest — `timestamp`
+discipline, listing a new concept in its `index.md`, and resyncing index entries
+when a `description` changes. Run it; do not re-derive it here.
 
-`log.md` is append-at-top and long — tens of thousands of characters. **Read only
-its head** (`head -40 documentation/log.md`) to find today's heading and the
-newest-first convention, then insert. Never read it whole; never rewrite it whole.
+## 4. The log
 
-Add entries under today's date, newest first, ISO 8601 heading.
+The skill's **log.md** section has the layout, the `type: Log` frontmatter block
+and the numbered procedure for adding an entry — one file per week under
+`documentation/log/`, named for its Monday, found by computing today's Monday
+rather than by reading the index. Follow it; do not re-derive it.
 
-**A `log.md` entry is only permitted if you edited a concept file in this same
-pass, and it must link that concept.** If you edited no concepts, you write no
-log entry. The log records changes to the bundle, not changes to the codebase —
-without this rule you will drift into dumping the commit history here and calling
-the job done.
+Two rules are this pass's policy rather than OKF's, so they live here:
+
+- **A log entry is only permitted if you edited a concept file in this same pass,
+  and it must link that concept.** If you edited no concepts, you write no log
+  entry. The log records changes to the bundle, not changes to the codebase —
+  without this rule you will drift into dumping the commit history here and
+  calling the job done.
+- **One entry per reader-visible change, not per file you touched.** A fan-out
+  that corrected the same fact in four files is one entry that links the concept
+  a reader would consult, not four.
 
 ## 5. Check your own work, mechanically
 
@@ -170,7 +192,7 @@ Keep it under ~200 lines. It is a **map, not a journal**:
   decisions, docs deliberately left alone and why, and mappings you got wrong and
   had corrected.
 - Never add a section per run. No dated "pass" headings, no narration of what a
-  particular branch changed — that is what `log.md` is for, and duplicating it
+  particular branch changed — that is what the week log is for, and duplicating it
   here buys nothing and costs context on every future run.
 - Before appending, look for the existing section this belongs under and extend
   it. If your new fact makes an old line wrong, replace the old line.

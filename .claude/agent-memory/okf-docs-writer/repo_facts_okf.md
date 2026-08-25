@@ -90,8 +90,16 @@ A new honest-sounding frontend behaviour with **no** such test goes in
 
 ## Bundle conventions
 
-- `documentation/log.md` is the only `log.md`. Newest-first within a dated
-  heading. It is very long — read only its head.
+- Concept files here are large (mean ~180 lines, the two playbooks ~690) and the
+  median edit changes under a tenth of one. Grep the bundle for the fact, read
+  the region around the hit, edit, re-grep. Reading a concept whole is for a
+  near-total rewrite only.
+
+- `documentation/log.md` is the only `log.md`, and it is an index of weeks, not
+  entries. Entries go in `documentation/log/week-of-<monday>.md` (`type: Log`),
+  the Monday computed from today's date, never counted back by hand. Newest-first
+  within a dated heading; read only the head. Past weeks are settled — never
+  move, merge or rewrite one.
 - Same-file anchors are an established convention. GitHub slugify: lowercase,
   strip backticks/parens/slashes/dots, keep underscores, spaces→hyphens.
   `` ## The semantic model (`agents/sql/_semantic_model.py`) `` →
