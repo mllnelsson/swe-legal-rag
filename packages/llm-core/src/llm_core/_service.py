@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -164,6 +165,12 @@ async def tool_loop(
     The two endings are both legitimate and a caller must tell them apart:
     `message.tool_calls` is empty when the model chose to answer in prose, and
     carries the terminal call when it chose to finish through a tool.
+
+    Executors are called by keyword, so a call whose arguments do not fit the
+    executor's signature comes back to the model as `{"error": ..., "refused":
+    True}` rather than raising — the one tool result this loop authors itself.
+    An exception from *inside* an executor is still a `ToolExecutionError`: that
+    is a defect, and the two must not be confused.
     """
     p = _resolve_provider(provider, config)
     history = list(messages)
@@ -198,10 +205,34 @@ async def tool_loop(
                     tc.name, f"No executor registered for tool {tc.name!r}"
                 )
 
+            executor = executors[tc.name]
+            signature = inspect.signature(executor)
             try:
-                result = await executors[tc.name](**tc.arguments)
-            except Exception as exc:
-                raise ToolExecutionError(tc.name, str(exc), cause=exc) from exc
+                signature.bind(**tc.arguments)
+            except TypeError as exc:
+                # The model named an argument the executor does not have, or
+                # left out one it needs. Returned rather than raised: that is a
+                # bad call, not a defect here, and it was the only kind of bad
+                # call this loop could not repair from — every other refusal an
+                # executor makes already comes back as an ordinary tool result.
+                #
+                # The valid names are spelled out because `bind` reports only
+                # the first thing wrong: given a wrong name *and* a missing one
+                # it names the missing one, leaving the model no way to learn
+                # which of its arguments was rejected.
+                valid = ", ".join(signature.parameters) or "none"
+                result: Any = {
+                    "error": f"{tc.name}: {exc}. Valid arguments: {valid}.",
+                    "refused": True,
+                }
+            else:
+                # Binding is what separates the two: a call that does not fit
+                # the signature is refused above, so anything raising here came
+                # from inside the executor and is a defect.
+                try:
+                    result = await executor(**tc.arguments)
+                except Exception as exc:
+                    raise ToolExecutionError(tc.name, str(exc), cause=exc) from exc
 
             # `ensure_ascii=False`: a tool result on a Swedish corpus is mostly
             # å, ä and ö, and escaping each to \uXXXX inflates the payload ~48%
