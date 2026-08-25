@@ -6,6 +6,7 @@ agent can be exercised against a plain object.
 
 from __future__ import annotations
 
+import inspect
 import json
 import uuid
 
@@ -36,6 +37,7 @@ from agents.chat import (
     run_chat_agent,
 )
 from agents.chat._dtos import DecisionText, DecisionTextChunk
+from agents.chat._tools import build_chat_tools
 from agents.config import ChatAgentSettings
 from agents.sql._dtos import SqlAgentResult, SqlAttempt
 
@@ -1180,3 +1182,111 @@ class TestCorrelation:
             for source in ("agents.chat", "agents.chat.read")
         }
         assert by_source["agents.chat"].isdisjoint(by_source["agents.chat.read"])
+
+
+class TestTheToolIndexInThePrompt:
+    """The prompt's tool list is generated from the definitions.
+
+    It used to be written out beside them and had drifted: it named a `filter`
+    argument `search_decisions` does not have, and called `read_decision`
+    without the appendix switch.
+    """
+
+    def test_every_schema_property_is_a_real_executor_parameter(self) -> None:
+        """Closes prompt <- schema <- executor.
+
+        The prompt is generated from the schemas now, so this is what keeps the
+        generated text executable: a property with no matching parameter would
+        put an argument in the prompt that `tool_loop` cannot pass.
+        """
+        tools, executors, _ = build_chat_tools(FakeToolset(), _settings())
+
+        for tool in tools:
+            parameters = set(inspect.signature(executors[tool.name]).parameters)
+            declared = set(tool.parameters.get("properties", {}))
+            assert declared <= parameters, tool.name
+
+    def test_every_required_property_is_declared(self) -> None:
+        """A `required` naming a property that does not exist renders a `*` on
+        an argument the index never lists."""
+        tools, _, _ = build_chat_tools(FakeToolset(), _settings())
+
+        for tool in tools:
+            declared = set(tool.parameters.get("properties", {}))
+            assert set(tool.parameters.get("required", [])) <= declared, tool.name
+
+    def test_every_tool_has_a_summary(self) -> None:
+        """Without one the index falls back to the full `description`, which is
+        the tool payload the provider already sends — twice in one request."""
+        tools, _, _ = build_chat_tools(FakeToolset(), _settings())
+
+        for tool in tools:
+            assert tool.summary, tool.name
+
+    async def test_the_rendered_prompt_lists_every_tool_and_its_arguments(
+        self,
+    ) -> None:
+        provider = ScriptedProvider(
+            _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv i kyrkoråd"),
+            _tool_call(
+                ChatTool.ANSWER,
+                call_id="call-2",
+                annotations=[{"handle": "c1", "carries": "bär avgörandet"}],
+            ),
+        )
+
+        await _collect(
+            run_chat_agent(
+                ChatAgentRequest(question="Vad har nämnden sagt om jäv?"),
+                FakeToolset(),
+                llm_provider=provider,
+                settings=_settings(),
+            )
+        )
+
+        prompt = provider.seen_messages[0][-1].content
+
+        for tool in ChatTool:
+            assert f"- {tool.value}(" in prompt
+        # The two things the hand-written list got wrong.
+        assert "document_filter" in prompt
+        assert "read_decision(document_id*, question*, include_appendices)" in prompt
+
+
+async def test_a_wrong_argument_name_is_refused_and_the_loop_goes_on() -> None:
+    """The failure the generated tool index exists to prevent.
+
+    A model calling `search_decisions(filter=...)` — which is what the old
+    prompt asked for — used to end the turn: executors are called by keyword,
+    so the `TypeError` became a `ToolExecutionError` and the agent yielded an
+    `ErrorEvent`. Now it costs one iteration, like every other bad call.
+    """
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv", filter={"category": "x"}),
+        _tool_call(ChatTool.SEARCH_DECISIONS, call_id="call-2", query="jäv i kyrkoråd"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-3",
+            annotations=[{"handle": "c1", "carries": "bär avgörandet"}],
+        ),
+    )
+
+    events = await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad har nämnden sagt om jäv?"),
+            FakeToolset(),
+            llm_provider=provider,
+            settings=_settings(),
+        )
+    )
+
+    assert not any(isinstance(e, ErrorEvent) for e in events)
+    assert any(isinstance(e, DoneEvent) for e in events)
+
+    refused = [
+        e
+        for e in events
+        if isinstance(e, ToolResultEvent) and e.status is ToolStatus.REFUSED
+    ]
+    assert len(refused) == 1
+    assert refused[0].id == "call-1"

@@ -528,6 +528,10 @@ async def _answer(
 _TOOL_DEFINITIONS = [
     ToolDefinition(
         name=ChatTool.LIST_VOCABULARY,
+        summary=(
+            "the category, outcome, keyword and concept values that occur in the "
+            "corpus, with a count for each"
+        ),
         description=(
             "Lists the category, outcome and keyword values that actually "
             "occur in the corpus, with a count for each. Call this before "
@@ -551,6 +555,9 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.SEARCH_DECISIONS,
+        summary=(
+            "hybrid semantic and lexical search, returning passages grouped by decision"
+        ),
         description=(
             "Searches the decisions semantically and lexically at once and "
             "returns the matching passages grouped by decision. Each passage "
@@ -599,6 +606,10 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.READ_DECISION,
+        summary=(
+            "hands one whole decision to a reader and returns what it found for "
+            "your question"
+        ),
         description=(
             "Hands one whole decision to a reader together with your question, "
             "and returns what it found. Use it when the passages leave the "
@@ -628,6 +639,10 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.INSPECT_DECISION,
+        summary=(
+            "one decision's keywords, concepts, regulations, roles, parishes and "
+            "citations, both directions"
+        ),
         description=(
             "One decision's keywords, legal concepts, regulations, roles, "
             "parishes and citation graph in both directions. Metadata only — "
@@ -646,6 +661,7 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.QUERY_CORPUS,
+        summary="counts, sums and groupings over the whole corpus, answered with SQL",
         description=(
             "Answers counting, grouping and aggregation questions with SQL over "
             "the whole corpus. Use it for any 'how many', 'which year' or 'most "
@@ -665,6 +681,7 @@ _TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name=ChatTool.ANSWER,
+        summary="ends your turn on the passages you selected, with a note on each",
         description=(
             "Ends your turn. Name each passage that carries the answer and say "
             "what it carries. Call this exactly once, when you have enough."
