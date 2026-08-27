@@ -79,12 +79,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.embedding_provider = embedding_provider
     app.state.structured_llm_provider = create_llm_provider(LLMRole.STRUCTURED)
-    # The conversational agent uses both: CHAT drives its tool loop and writes
-    # the answer, READ is the sub-agent it hands a whole decision to.
+    # The conversational agent uses four: CHAT plans the turn and writes the
+    # answer, ORCHESTRATE runs the tool loop between them, READ is the sub-agent
+    # it hands a whole decision to, and SQL answers its counting questions.
     app.state.chat_llm_provider = create_llm_provider(LLMRole.CHAT)
+    app.state.orchestrate_llm_provider = create_llm_provider(LLMRole.ORCHESTRATE)
     app.state.read_llm_provider = create_llm_provider(LLMRole.READ)
     app.state.sql_llm_provider = create_llm_provider(LLMRole.SQL)
-    logger.debug("LLM providers built for roles: structured, chat, read, sql")
+    logger.debug(
+        "LLM providers built for roles: structured, chat, orchestrate, read, sql"
+    )
 
     logger.info(
         "API ready in %.1fs — storage=%s embedding_dimension=%d log_level=%s",

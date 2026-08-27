@@ -11,12 +11,12 @@
  * survived and the evidence did not.
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, test } from "vitest";
 
 import { AnswerBody } from "./AnswerBody";
-import { SourceList } from "./SourceList";
+import { SourceList, type SourceListProps } from "./SourceList";
 import { SqlEvidence } from "./SqlEvidence";
 import { TurnSteps } from "./TurnSteps";
 import { TurnView } from "./TurnView";
@@ -32,36 +32,40 @@ function renderTurn(turn: Turn) {
   );
 }
 
+/** The sources live behind a button now — a card is read by opening the panel.
+ *  The trigger is labelled "N källor" / "1 källa", so the regex finds either. */
+function renderOpenSources(props: SourceListProps) {
+  const result = render(
+    <MemoryRouter>
+      <SourceList {...props} />
+    </MemoryRouter>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /käll(a|or)/i }));
+  return result;
+}
+
 function step(overrides: Partial<Step> = {}): Step {
   return { id: "tc-1", label: "search.broad", status: "ok", detail: {}, ...overrides };
 }
 
 describe("rule 13 — an appendix source is not the nämnd's words", () => {
   test("a body source is attributed to the nämnd", () => {
-    render(
-      <MemoryRouter>
-        <SourceList sources={[makeSource()]} received />
-      </MemoryRouter>,
-    );
+    renderOpenSources({ sources: [makeSource()], received: true });
     expect(screen.getByText("Nämndens beslut")).toBeInTheDocument();
   });
 
   test("an appendix source is marked as the appealed decision", () => {
-    render(
-      <MemoryRouter>
-        <SourceList
-          sources={[makeSource({ section: "appendix", appendix_label: "Bilaga A" })]}
-          received
-        />
-      </MemoryRouter>,
-    );
+    renderOpenSources({
+      sources: [makeSource({ section: "appendix", appendix_label: "Bilaga A" })],
+      received: true,
+    });
     expect(screen.getByText(/Bilaga A/)).toBeInTheDocument();
     expect(screen.getByText(/överklagat beslut/)).toBeInTheDocument();
   });
 });
 
-describe("rule 14 — a count is never shown without the query behind it", () => {
-  test("the generated SQL is on screen beside the answer", () => {
+describe("rule 14 — a count's query is always reachable", () => {
+  test("the generated query and its rows are reachable beside the answer", () => {
     const turn = {
       ...newTurn("t1", "Hur många avslogs 2024?"),
       sql: [makeSqlEvent()],
@@ -74,10 +78,11 @@ describe("rule 14 — a count is never shown without the query behind it", () =>
     expect(screen.getByText("12")).toBeInTheDocument();
   });
 
-  test("it is not hidden behind a disclosure the reader has to open", () => {
-    // A collapsed query is the same as no query for the reader who most needs
-    // it — the one who took the number at face value. The attempt trail may
-    // collapse; the query that produced the answer may not.
+  test("the query is one click away, not forced open on the reader", () => {
+    // The obligation shifted from "on screen" to "reachable": a non-technical
+    // reader skips a block that opens on SELECT, so the query, its rows and its
+    // assumptions live behind a disclosure that is discreet by default — but
+    // present, closed rather than absent, with a summary that opens it.
     const { container } = render(
       <SqlEvidence
         events={[
@@ -97,18 +102,24 @@ describe("rule 14 — a count is never shown without the query behind it", () =>
     );
 
     const query = screen.getByText(/SELECT count\(\*\) FROM documents WHERE/);
-    expect(query).toBeVisible();
-    for (const details of container.querySelectorAll("details")) {
-      expect(details.contains(query)).toBe(false);
-    }
+    // Reachable: in the DOM, inside the drill-down, which starts closed.
+    expect(query).toBeInTheDocument();
+    const disclosure = container.querySelector("details");
+    expect(disclosure).not.toBeNull();
+    expect((disclosure as HTMLDetailsElement).open).toBe(false);
+    expect(disclosure?.contains(query)).toBe(true);
+    // And openable: the summary the reader clicks is there to be found.
+    expect(screen.getByText("Så räknades siffrorna fram")).toBeInTheDocument();
   });
 
   test("a query that could not be built says so rather than staying silent", () => {
+    // The one branch that is not a drill-down: a turn with no query has nothing
+    // to open, so it says so plainly and inline.
     render(<SqlEvidence events={[makeSqlEvent({ answered: false, sql: null })]} />);
     expect(screen.getByText(/ingen räkning/i)).toBeInTheDocument();
   });
 
-  test("the interpretation the SQL agent made travels with the rows", () => {
+  test("the interpretation the SQL agent made travels with the query", () => {
     render(
       <SqlEvidence
         events={[makeSqlEvent({ assumptions: ["Årtal tolkat som decision_date."] })]}
@@ -204,7 +215,7 @@ describe("rule 17 — streaming text is not a finished answer", () => {
   });
 });
 
-describe("rule 22 — an inline citation resolves to a passage the reader can see", () => {
+describe("rule 22 — an inline citation resolves to a passage the reader can reach", () => {
   const cited = (answer: string, sources: SourceReference[]) =>
     render(
       <MemoryRouter>
@@ -220,11 +231,17 @@ describe("rule 22 — an inline citation resolves to a passage the reader can se
       </MemoryRouter>,
     );
 
-  test("the superscript and the source carry the same number", () => {
+  const openSources = () =>
+    fireEvent.click(screen.getByRole("button", { name: /käll(a|or)/i }));
+
+  test("the superscript is numbered, and its source carries the same number", () => {
     cited("Fristen löper från delgivning[c1].", [makeSource({ handle: "c1" })]);
 
-    // Both the mark in the prose and the card it points at are labelled alike,
-    // so counting down the list lands on the passage the mark named.
+    // Inline, the superscript stands on its own — the passage is a click away.
+    expect(screen.getByLabelText("Källa 1")).toBeInTheDocument();
+    // Opened, the mark and the card it points at are labelled alike, so
+    // counting down the list lands on the passage the mark named.
+    openSources();
     expect(screen.getAllByLabelText("Källa 1")).toHaveLength(2);
   });
 
@@ -236,12 +253,14 @@ describe("rule 22 — an inline citation resolves to a passage the reader can se
   });
 
   test("a cited appendix passage keeps its badge", () => {
-    // Rule 13, at the citation. A superscript pointing at the appealed
-    // decision must not let the reader take it for the nämnd's reasoning.
+    // Rule 13, at the citation. A superscript pointing at the appealed decision
+    // must not let the reader take it for the nämnd's reasoning — the badge is
+    // on the card the mark resolves to, one click away in the panel.
     cited("Stiftet avslog begäran[c1].", [
       makeSource({ handle: "c1", section: "appendix", appendix_label: "Bilaga A" }),
     ]);
 
+    openSources();
     expect(screen.getByText(/Bilaga A/)).toBeInTheDocument();
     expect(screen.getByText(/överklagat beslut/)).toBeInTheDocument();
   });
@@ -253,6 +272,7 @@ describe("rule 22 — an inline citation resolves to a passage the reader can se
       makeSource({ handle: "c2", document_id: id }),
     ]);
 
+    openSources();
     expect(screen.getAllByLabelText("Källa 1")).toHaveLength(2);
     expect(screen.getAllByLabelText("Källa 2")).toHaveLength(2);
   });
@@ -290,11 +310,7 @@ describe("rule 20 — the two identifier spaces are not conflated", () => {
     // The chat contract carries no decision_number. Presenting the case number
     // under a "Beslut" label would merge two identifier spaces the corpus keeps
     // apart — 2025-0035 is decided as 14/2026.
-    render(
-      <MemoryRouter>
-        <SourceList sources={[makeSource()]} received />
-      </MemoryRouter>,
-    );
+    renderOpenSources({ sources: [makeSource()], received: true });
 
     expect(screen.getByText("Ärendenummer")).toBeInTheDocument();
     expect(screen.getByText("2025-0035")).toBeInTheDocument();

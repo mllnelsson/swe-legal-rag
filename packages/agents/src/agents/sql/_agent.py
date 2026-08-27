@@ -14,6 +14,7 @@ from ai.prompts import TEXT_TO_SQL, render, render_tool_index
 from llm_core import (
     LLMProvider,
     MaxIterationsError,
+    Message,
     ToolExecutionError,
     run_tool_loop,
 )
@@ -30,6 +31,22 @@ logger = logging.getLogger(__name__)
 __all__ = ["run_sql_agent"]
 
 _SOURCE = "agents.sql"
+
+
+def _closing_note(message: Message) -> str:
+    """The model's closing prose, or empty when it arrived with tool calls.
+
+    Content that accompanies tool calls is not an answer. A reasoning model
+    whose host does not separate the reasoning channel — Berget serves
+    `gpt-oss` this way — puts its chain-of-thought there instead, and `note`
+    is rendered to the user and handed back to the conversational agent as a
+    tool result. Only a message that called nothing is prose.
+
+    Today the loop reaches this with no tool calls anyway, because the agent
+    names no `terminal_tools`. That is the invariant this guards: naming one
+    later would otherwise turn `note` into whatever the model was thinking.
+    """
+    return "" if message.tool_calls else message.content
 
 
 def _result_from_state(
@@ -142,6 +159,6 @@ async def run_sql_agent(
 
     return _result_from_state(
         state,
-        note=loop_result.message.content,
+        note=_closing_note(loop_result.message),
         iterations=loop_result.iterations,
     )

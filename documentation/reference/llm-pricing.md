@@ -3,7 +3,7 @@ type: Reference
 title: LLM Pricing Prerequisites
 description: Verified per-token rates and the rules for applying them when analyzing LLM trace records. Reference data, not implemented anywhere in the repo.
 tags: [observability, cost, pricing, llm]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # LLM Pricing Prerequisites
@@ -55,8 +55,9 @@ nothing, so the models this project runs by default have no rate here:
 | Model | Role |
 |---|---|
 | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | `roles.structured` |
-| `mistralai/Mistral-Medium-3.5-128B` | `roles.summarize`, `roles.read`, `roles.sql` |
+| `google/gemma-4-31B-it` | `roles.summarize` |
 | `zai-org/GLM-5.2` | `roles.chat` |
+| `openai/gpt-oss-120b` | `roles.orchestrate`, `roles.read`, `roles.sql` |
 
 Which model fills each role is configurable, so confirm against `llm_config.yaml` (and
 any `LLM_MODEL_<ROLE>` override in the environment) before pricing a run. The trace

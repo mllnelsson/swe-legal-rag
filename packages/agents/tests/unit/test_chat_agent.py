@@ -76,16 +76,51 @@ def _reading(
     )
 
 
-class ScriptedProvider:
-    """Replays a fixed sequence of assistant turns, one per loop iteration."""
+def _route(plan: str = "(test plan)") -> Message:
+    """The plan step's `begin_research` call — what routes a turn into research."""
+    return Message(
+        role=Role.assistant,
+        tool_calls=(
+            ToolCall(id="call-plan", name="begin_research", arguments={"plan": plan}),
+        ),
+    )
 
-    def __init__(self, *turns: Message, stream: tuple[str, ...] | None = None) -> None:
+
+def _is_plan_call(tools) -> bool:
+    """Whether this generate is the plan step: it is the only call holding the
+    `begin_research` tool. The executor loop and the reader never do, so keying on
+    it lets one scripted provider auto-route the plan without touching them."""
+    return bool(tools) and any(
+        getattr(tool, "name", None) == "begin_research" for tool in tools
+    )
+
+
+class ScriptedProvider:
+    """Replays a fixed sequence of assistant turns, one per loop iteration.
+
+    A turn now opens with the plan step, so by default the plan call auto-routes:
+    it returns a `begin_research` call without consuming a scripted turn, and the
+    scripted turns drive the executor loop that follows. A test of the direct
+    reply — the plan step answering in prose — passes ``routes=False``, and then
+    the first scripted turn is that reply. Reader providers are unaffected either
+    way: they never hold the `begin_research` tool.
+    """
+
+    def __init__(
+        self,
+        *turns: Message,
+        stream: tuple[str, ...] | None = None,
+        routes: bool = True,
+    ) -> None:
         self._turns = list(turns)
         self._stream = stream if stream is not None else ("Nämnden ", "avslog.")
+        self._routes = routes
         self.seen_messages: list[list[Message]] = []
 
     async def generate(self, messages, *, tools=None, response_schema=None):
         self.seen_messages.append(list(messages))
+        if self._routes and _is_plan_call(tools):
+            return LLMResponse(message=_route())
         if not self._turns:
             raise AssertionError("the loop asked for more turns than were scripted")
         return LLMResponse(message=self._turns.pop(0))
@@ -724,23 +759,25 @@ async def test_no_evidence_says_so_rather_than_improvising() -> None:
     tokens = "".join(e.text for e in events if isinstance(e, TokenEvent))
     assert "hittade inget" in tokens
     assert next(e for e in events if isinstance(e, SourcesEvent)).sources == []
-    # No synthesis call was made — there was nothing to synthesize from.
-    assert len(provider.seen_messages) == 2
+    # No synthesis call was made — there was nothing to synthesize from. Three
+    # calls, not four: the plan step, then the search and the answer.
+    assert len(provider.seen_messages) == 3
 
 
 class TestConversationalTurn:
     """A message that is not a research question.
 
     A greeting, a thank-you, or "förklara det enklare" has nothing to retrieve.
-    The orchestrator ends such a turn the way any tool loop ordinarily ends —
-    by calling no tool and writing the reply itself — and that message is what
-    reaches the user.
+    The plan step ends such a turn by calling no tool and writing the reply
+    itself — `routes=False` scripts exactly that — and that message is what
+    reaches the user, without the executor loop ever running.
     """
 
     @staticmethod
     def _run(*, history: list[dict] | None = None, question: str = "Tack!"):
         provider = ScriptedProvider(
             Message(role=Role.assistant, content="Varsågod!"),
+            routes=False,
         )
         toolset = FakeToolset()
         return (
@@ -1083,6 +1120,7 @@ class TestCorrelation:
         await self._run_a_turn()
 
         assert {r.context["source"] for r in self.records} == {
+            "agents.chat.plan",
             "agents.chat",
             "agents.chat.read",
             "ai.synthesize_answer",
@@ -1094,7 +1132,9 @@ class TestCorrelation:
         A greeting costing five iterations and an embedding pass means the
         orchestrator is searching when it should be replying.
         """
-        provider = ScriptedProvider(Message(role=Role.assistant, content="Hej!"))
+        provider = ScriptedProvider(
+            Message(role=Role.assistant, content="Hej!"), routes=False
+        )
         await _collect(
             run_chat_agent(
                 ChatAgentRequest(question="Hej!"),
@@ -1104,7 +1144,9 @@ class TestCorrelation:
             )
         )
 
-        assert [r.context["source"] for r in self.records] == ["agents.chat"]
+        # The plan step alone: it replied directly, so the loop and the writer
+        # never ran. One record, and it is the plan call.
+        assert [r.context["source"] for r in self.records] == ["agents.chat.plan"]
 
     async def test_a_run_without_a_caller_mints_its_own_interaction_id(self) -> None:
         """`scripts/run_agent.py` has no enclosing interaction to join."""

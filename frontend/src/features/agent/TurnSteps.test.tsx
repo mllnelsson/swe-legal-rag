@@ -36,13 +36,41 @@ describe("while the agent is working", () => {
     expect(screen.getByText("Läser frågan")).toBeInTheDocument();
   });
 
-  test("the elapsed seconds count up against the stated one-minute ceiling", () => {
+  test("the elapsed seconds count up, so the wait reads as motion not a stall", () => {
     render(<TurnSteps steps={[step()]} streaming />);
     expect(screen.getByText("0 s")).toBeInTheDocument();
 
     // Wrapped, because the counter ticks through React state.
     act(() => vi.advanceTimersByTime(3000));
     expect(screen.getByText("3 s")).toBeInTheDocument();
+  });
+
+  test("a long wait says it is expected rather than stuck", () => {
+    // A big question runs for minutes, and the steps can sit unchanged long
+    // enough to read as a stall. Past the threshold a plain line says so — and
+    // not before, so a quick turn never sees it.
+    render(<TurnSteps steps={[step()]} streaming />);
+    expect(screen.queryByText(/kan ta ett par minuter/)).not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(screen.getByText(/kan ta ett par minuter/)).toBeInTheDocument();
+  });
+
+  test("a single step that sits open a while says it is still going", () => {
+    // The gap the turn counter cannot explain: one step — the SQL sub-loop, a
+    // slow reading — open while nothing around it moves. The note is on that
+    // step, and only once it has been running long enough to read as stuck.
+    render(<TurnSteps steps={[step()]} streaming />);
+    expect(screen.queryByText(/tar en stund/)).not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(8000));
+    expect(screen.getByText(/tar en stund/)).toBeInTheDocument();
+  });
+
+  test("a finished step never says it is still going", () => {
+    render(<TurnSteps steps={[step({ status: "ok" })]} streaming writing />);
+    act(() => vi.advanceTimersByTime(8000));
+    expect(screen.queryByText(/tar en stund/)).not.toBeInTheDocument();
   });
 
   test("the running step is marked as the one happening now", () => {

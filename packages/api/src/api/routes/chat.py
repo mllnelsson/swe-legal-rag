@@ -139,6 +139,7 @@ async def chat_endpoint(
             ),
             llm_provider=request.app.state.chat_llm_provider,
             reader_provider=request.app.state.read_llm_provider,
+            executor_provider=request.app.state.orchestrate_llm_provider,
         )
     else:
         # A server answering from a script while someone believes it is

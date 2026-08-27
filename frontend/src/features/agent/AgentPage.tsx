@@ -231,8 +231,8 @@ function EmptyState({ onPick }: { onPick: (question: string) => void }) {
         }}
       >
         Agenten söker i Överklagandenämndens beslut, läser dem vid behov och
-        skriver ett svar med hänvisningar. Ett svar tar upp till en minut — du
-        ser vad den gör under tiden. Följdfrågor besvaras i samma samtal.
+        skriver ett svar med hänvisningar. Ett svar kan ta en stund — du ser vad
+        den gör under tiden. Följdfrågor besvaras i samma samtal.
       </p>
 
       <ul

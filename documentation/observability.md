@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-25T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # LLM Observability
@@ -260,7 +260,7 @@ and its own directory.
 `ai.expand_query`, `ai.extract_metadata`, `ai.extract_entities`,
 `ai.summarize_document`, `ai.synthesize_answer`,
 `ai.embed`, `agents.sql`,
-`agents.chat`, `agents.chat.read`, `api.chat`, `api.search`, `worker-chunk`,
+`agents.chat.plan`, `agents.chat`, `agents.chat.read`, `api.chat`, `api.search`, `worker-chunk`,
 `worker-embed`, `worker-extract`, `worker-metadata`, `scripts.run_step`,
 `scripts.run_agent`. Contexts nest and merge; on a key collision the innermost
 wins — which is exactly why `api.chat`/`api.search` and the `worker-*`/
@@ -269,16 +269,19 @@ record: the `ai.*`/`agents.*` source set by the call itself always overrides
 them. `source` still needs to name them, because that is what "the innermost
 wins" means in practice — the outer value is the one a nested call replaces.
 
-`agents.chat` appears **once per tool-loop iteration**, because each is its own
-billed call — a five-step run produces five records under that source, plus one
-`ai.synthesize_answer` for the streamed answer, plus `agents.sql` and
-`agents.chat.read` for whichever sub-agents it reached for. A turn that needed
-no retrieval is **one** `agents.chat` record: the model calls no tool and
-writes the reply itself in the same iteration that decided not to search, so
-there is no second call to trace separately — verified against the real
-corpus at one record, 4.8 s. That shape is itself diagnostic — a greeting
-costing five iterations and an embedding pass means the orchestrator is
-searching when it should be replying. All of them carry
+`agents.chat.plan` is **exactly one record per turn** — the plan step is a
+single call, on `LLMRole.CHAT`, that either replies directly or hands the
+executor a plan by calling `begin_research`. `agents.chat` then appears **once
+per executor tool-loop iteration**, on `LLMRole.ORCHESTRATE`, because each is
+its own billed call — a five-step run produces five records under that
+source, plus one `ai.synthesize_answer` for the streamed answer, plus
+`agents.sql` and `agents.chat.read` for whichever sub-agents the executor
+reached for. A turn that needed no retrieval is **one** `agents.chat.plan`
+record and nothing else: the plan step calls no tool and writes the reply
+itself, so no executor loop and no synthesis call ever run. That shape is
+itself diagnostic — a turn whose executor loop runs five iterations for a
+question that should have been a direct reply means the plan step chose
+research when it should have replied. All of them carry
 the same `interaction_id`: `run_chat_agent` and `run_sql_agent` both open an
 `interaction_scope`, which **inherits** the id the API already put in context
 rather than minting a second one. A run started outside the API — from
@@ -387,10 +390,12 @@ cat data/llm-traces/$(date -u +%F)/<uuid>/*.json \
             .usage.output_tokens] | @tsv'
 ```
 
-Expect one row per tool-loop iteration under `agents.chat`, one `ai.embed` per
-search, one `ai.synthesize_answer`, and — depending on which tools the agent
-reached for — `agents.sql` (itself one row per SQL-loop iteration) and
-`agents.chat.read`. Summing the token columns and applying the rates from
+Expect one `agents.chat.plan` row for the plan step, one row per executor
+tool-loop iteration under `agents.chat`, one `ai.embed` per search, one
+`ai.synthesize_answer` — the last two absent when the plan step replied
+directly — and, depending on which tools the executor reached for,
+`agents.sql` (itself one row per SQL-loop iteration) and `agents.chat.read`.
+Summing the token columns and applying the rates from
 [LLM pricing](/reference/llm-pricing.md) is what the question cost.
 
 A chat question is therefore materially more expensive than the single

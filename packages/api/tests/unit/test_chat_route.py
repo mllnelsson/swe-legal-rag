@@ -68,6 +68,7 @@ def _make_client():
     app.state.embedding_provider = MagicMock()
     app.state.structured_llm_provider = MagicMock()
     app.state.chat_llm_provider = MagicMock()
+    app.state.orchestrate_llm_provider = MagicMock()
     app.state.read_llm_provider = MagicMock()
     app.state.sql_llm_provider = MagicMock()
     app.state.storage = MagicMock()

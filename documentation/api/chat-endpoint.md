@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys, sources, then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the per-passage sources event a citation marker resolves against, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-25T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -38,8 +38,9 @@ ids silently create a fresh session rather than erroring.
 
 ## Events
 
-Progress events precede the first token. **Roughly 18 seconds elapse before the
-answer starts** — see [latency](#latency) — which is what they are for.
+Progress events precede the first token. **The plan step and the executor
+loop together run for tens of seconds before the answer starts** — see
+[latency](#latency) — which is what the progress events are for.
 
 ```
 event: tool_call     data: {"type","id","tool","label","detail"}
@@ -63,9 +64,10 @@ not addressing a question is an answer.
 ### Not every turn is a research question
 
 A greeting, a thank-you, or a question about the previous answer — "förklara det
-enklare" — has nothing to retrieve. Such a turn ends with the model calling no
-tool at all and writing the reply itself, and it reaches the client with **no
-step frames whatsoever** — no `tool_call`, no `tool_result`:
+enklare" — has nothing to retrieve. Such a turn is caught by the plan step
+ahead of the executor loop: it calls no tool and writes the reply itself, so no
+executor loop and no synthesis call ever run, and the turn reaches the client
+with **no step frames whatsoever** — no `tool_call`, no `tool_result`:
 
 ```
 event: sources       {"sources":[]}
@@ -209,10 +211,10 @@ silently ignored and an id is minted instead — the same rule as an unrecognize
 `session_id`. The response header always carries the id actually in use, canonicalised,
 so a client that supplied a rejected value can tell.
 
-One id spans everything the turn cost — the orchestrator's iterations, both sub-agents
-and the streamed synthesis — which is what [LLM Observability](/observability.md) sums
-cost over and what a reported bad answer is found by later. It is stored on both entries
-of the resulting [session](/data-model/sessions.md) turn.
+One id spans everything the turn cost — the plan step, the executor's iterations,
+both sub-agents and the streamed synthesis — which is what [LLM Observability](/observability.md)
+sums cost over and what a reported bad answer is found by later. It is stored on
+both entries of the resulting [session](/data-model/sessions.md) turn.
 
 The header carries it rather than the `done` event because response headers are sent
 before the stream opens, so the id survives a turn that ends in `event: error` instead.
@@ -221,16 +223,23 @@ before the stream opens, so the id survives a turn that ends in `event: error` i
 
 | Phase | Elapsed | Streams? |
 |---|---|---|
-| Orchestrator iterations | ~5 × 1.5 s | no |
+| Plan step | ~15 s | no |
+| Executor iterations | ~2–5 s each | no |
 | `query_corpus` sub-agent | ~6 s | no |
 | `read_decision` sub-agent | ~3 s | no |
-| **First token** | **~18 s** | — |
-| Streamed synthesis | ~6 s | **yes** |
+| Streamed synthesis | ~10 s | **yes** |
 
-These are estimates from component timings, not a measured benchmark. Exactly
-one call per run streams — the final synthesis — because
-`LLMProvider.generate_stream` takes no tools and there is no streaming tool-call
-path in [llm-core](/packages/llm-core.md).
+These are estimates from component timings, not a fixed benchmark — a turn
+taking more executor iterations or reading more decisions adds proportionally.
+On one live counting turn against the real corpus, the plan step, executor and
+synthesis together landed at roughly 55 seconds end to end: the plan step and
+synthesis run on the strong `chat` model, and the executor's iterations in
+between — the mechanical part of the turn — run on `orchestrate`, a smaller
+model, which is what keeps each iteration to single digits. The plan step
+precedes the first progress event, so it is spent inside the pre-first-token
+wait like everything else in this table. Exactly one call per run streams —
+the final synthesis — because `LLMProvider.generate_stream` takes no tools and
+there is no streaming tool-call path in [llm-core](/packages/llm-core.md).
 
 This is well past the 5-second budget [NFR1a](/prd.md) sets for search, deliberately.
 The agent is held to **[NFR1b](/prd.md) instead: a turn under one minute**, with the

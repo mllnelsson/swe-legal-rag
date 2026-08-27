@@ -3,7 +3,7 @@ type: Concept
 title: Honesty rules
 description: The frontend's tested constraints on what it claims — twelve about a search result, ten more about an answer a language model wrote. Each exists because the data does not support the more convenient alternative.
 tags: [frontend, ui, honesty, search, agent, appendix, rrf]
-timestamp: 2026-08-22T00:00:00Z
+timestamp: 2026-08-26T00:00:00Z
 ---
 
 # Honesty rules
@@ -138,24 +138,23 @@ screen.
     decision — often the one Överklagandenämnden overturned — and every such
     source carries the marker, using the same `SectionBadge` the search results
     do. The excerpt is 200 characters of a passage the model saw in full, so it
-    is a label for the reader, not the evidence. The same badge survives on an
-    inline citation (rule 22): a superscript pointing at an appendix passage
-    must not let the reader take it for the nämnd's own reasoning.
-14. **A count is never shown without the query behind it.** Whenever a turn
-    emitted `event: sql`, the generated query, its rows, its `assumptions` and
-    its `truncated` flag render beside the answer, and **not behind a collapsed
-    disclosure** — a query the reader has to open is a query the reader who took
-    the number at face value will not open. This is [the SQL agent's stated
-    obligation on its caller](/api/sql-agent.md#the-consumers-obligation), not
-    decoration. The attempt trail may collapse; the query that produced the
-    answer may not. A `query_corpus` that could not build a query says so rather
-    than rendering nothing.
-
-    The block leads with the **rows**, and the SQL follows under "Så räknades de
-    fram". Both are on screen and neither is collapsed; the order is what
-    changed, because the reader this rule protects is the non-technical one, and
-    a block that opens on `SELECT` reads as machinery — which is what a reader
-    skips. The rows are the part they can actually check the number against.
+    is a label for the reader, not the evidence. The same badge rides on the
+    source a citation resolves to (rule 22): a superscript pointing at an
+    appendix passage must not let the reader take it for the nämnd's own
+    reasoning.
+14. **A count's query is always reachable.** Whenever a turn emitted
+    `event: sql`, the generated query, its rows, its `assumptions` and its
+    `truncated` flag are on the page behind a one-click disclosure ("Så räknades
+    siffrorna fram"). [The SQL agent's obligation on its
+    caller](/api/sql-agent.md#the-consumers-obligation) is to *expose* the query
+    — "display or otherwise expose" — not to force it open, and a table of
+    `SELECT` above the prose reads as machinery to the non-technical reader this
+    rule protects, who skips past it to reach the answer. So it is discreet by
+    default and present in full — **closed, not absent**: the rows, the query
+    under them, and the assumptions the SQL agent made, one click away. The
+    attempt trail collapses a second level down. A `query_corpus` that could not
+    build a query has nothing to open, so it says so inline rather than rendering
+    nothing.
 15. **`error` is terminal.** The contract sends no `done` after one, so the UI
     stops on it: the failed turn is marked, whatever tokens arrived are kept —
     they are what the agent actually said — and nothing goes on claiming the
@@ -202,15 +201,18 @@ screen.
     resolve them against, rule 22 strips them the same way it strips a marker
     naming a handle the model never selected — a bare `[c1]` on screen would
     point at nothing.
-22. **An inline citation resolves to a passage the reader can see.** The
+22. **An inline citation resolves to a passage the reader can reach.** The
     synthesis prompt marks each claim with the handle of the passage it rests
     on — `[c3]`, or `[c3][c7]` for a claim resting on several. The client turns
     a resolvable marker into a superscript, numbered in first-appearance order
-    to match the source list beneath the answer, so counting down the list
-    lands on the passage the mark pointed at. A marker that cannot be resolved
-    — a handle the model never selected, or a marker surviving in a restored
-    turn whose sources were not persisted (rule 21) — is removed from the
-    prose entirely rather than shown as raw text.
+    to match the source list the "Källor" button opens, so counting down that
+    list lands on the passage the mark pointed at. The passages live in a
+    side panel rather than beneath the answer — provenance a reader opens to
+    verify, one click from the mark that points at it, not a wall of cards
+    ahead of the next question. A marker that cannot be resolved — a handle the
+    model never selected, or a marker surviving in a restored turn whose sources
+    were not persisted (rule 21) — is removed from the prose entirely rather
+    than shown as raw text.
 
 One more thing the interface shows for a reason rather than for polish: each
 finished turn prints its `X-Interaction-Id`. That id spans everything the turn

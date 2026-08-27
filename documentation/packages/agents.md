@@ -4,7 +4,7 @@ title: agents Package
 description: The LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — the text-to-SQL agent behind POST /api/sql and the conversational agent behind POST /api/chat — their module layout, and the injected-toolset seam that keeps the dependency running api to agents.
 resource: packages/agents
 tags: [package, agents, sql, chat, tool-loop, llm]
-timestamp: 2026-08-25T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # agents Package (`packages/agents/`)
@@ -44,7 +44,7 @@ tools arrive as an injected `ChatToolset`, and it calls `run_sql_agent` as one o
 | `chat/_protocols.py` | The `ChatToolset` Protocol — five async capabilities in the agent's own shapes. See [the seam](#the-toolset-seam) below |
 | `chat/_tools.py` | `build_chat_tools(toolset, settings, reader_provider=None)` → the six tool definitions, their executors and `ChatState`; plus `label_for_call()` and `FREE_TEXT_FILTER_FIELDS`, the grounding precondition's column list |
 | `chat/_reader.py` | `read_decision_text()` — the one-shot sub-agent a whole decision goes to, returning a `ReadingSelection`: which passages bear on the question, by index, and how they connect. `format_numbered_chunks()`, which numbers each passage and marks each appendix boundary before it does |
-| `chat/_agent.py` | `run_chat_agent(request, toolset, ...)` — drives `llm_core.tool_loop` with a plain `async for`, translating its yielded events into `AgentEvent`s as it goes, then streams one synthesis call over the evidence the agent selected |
+| `chat/_agent.py` | `run_chat_agent(request, toolset, *, llm_provider, reader_provider, executor_provider=None, ...)` — a one-iteration `llm_core.run_tool_loop` plans the turn (direct reply, or `begin_research(plan)`) on `llm_provider`; then, unless it replied directly, drives the executor's `llm_core.tool_loop` on `executor_provider` (falling back to `llm_provider` when unset) with a plain `async for`, translating its yielded events into `AgentEvent`s as it goes; then streams one synthesis call on `llm_provider` over the evidence the executor selected |
 
 Both agents open their correlation scope the same way, and neither mints an
 `interaction_id` outright: `ai.interaction_scope()` **inherits** one already in the
@@ -169,7 +169,7 @@ mostly the behaviour that would be expensive to discover in production: that an
 ungrounded filter is refused and the loop recovers from the refusal, that a keyword
 filter is not, that the terminal `answer` tool ends the run, that `event: sql` precedes
 the answer, that a cited appendix keeps its label, and that **no whole decision text
-ever reaches an orchestrator message** — the invariant the reading sub-agent exists to
+ever reaches an executor message** — the invariant the reading sub-agent exists to
 maintain.
 
 `TestTheToolIndexInThePrompt` in `test_chat_agent.py` closes prompt <- schema <-

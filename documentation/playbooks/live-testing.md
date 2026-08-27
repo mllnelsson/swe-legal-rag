@@ -3,7 +3,7 @@ type: Playbook
 title: Live Testing Guide
 description: How to run the system locally end-to-end for manual testing and verification, and how to reset state.
 tags: [live-testing, pipeline, verification, workflow]
-timestamp: 2026-08-21T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # Live Testing Guide
@@ -316,8 +316,9 @@ summariser). All sit behind a small registry, so a fourth task already implement
 `ai.services` (`expand_query`, `extract_metadata`) is one preparer function away, not a
 rewrite.
 
-`chat` runs the whole agent — the tool loop, both sub-agents and the streamed synthesis
-— and records the answer, the sources, any SQL it ran, **and the tool trail** (`steps`:
+`chat` runs the whole agent — the plan step, the executor tool loop, both
+sub-agents and the streamed synthesis — and records the answer, the sources,
+any SQL it ran, **and the tool trail** (`steps`:
 the tool and progress label of every call it made). The trail is there because most of
 what goes wrong in an agent run shows up in which tools it reached for rather than in
 the prose: a run that never called `list_vocabulary` and then filtered on a category, or

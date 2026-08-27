@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.config import SqlAgentSettings
 from agents.sql import SqlAgentRequest, _tools, run_sql_agent
+from agents.sql._agent import _closing_note
 from agents.sql._dtos import SqlRows
 
 # The sandbox is stubbed in every test here, so the session is threaded through
@@ -178,6 +179,28 @@ async def test_exhausted_iterations_returns_a_reason_rather_than_raising() -> No
 
     assert result.answered is False
     assert "iterationstak" in result.note
+
+
+class TestClosingNote:
+    """`note` is rendered to the user and fed back to the conversational agent,
+    so it must never carry content the model emitted alongside a tool call —
+    a host that does not separate a reasoning model's channel puts the
+    chain-of-thought there.
+    """
+
+    def test_prose_with_no_tool_calls_is_the_note(self) -> None:
+        assert _closing_note(_final("Räknade besluten.")) == "Räknade besluten."
+
+    def test_content_accompanying_a_tool_call_is_dropped(self) -> None:
+        thinking = Message(
+            role=Role.assistant,
+            content="We need count decisions in 2024. Use query.",
+            tool_calls=(
+                ToolCall(id="call-1", name="run_sql", arguments={"sql": "..."}),
+            ),
+        )
+
+        assert _closing_note(thinking) == ""
 
 
 async def test_the_schema_and_examples_reach_the_model() -> None:

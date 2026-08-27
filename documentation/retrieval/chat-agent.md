@@ -1,9 +1,9 @@
 ---
 type: Concept
 title: Conversational Agent
-description: The agent behind the chat endpoint — a GLM tool loop over the deterministic retrieval tool set with one terminal tool, `answer`, and a plain no-tool reply as the other way a turn ends; two Mistral sub-agents, one that counts and one that selects citable passages from a decision rather than summarising it; and a streamed writing call that marks each claim with the passage handle it rests on.
+description: The agent behind the chat endpoint — a GLM plan step that either replies directly or hands a research plan to an executor tool loop over the deterministic retrieval tool set (openai/gpt-oss-120b, one terminal tool `answer`); two sub-agents on the same model, one that counts and one that selects citable passages from a decision rather than summarising it; and a streamed GLM writing call that marks each claim with the passage handle it rests on.
 tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-25T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # Conversational Agent
@@ -21,47 +21,55 @@ against a fake toolset with no database at all.
 
 ```
 run_chat_agent(request, toolset)
-  ├─ tool_loop(..., terminal_tools={"answer"})       GLM-5.2, blocking
+  ├─ run_tool_loop([...], {"begin_research": …}, max_iterations=1)   GLM-5.2, blocking
+  │    (model writes a Swedish reply, calls no tool) ─┐ that message is the reply
+  │    begin_research(plan)                            ─┘ terminal, plan handed to the executor
+  │
+  ├─ tool_loop(..., terminal_tools={"answer"})       gpt-oss-120b, blocking
   │    list_vocabulary()          → tool_call / tool_result
   │    search_decisions(...)      → tool_call / tool_result
-  │    query_corpus(...)          → tool_call / sql / tool_result   [Mistral-M]
-  │    read_decision(...)         → tool_call / tool_result         [Mistral-M]
+  │    query_corpus(...)          → tool_call / sql / tool_result   [gpt-oss-120b]
+  │    read_decision(...)         → tool_call / tool_result         [gpt-oss-120b]
   │    answer(annotations, gaps)  ─┐ terminal, loop ends
-  │    (model writes prose, calls no tool) ─┘ loop ends, that message is the reply
   │
   ├─ ai.synthesize_answer(evidence bundle)          GLM-5.2, streaming
   │    → sources → token* → done
-  └─ (no evidence gathered: the orchestrator's own message is the reply)
+  └─ (plan step replied directly: no executor loop, no synthesis call)
        → sources(empty) → token(whole) → done
 ```
 
-**Two phases, and the split is the point.** The loop gathers evidence without
-streaming, and one final call writes the prose. Not because
-`LLMProvider.generate_stream` cannot take tools — that is a limit of this
-project's own OpenAI-compatible wrapper, not the underlying API, which streams
-tool calls fine — but because a synthesis prompt built fresh from the selected
-evidence beats writing from the loop's own history, which carries every search
-result verbatim and every dead end. Carrying the evidence in a single synthesis
-prompt rather than in the loop is also what keeps it affordable: a passage
-placed in the loop is re-sent on every later iteration, while one placed in the
-synthesis prompt is sent once.
+**Three phases, and the split is the point.** A plan step reads the question
+once, on the strong model, and either writes the reply itself — a greeting, a
+thank-you, a follow-up the history already answers — or hands a short English
+plan to the executor by calling `begin_research`. The executor then gathers
+evidence with tools on a smaller model, carrying the plan; it does not stream —
+`LLMProvider.generate_stream` takes no tools, a limit of this project's own
+OpenAI-compatible wrapper, not the underlying API — and ends by calling
+`answer`. A final streaming call on the strong model turns the evidence the
+executor selected into Swedish prose. The hard part of a turn is reading what
+is being asked and choosing a strategy, and the strong model does that once, at
+the start; the tool-calling in between is mechanical and runs on a cheaper
+model instead.
 
 The synthesis prompt is **fresh and compact** — the selected passages, each
 marked with its handle, plus the readings' guidance, the SQL rows and the
-agent's annotations and gaps — not the loop's own history. It is also where the
-answer becomes Swedish: the orchestrator reasons in English over Swedish
-passages and tool results, and the synthesis step writes the Swedish prose the
-user reads. The one exception is a turn that needed no evidence — there the
-orchestrator writes the (Swedish) reply itself, since there is no second call
-to hand it to.
+executor's annotations and gaps — not the executor's own tool-call history.
+Carrying the evidence in a single synthesis prompt rather than in the loop is
+also what keeps it affordable: a passage placed in the loop is re-sent on every
+later iteration, while one placed in the synthesis prompt is sent once. It is
+also where the answer becomes Swedish: the executor reasons in English over
+Swedish passages and tool results, and the synthesis step writes the Swedish
+prose the user reads. The synthesis prompt never sees the plan — only the
+evidence the executor selected from carrying it out.
 
 ## Models
 
 | Job | Role | Model | Why |
 |---|---|---|---|
-| Orchestration + the answer | `chat` | GLM-5.2 | Plans, selects evidence, writes the user-facing Swedish |
-| Reading one decision | `read` | Mistral-Medium-3.5-128B | Sees a whole document, so it wants context length |
-| Counting | `sql` | Mistral-Medium-3.5-128B | The [SQL agent's](/api/sql-agent.md) own role, unchanged |
+| Plan the turn, direct replies, the answer | `chat` | GLM-5.2 | Reasoning-heavy and low-volume: reading intent, choosing a strategy, writing the user-facing Swedish |
+| The executor tool loop | `orchestrate` | openai/gpt-oss-120b | Reliable tool-calling carrying out a plan, no prose — the mechanical half of a turn |
+| Reading one decision | `read` | openai/gpt-oss-120b | Sees a whole document, so it wants context length |
+| Counting | `sql` | openai/gpt-oss-120b | The [SQL agent's](/api/sql-agent.md) own role |
 
 See [LLM configuration](/reference/llm-config.md).
 
@@ -114,48 +122,52 @@ assert](#what-the-answer-may-assert).
 
 ## Two ways a turn can end
 
-A conversation holds two kinds of message, and collapsing them is a real defect
-rather than a missing nicety: a greeting driven into the tool loop spends an
-embedding pass and ~18 seconds searching for nothing, and answers "tack" with a
-report on a search nobody wanted. [PRD S8](/prd.md), conversational follow-ups,
-is what the second ending exists to meet.
+A conversation holds two kinds of message, and the plan step is where that
+split is made: driving a greeting into the executor's tool loop spends an
+embedding pass and several seconds searching for nothing, and answers "tack"
+with a report on a search nobody wanted. [PRD S8](/prd.md), conversational
+follow-ups, is what the plan step's direct reply exists to meet.
 
-It needs no machinery of its own. [`tool_loop`](/packages/llm-core.md) returns
-when the model calls no tool, so a turn needing no evidence ends the way a tool
-loop ordinarily ends: the model writes the reply itself and calls nothing, and
-that message is what the caller gets. **A caller must therefore read
-`message.tool_calls` to tell the two endings apart** — empty means the model
-chose to answer in prose, and discarding that message sends the user the
-no-evidence line instead of the answer it just wrote.
+The plan step is a one-iteration `run_tool_loop` whose only tool is
+`begin_research`; it needs no other machinery. **A caller reads
+`message.tool_calls` on the plan step's terminal message to tell the two
+endings apart**: empty means the model chose to answer in prose, present means
+it called `begin_research` and the executor loop runs next.
 
 | Ending | For | Written by |
 |---|---|---|
-| `answer(annotations, gaps)` | A question the corpus answers | `ANSWER_SYNTHESIS`, from the selected evidence, streamed |
-| No tool call | A greeting, a thank-you, a question about the previous answer | `CHAT_ORCHESTRATION` itself, in the same call that decided not to search, delivered whole |
+| `begin_research(plan)` → executor loop → `answer(annotations, gaps)` | A question the corpus answers | `ANSWER_SYNTHESIS`, from the selected evidence, streamed |
+| No tool call | A greeting, a thank-you, a question about the previous answer | `CHAT_PLAN` itself, delivered whole, no executor loop |
 
 Both endings carry `sources`, empty for the second and truthfully so — that
 answer rests on the conversation, not on any decision. Only the first streams
 token by token; the second is one message, which for a couple of sentences
-costs nothing and saves a second model round-trip.
+costs nothing and saves the executor loop and the synthesis call entirely.
 
-**The honesty rules for a no-tool reply now live in the orchestration
-prompt**, since that model is the one writing it. With no evidence in front of
-it, a model asked to be helpful will invent the law, so `CHAT_ORCHESTRATION`
-says the reply may build only on the conversation history and the user's
-message: no case number, no date, no rule that is not already in what has been
-said. Asked something the history does not cover, it says the question needs
-looking up rather than guessing. The same section says never to use this as a
-shortcut past research — a legal question it has not looked up is a search,
-however small it sounds.
+**The honesty rules for a no-tool reply live in the plan prompt**, since that
+model is the one writing it. With no evidence in front of it, a model asked to
+be helpful will invent the law, so `CHAT_PLAN` says the reply may build only on
+the conversation history and the user's message: no case number, no date, no
+rule that is not already in what has been said. Asked something the history
+does not cover, it says the question needs looking up rather than guessing.
+The same prompt says never to use this as a shortcut past research — a legal
+question it has not looked up is a plan for the executor, however small it
+sounds.
 
-The check is ordered before the evidence gate, so the three empty-handed
-endings stay distinct:
+The check is ordered before the evidence gate, so the empty-handed endings
+stay distinct:
 
 | State | What the user gets |
 |---|---|
-| No tool call | The reply the model wrote, delivered whole |
-| `answer` called with no passages | "Jag hittade inget i besluten…" — no model call |
-| Loop exhausted | A terminal `ErrorEvent`, no `done` |
+| Plan step called no tool | The reply it wrote, delivered whole |
+| `answer` called with no passages | "Jag hittade inget i besluten…" — no synthesis call |
+| Executor loop exhausted | A terminal `ErrorEvent`, no `done` |
+
+The executor loop itself names only `answer` as a [terminal
+tool](/packages/llm-core.md); a loop ending with no tool call there is the
+executor writing prose despite holding a plan — rare, and not a second direct
+reply, since the plan step already owns that. It gathered no evidence, so it
+falls to the evidence gate below like any empty-handed loop.
 
 ### The terminal `answer` tool is the reranking
 
@@ -209,16 +221,16 @@ Measured against the corpus (184 documents), `documents.raw_text` averages
 10,107 characters, median 7,183, p90 20,791 and **maximum 165,316**; 20
 documents exceed 20,000.
 
-Putting whole decisions in the orchestrator's context would make cost scale with
+Putting whole decisions in the executor's context would make cost scale with
 `documents × loop iterations × session turns`. Instead `read_decision` hands the
 document — shown as numbered passages, `[0] …`, `[1] …` — the user's question and
-the orchestrator's instructions to the `read` role. The reader does not
+the executor's instructions to the `read` role. The reader does not
 summarise: it returns a `ReadingSelection` (`agents/chat/_dtos.py`) —
 `relevance` (`"carries"`, `"mentions"` or `"nothing"`), the `chunk_indices` that
 bear on the question, and a short `summary` of how they connect. The text of
 each selected index is then fetched from `DecisionText.chunks` by position, never
 written by the model, which is what makes reader hallucination structurally
-impossible rather than merely discouraged. The orchestrator's context still never
+impossible rather than merely discouraged. The executor's context still never
 holds a decision, which is what makes the size of the worst document
 uninteresting.
 
@@ -228,7 +240,7 @@ and a reading surface keeps the one handle it already has rather than appearing
 twice. `relevance == "nothing"` records nothing: no handles, no reading, nothing
 for the writing step to read. An index outside the decision is dropped and
 logged rather than failing the call, and a `generate_structured` call the schema
-cannot parse comes back to the orchestrator as a refusal (`{"error": …,
+cannot parse comes back to the executor as a refusal (`{"error": …,
 "refused": True}`) for the loop to repair from, not a failed turn.
 
 **The invariant this establishes.** Every factual claim in an answer traces to
@@ -310,34 +322,36 @@ verbatim text into a single tool result — which the loop then re-sends on ever
 later iteration; two brings it to ~26,000. Two is enough to judge a decision's
 relevance, and the whole text is a `read_decision` away.
 
-**Latency is dominated by the loop, not by the sub-agents.** A turn is budgeted at
-**under a minute** ([NFR1b](/prd.md)) and a broad question does not meet it. The
-trace records say where the time goes, and it is not where the tool names suggest:
-on two measured turns against the real corpus, the orchestrator's own iterations
-were 52% and 65% of the wall clock, at roughly 30–60 seconds and ~1,000 output
-tokens *each*, while the whole reading sub-agent was 21% and 2%. One reading costs
-about six seconds.
+**Latency splits across the three phases, and the executor is the cheap one.** A
+turn is budgeted at **under a minute** ([NFR1b](/prd.md)). On a live counting
+turn against the real corpus, planning took roughly 15 seconds on the strong
+`chat` model, each executor iteration 2–5 seconds on `openai/gpt-oss-120b`, and
+synthesis roughly 10 seconds back on `chat` — around 55 seconds end to end.
+Running the executor loop on `orchestrate` rather than the strong model is what
+keeps each of its iterations to single digits; the plan step and synthesis stay
+on `chat` because reading intent and writing prose are where model strength
+matters, not iteration count.
 
 So `chat_agent_max_documents_read` is a latency lever only indirectly: what a
-reading really costs is the extra **iteration** the loop must take to use its
-result, and an iteration is the expensive unit here. `chat_agent_max_iterations` is
-the lever that bounds the thing actually being paid for. Reducing what the
-orchestrator emits per iteration — or running it on a faster model, keeping the
-`chat` role for synthesis where prose quality is the point — is the change that
-would move NFR1b; capping reads is not.
+reading really costs is the extra **iteration** the executor loop must take to
+use its result, and an iteration is the expensive unit here. `chat_agent_max_iterations`
+is the lever that bounds the thing actually being paid for; capping reads is
+not.
 
 Search itself runs under [`SearchSettings`](/packages/api.md), the same bounds
 `POST /api/search` uses, so the two paths cannot drift apart.
 
 ## Observability
 
-Traced with `source="agents.chat"` — one record per loop iteration, since each
-is its own billed call — plus `agents.chat.read` for the reader,
+Traced with `source="agents.chat.plan"` for the plan step's single call, plus
+`source="agents.chat"` for the executor loop — one record per iteration, since
+each is its own billed call — plus `agents.chat.read` for the reader,
 [`agents.sql`](/api/sql-agent.md#observability) for counting, and
-`ai.synthesize_answer` for the streamed answer. A turn that ends with no tool
-call writes no separate record for the reply: it is part of the same
-`agents.chat` iteration that decided not to search, so a greeting is one record
-total rather than two. All of them share one
+`ai.synthesize_answer` for the streamed answer. Separating the plan step's
+source from the executor loop's is what makes a turn's cost split into
+planning, executing and writing rather than one undifferentiated total. A
+direct reply writes only the one `agents.chat.plan` record: no executor loop
+runs and no synthesis call follows, so a greeting is one record total. All of them share one
 `interaction_id`, which is what makes "what did this question cost" a sum over
 one key: `run_chat_agent` opens an `interaction_scope` that **inherits** the id
 the API already put in the trace context rather than minting its own, so

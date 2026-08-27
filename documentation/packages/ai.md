@@ -4,7 +4,7 @@ title: ai Package
 description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-25T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
@@ -39,7 +39,7 @@ the embedding abstraction. Depends on both `shared` and `llm-core`.
 returns a plain message list, so nothing downstream could otherwise tell which template
 produced it. Rendering is a **free function** `render(template, context) ->
 list[Message]` — it substitutes variables via `str.format_map(context)` and returns
-`[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Nine template constants
+`[Message(SYSTEM, system_prompt), Message(USER, rendered_user)]`. Ten template constants
 cover every use case:
 
 | Constant | Output format | User template variables |
@@ -47,7 +47,8 @@ cover every use case:
 | `QUERY_DECOMPOSITION` | JSON (`DecomposeResult` schema) | `{question}`, `{conversation_history}` |
 | `QUERY_EXPANSION` | JSON (`QueryExpansionResult` schema) | `{question}`, `{max_variants}` |
 | `ANSWER_SYNTHESIS` | Plain Swedish text with case citations | `{question}`, `{chunks}`, `{readings}`, `{tabular}`, `{annotations}`, `{gaps}`, `{conversation_history}` |
-| `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — **the one English prompt here** | `{question}`, `{today}`, `{conversation_history}`, `{tools}` |
+| `CHAT_PLAN` | Tool calls (no JSON schema) — English, direct replies in Swedish | `{question}`, `{today}`, `{conversation_history}`, `{tools}` |
+| `CHAT_ORCHESTRATION` | Tool calls (no JSON schema) — English | `{plan}`, `{question}`, `{today}`, `{conversation_history}`, `{tools}` |
 | `DECISION_READING` | JSON (`ReadingSelection` schema) | `{question}`, `{case_number}`, `{numbered_chunks}`, `{max_selected}`, `{max_summary_words}` |
 | `METADATA_EXTRACTION` | JSON (`MetadataResult` schema) | `{raw_text}` |
 | `ENTITY_EXTRACTION` | JSON (`EntityResult` schema) | `{raw_text}`, `{case_number}` |
@@ -66,18 +67,19 @@ substituted.
 (`llm_core.tool_loop`) rather than a single `generate`/`generate_structured` call, so there
 is no service-layer wrapper for it to go through.
 
-`CHAT_ORCHESTRATION` and `TEXT_TO_SQL` are the two prompts with a `{tools}` block, and
-neither spells its tools out by hand: `render_tool_index(tools)` builds it from the same
-[`ToolDefinition`](/packages/llm-core.md)s each agent hands `tool_loop`, one entry per
-tool — a signature line (`name(arg*, arg)`, `*` marking a required argument, argument
-order following the schema's `properties`) followed by the definition's `summary`. The
-block lives in the **user** template rather than the system prompt for both of them,
-because `render()` formats only the user template, and `CHAT_ORCHESTRATION`'s and
-`TEXT_TO_SQL`'s system prompts both embed literal JSON braces `str.format_map` would
-raise on. `render_tool_index` returns the entries alone; the heading above them and the
-legend explaining `*` belong to each template, in that template's language — which is
-what lets the Swedish `TEXT_TO_SQL` and the English `CHAT_ORCHESTRATION` share one
-renderer.
+`CHAT_PLAN`, `CHAT_ORCHESTRATION` and `TEXT_TO_SQL` are the three prompts with a
+`{tools}` block, and none spells its tools out by hand: `render_tool_index(tools)`
+builds it from the same [`ToolDefinition`](/packages/llm-core.md)s each agent hands
+`tool_loop`, one entry per tool — a signature line (`name(arg*, arg)`, `*` marking a
+required argument, argument order following the schema's `properties`) followed by
+the definition's `summary`. `CHAT_PLAN` is shown the executor's tools so its plan is
+realistic, though `begin_research` is the only one it can call. The block lives in
+the **user** template rather than the system prompt for all three, because `render()`
+formats only the user template, and each of their system prompts embeds literal JSON
+braces `str.format_map` would raise on. `render_tool_index` returns the entries
+alone; the heading above them and the legend explaining `*` belong to each template,
+in that template's language — which is what lets the Swedish `TEXT_TO_SQL` and the
+English `CHAT_PLAN`/`CHAT_ORCHESTRATION` share one renderer.
 
 All JSON-outputting templates embed the exact field schema in their system prompt, and
 all prompts instruct the model to work in Swedish.
@@ -111,9 +113,12 @@ with the handle of the passage it rests on, directly after the sentence (`[c3]`,
 adjacent markers `[c3][c7]` for a claim resting on several) — the same handle
 `SourceReference` carries, which is what lets a client resolve the mark.
 
-`CHAT_ORCHESTRATION` is written in English, alone among the prompts here. That model
-plans and calls tools and never writes a word the user reads: it reads Swedish input and
-Swedish tool results, and the Swedish prose is `ANSWER_SYNTHESIS`'s job.
+`CHAT_PLAN` and `CHAT_ORCHESTRATION` are written in English, alone among the prompts
+here — both reason in English over Swedish input and Swedish tool results.
+`CHAT_ORCHESTRATION`'s model calls tools carrying out a plan and never writes a word
+the user reads; `CHAT_PLAN`'s model either calls `begin_research` with an English plan
+for the executor, or replies to the user directly, in Swedish, when the message needs
+no research. The Swedish prose an answered question gets is `ANSWER_SYNTHESIS`'s job.
 
 `expand_query` is stateless by design — no conversation history, no filters, no
 rewritten "best" query. It answers only "what else could this question have been
@@ -141,7 +146,7 @@ removed or renamed.
 | Embedding | `EmbedRequest` | `EmbedResult` |
 
 `ChunkContext` carries only what the synthesis prompt actually renders: `chunk_text`,
-`case_number`, `handle` (the orchestrator's passage handle, e.g. `c3`, which the writer
+`case_number`, `handle` (the executor's passage handle, e.g. `c3`, which the writer
 marks a claim with), `section` and `appendix_label`. Nothing else: the writer quotes a
 passage and attributes it, and grades nothing.
 
@@ -185,18 +190,20 @@ and sometimes a different provider — per task, so the assignment lives in
 `llm_config.yaml` under `roles:`. See
 [the decision record](/decisions/llm-model-selection.md) for why.
 
-`LLMRole` (a `StrEnum`: `STRUCTURED`, `SUMMARIZE`, `CHAT`, `SQL`) is the closed set code
-asks for. **The role set has two halves that must agree** — adding a task needs both a new
-`LLMRole` member here and a matching entry under `roles:` in the YAML; the enum is what
-turns a misspelled role into a type error instead of a runtime `UnknownLLMRoleError`.
+`LLMRole` (a `StrEnum`: `STRUCTURED`, `SUMMARIZE`, `CHAT`, `ORCHESTRATE`, `SQL`, `READ`) is
+the closed set code asks for. **The role set has two halves that must agree** — adding a
+task needs both a new `LLMRole` member here and a matching entry under `roles:` in the
+YAML; the enum is what turns a misspelled role into a type error instead of a runtime
+`UnknownLLMRoleError`.
 
 | Role | Used by | Default (Berget model) |
 |---|---|---|
 | `LLMRole.STRUCTURED` | `expand_query`, `extract_metadata`, `extract_entities` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` |
-| `LLMRole.SUMMARIZE` | `summarize_document` | `mistralai/Mistral-Medium-3.5-128B` |
-| `LLMRole.CHAT` | `synthesize_answer`, and the [conversational agent's](/retrieval/chat-agent.md) tool loop | `zai-org/GLM-5.2` |
-| `LLMRole.READ` | The conversational agent's document-reading sub-agent | `mistralai/Mistral-Medium-3.5-128B` |
-| `LLMRole.SQL` | [`agents.run_sql_agent`](/packages/agents.md) | `mistralai/Mistral-Medium-3.5-128B` |
+| `LLMRole.SUMMARIZE` | `summarize_document` | `google/gemma-4-31B-it` |
+| `LLMRole.CHAT` | `synthesize_answer`, and the [conversational agent's](/retrieval/chat-agent.md) plan step | `zai-org/GLM-5.2` |
+| `LLMRole.ORCHESTRATE` | The conversational agent's executor tool loop | `openai/gpt-oss-120b` |
+| `LLMRole.READ` | The conversational agent's document-reading sub-agent | `openai/gpt-oss-120b` |
+| `LLMRole.SQL` | [`agents.run_sql_agent`](/packages/agents.md) | `openai/gpt-oss-120b` |
 
 `create_llm_provider(role: LLMRole, document=None)` is the single function every
 composition root calls — there is no per-role delegate. Requesting a role the YAML does

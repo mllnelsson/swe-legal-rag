@@ -1,20 +1,24 @@
 """The conversational agent: a question in, a stream of events out.
 
-Two phases, and the split is deliberate. The tool loop gathers evidence and does
-not stream — `LLMProvider.generate_stream` takes no tools, so there is no
-streaming tool-call path to use. Then one streaming call turns the evidence the
-agent selected into Swedish prose.
+Three phases, and the split is deliberate — it puts the strong model where the
+reasoning is hard and a smaller one where the work is mechanical.
+
+1. Plan. One call on the strong `llm_provider` reads the question and either
+   writes a direct reply — a greeting, a thank-you, "förklara det enklare", a
+   follow-up the history already answers — or hands a plan to the executor by
+   calling `begin_research`. The hard part of a turn is reading what is being
+   asked and choosing an approach, and it is done here, once.
+2. Execute. The tool loop gathers evidence with tools on `executor_provider`, a
+   smaller model, carrying the plan. It does not stream — `generate_stream` takes
+   no tools — and ends by calling `answer`.
+3. Synthesize. One streaming call on the strong model turns the evidence the
+   executor selected into Swedish prose.
 
 Carrying the evidence in a single synthesis prompt rather than in the loop is
 what keeps it affordable: a passage placed in the loop is re-sent on every later
-iteration, while one placed here is sent once.
-
-The loop has two ways to end, because a conversation has two kinds of message in
-it. `answer` ends a turn on evidence and hands it to synthesis. A turn that
-needed no evidence — a greeting, a thank-you, "förklara det enklare" — ends the
-way a tool loop ordinarily ends: the model calls no tool and writes the reply
-itself, and that message is what the caller gets. It arrives whole rather than
-token by token, which for two sentences costs nothing and saves a round-trip.
+iteration, while one placed here is sent once. The direct reply of phase 1
+arrives whole rather than token by token, which for two sentences costs nothing
+and saves the loop entirely.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ from ai.dtos import (
     SynthesizeRequest,
     TabularEvidence,
 )
-from ai.prompts import CHAT_ORCHESTRATION, render, render_tool_index
+from ai.prompts import CHAT_ORCHESTRATION, CHAT_PLAN, render, render_tool_index
 from llm_core import (
     LLMProvider,
     MaxIterationsError,
@@ -42,8 +46,9 @@ from llm_core import (
     ToolCallStarted,
     ToolDefinition,
     ToolExecutionError,
-    ToolLoopFinished,
+    run_tool_loop,
     tool_loop,
+    trace_context,
 )
 
 from agents.chat._dtos import (
@@ -79,6 +84,60 @@ _NO_EVIDENCE_MESSAGE = (
     "Jag hittade inget i besluten som besvarar frågan. Pröva att formulera om "
     "den eller att fråga om ett annat ämne."
 )
+
+# The plan step runs on the strong model ahead of the loop and is traced apart
+# from it, so a turn's cost splits into planning, executing and writing.
+_PLAN_SOURCE = "agents.chat.plan"
+_BEGIN_RESEARCH = "begin_research"
+
+# The plan step's only tool. Calling it is the signal to research; the plan rides
+# on the call's arguments and is read straight off the terminal message, so
+# `_begin_research` does no work and the executor loop takes over from there.
+_BEGIN_RESEARCH_TOOL = ToolDefinition(
+    name=_BEGIN_RESEARCH,
+    summary="hand a research plan to the executor",
+    description=(
+        "Call once to begin research. Pass a short plan in English stating the "
+        "intent, the approach and any cautions. The executor holds the tools and "
+        "carries the plan out."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "plan": {
+                "type": "string",
+                "description": (
+                    "A short research plan in English: the intent, the approach "
+                    "and any cautions."
+                ),
+            }
+        },
+        "required": ["plan"],
+    },
+)
+
+
+async def _begin_research(**_arguments: Any) -> dict[str, Any]:
+    """The plan step's tool executor, deliberately inert.
+
+    The plan is read off the call's arguments, not from what this returns, and
+    the one-iteration loop it runs in ends on this terminal tool.
+    """
+    return {"ok": True}
+
+
+def _plan_from(message: Message) -> str | None:
+    """The plan the plan step produced, or None when it replied directly.
+
+    A `begin_research` call carries the plan on its arguments; a message that
+    called no tool is a direct reply — a greeting, a follow-up the history
+    already answers — and there is no plan to carry.
+    """
+    for call in message.tool_calls:
+        if call.name == _BEGIN_RESEARCH:
+            plan = call.arguments.get("plan")
+            return plan if isinstance(plan, str) else ""
+    return None
 
 
 def _detail_for_call(tool: ChatTool, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -229,8 +288,27 @@ def _has_evidence(state: ChatState) -> bool:
     )
 
 
-def _messages_for(
+def _plan_messages_for(
     request: ChatAgentRequest, tools: list[ToolDefinition]
+) -> list[Message]:
+    """The plan step's prompt.
+
+    Shown the executor's tools so the plan it writes is realistic, though the
+    only tool it holds is `begin_research`.
+    """
+    return render(
+        CHAT_PLAN,
+        {
+            "question": request.question,
+            "today": datetime.now(UTC).date().isoformat(),
+            "conversation_history": _format_history(request.history),
+            "tools": render_tool_index(tools),
+        },
+    )
+
+
+def _executor_messages_for(
+    request: ChatAgentRequest, tools: list[ToolDefinition], plan: str
 ) -> list[Message]:
     return render(
         CHAT_ORCHESTRATION,
@@ -241,6 +319,8 @@ def _messages_for(
             # Generated from the definitions the loop is about to be given, so
             # the prompt cannot name an argument the executors lack.
             "tools": render_tool_index(tools),
+            # The strategy the plan step set. The executor carries it out.
+            "plan": plan,
         },
     )
 
@@ -288,9 +368,17 @@ async def run_chat_agent(
     *,
     llm_provider: LLMProvider | None = None,
     reader_provider: LLMProvider | None = None,
+    executor_provider: LLMProvider | None = None,
     settings: ChatAgentSettings | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Answer `request.question` from the corpus, streaming progress then prose.
+
+    Three phases. A plan step on the strong `llm_provider` reads the question and
+    either replies directly — a greeting, a follow-up the history already answers
+    — or hands a plan to the executor. The executor loop then gathers evidence
+    with tools on `executor_provider`, a smaller model; it falls back to
+    `llm_provider` when unset, so a single-model run and every existing test still
+    work. A final streaming call on `llm_provider` writes the Swedish prose.
 
     Never raises for a question it cannot answer: a failure ends the stream with
     an `ErrorEvent`, so a caller has one shape to handle rather than two. An
@@ -300,11 +388,14 @@ async def run_chat_agent(
     tools, executors, state = build_chat_tools(
         toolset, settings, reader_provider=reader_provider
     )
+    # The loop runs on the smaller model when one is wired; without it the whole
+    # turn is one model, which is what tests and `scripts/run_agent.py` do.
+    loop_provider = executor_provider or llm_provider
 
     # Inherits the interaction the API opened, and mints one only when there is
     # no caller to inherit from — a `scripts/run_agent.py` case, or a test. The
-    # `prompt` key is what attributes these records to a prompt version; every
-    # other call site sets one.
+    # `prompt` key attributes these records to a prompt version; the plan step
+    # overrides it to its own below, so a turn's cost splits by phase.
     with (
         interaction_scope(
             source=_SOURCE, prompt=CHAT_ORCHESTRATION.name
@@ -313,14 +404,42 @@ async def run_chat_agent(
     ):
         logger.info("Chat agent interaction %s", interaction_id)
 
-        direct_reply: str | None = None
+        # Phase 1 — plan. One call on the strong model: it either writes a direct
+        # reply (no tool) or calls begin_research with a plan. A one-iteration loop
+        # with begin_research as its terminal tool is the whole mechanism, and it
+        # is traced on its own source so planning cost is separable from executing.
+        try:
+            with trace_context(source=_PLAN_SOURCE, prompt=CHAT_PLAN.name):
+                plan_result = await run_tool_loop(
+                    _plan_messages_for(request, tools),
+                    [_BEGIN_RESEARCH_TOOL],
+                    {_BEGIN_RESEARCH: _begin_research},
+                    provider=llm_provider,
+                    max_iterations=1,
+                    terminal_tools={_BEGIN_RESEARCH},
+                )
+        except Exception:
+            logger.exception("Chat agent %s planning failed", interaction_id)
+            yield ErrorEvent(message=_FAILURE_MESSAGE)
+            return
 
+        plan = _plan_from(plan_result.message)
+        if plan is None:
+            # A direct reply: the plan step answered from the conversation itself.
+            # An empty sources list, and it is the truthful one — this answer rests
+            # on the history, not on any decision.
+            yield SourcesEvent(sources=[])
+            yield TokenEvent(text=plan_result.message.content)
+            yield DoneEvent()
+            return
+
+        # Phase 2 — execute. The tool loop, carrying the plan, on the smaller model.
         try:
             async for event in tool_loop(
-                _messages_for(request, tools),
+                _executor_messages_for(request, tools, plan),
                 tools,
                 executors,
-                provider=llm_provider,
+                provider=loop_provider,
                 max_iterations=settings.chat_agent_max_iterations,
                 terminal_tools={ChatTool.ANSWER},
             ):
@@ -339,14 +458,10 @@ async def run_chat_agent(
                             # the query can do so while the label is on screen.
                             yield _sql_event(result, state)
                         yield _result_event(tool, call, result)
-                    case ToolLoopFinished(result=loop_result):
-                        # An ending with no tool call is the model answering in
-                        # prose — a greeting, a thank-you, a question about what
-                        # was just said. Kept rather than discarded: this used
-                        # to fall through to the evidence gate and reach the
-                        # user as "Jag hittade inget i besluten".
-                        if not loop_result.message.tool_calls:
-                            direct_reply = loop_result.message.content
+                    # A loop ending with no tool call is the executor writing prose
+                    # despite a plan — rare, and not a direct reply (the plan step
+                    # owns those). It gathered nothing, so it falls to the evidence
+                    # gate below like any empty-handed loop.
         except MaxIterationsError:
             logger.warning(
                 "Chat agent %s exhausted its iteration budget", interaction_id
@@ -366,16 +481,6 @@ async def run_chat_agent(
         except Exception:
             logger.exception("Chat agent %s failed", interaction_id)
             yield ErrorEvent(message=_FAILURE_MESSAGE)
-            return
-
-        if direct_reply is not None:
-            # Checked before the evidence gate, which would otherwise answer
-            # "tack" with "I found nothing in the decisions".
-            # An empty sources list, and it is the truthful one: this answer
-            # rests on the conversation, not on any decision.
-            yield SourcesEvent(sources=[])
-            yield TokenEvent(text=direct_reply)
-            yield DoneEvent()
             return
 
         if not _has_evidence(state):

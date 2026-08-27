@@ -5,14 +5,16 @@ export type SqlEvidenceProps = {
   events: SqlEvent[];
 };
 
-/** The query behind a count, shown before the answer that rests on it.
+/** The query behind a count, reachable from the answer that rests on it.
  *
- *  Not a debugging affordance and not collapsible. A number reads as
- *  authoritative and carries no excerpt to check it against, so the SQL agent's
- *  contract puts the obligation on whoever renders the answer: show the query
- *  that produced it. Hiding this behind a disclosure would be the same as not
- *  showing it — the reader who should see it is exactly the one who would not
- *  open it. */
+ *  A number reads as authoritative and carries no excerpt to check it against,
+ *  so the SQL agent's contract puts an obligation on whoever renders the answer:
+ *  the query that produced the number must be *reachable*. It is not, however,
+ *  the thing most readers came for — a table of SQL rows above the prose reads as
+ *  machinery to anyone who does not write SQL, and machinery is what a reader
+ *  skips past to find the answer. So the obligation is met by a disclosure, open
+ *  in one click: discreet by default, and there in full for the reader who wants
+ *  to verify. */
 export function SqlEvidence({ events }: SqlEvidenceProps) {
   if (events.length === 0) return null;
 
@@ -48,93 +50,99 @@ function SqlBlock({ event }: { event: SqlEvent }) {
     );
   }
 
+  // The whole block is a disclosure: the summary is what shows by default, and
+  // the rows and query are a click away for the reader who wants to check the
+  // number. The one-line "Ingen databasfråga kunde byggas" case above stays
+  // visible — it is a claim about the answer, not machinery to drill into.
   return (
-    <div
+    <details
       style={{
         background: "var(--surface-sunken)",
         border: "1px solid var(--border-hairline)",
         borderRadius: "var(--radius-md)",
         padding: "var(--space-5)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--space-4)",
       }}
     >
-      <h3
+      <summary
         style={{
-          margin: 0,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--space-2)",
           fontFamily: "var(--font-sans)",
-          fontSize: "var(--text-overline-size)",
-          letterSpacing: "var(--text-overline-ls)",
-          fontWeight: "var(--text-overline-weight)",
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
+          fontSize: "var(--text-small-size)",
+          color: "var(--text-muted)",
         }}
       >
-        Siffrorna i svaret
-      </h3>
+        <Icon name="search" size={14} />
+        Så räknades siffrorna fram
+      </summary>
 
-      {/* The rows first, the query under them. Both are on screen and neither is
-          collapsed — the obligation is that the reader can check the number, and
-          it is the rows they can read. A block that opens on SQL reads as
-          machinery to anyone who does not write SQL, and machinery is what a
-          reader skips. */}
-      {event.columns.length > 0 && <ResultTable event={event} />}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--space-4)",
+          marginTop: "var(--space-5)",
+        }}
+      >
+        {event.columns.length > 0 && <ResultTable event={event} />}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-        <span style={noteStyle}>Så räknades de fram:</span>
-        <pre
-          style={{
-            margin: 0,
-            overflowX: "auto",
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--text-caption-size)",
-            lineHeight: "var(--text-cite-lh)",
-            color: "var(--text-body)",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {event.sql}
-        </pre>
-      </div>
-
-      {event.truncated && (
-        <p style={{ margin: 0, ...noteStyle }}>
-          Resultatet är avkortat — fler rader finns än de som visas.
-        </p>
-      )}
-
-      {event.assumptions.length > 0 && (
-        <p style={{ margin: 0, ...noteStyle }}>
-          Tolkningsval: {event.assumptions.join("; ")}
-        </p>
-      )}
-
-      {event.attempts.length > 1 && (
-        <details>
-          <summary style={{ cursor: "pointer", ...noteStyle }}>
-            {event.attempts.length} försök innan frågan gick igenom
-          </summary>
-          <ol
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+          <span style={noteStyle}>Databasfrågan:</span>
+          <pre
             style={{
-              margin: "var(--space-3) 0 0",
-              paddingLeft: "var(--space-6)",
-              ...noteStyle,
+              margin: 0,
+              overflowX: "auto",
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-caption-size)",
+              lineHeight: "var(--text-cite-lh)",
+              color: "var(--text-body)",
+              whiteSpace: "pre-wrap",
             }}
           >
-            {event.attempts.map((attempt, index) => (
-              // The trail is ordered and immutable, and two attempts may hold
-              // the same SQL — position is the only identity there is.
-              // oxlint-disable-next-line react/no-array-index-key
-              <li key={index} style={{ fontFamily: "var(--font-mono)" }}>
-                {attempt.sql}
-                {attempt.ok ? "" : ` — ${attempt.error ?? "misslyckades"}`}
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
-    </div>
+            {event.sql}
+          </pre>
+        </div>
+
+        {event.truncated && (
+          <p style={{ margin: 0, ...noteStyle }}>
+            Resultatet är avkortat — fler rader finns än de som visas.
+          </p>
+        )}
+
+        {event.assumptions.length > 0 && (
+          <p style={{ margin: 0, ...noteStyle }}>
+            Tolkningsval: {event.assumptions.join("; ")}
+          </p>
+        )}
+
+        {event.attempts.length > 1 && (
+          <details>
+            <summary style={{ cursor: "pointer", ...noteStyle }}>
+              {event.attempts.length} försök innan frågan gick igenom
+            </summary>
+            <ol
+              style={{
+                margin: "var(--space-3) 0 0",
+                paddingLeft: "var(--space-6)",
+                ...noteStyle,
+              }}
+            >
+              {event.attempts.map((attempt, index) => (
+                // The trail is ordered and immutable, and two attempts may hold
+                // the same SQL — position is the only identity there is.
+                // oxlint-disable-next-line react/no-array-index-key
+                <li key={index} style={{ fontFamily: "var(--font-mono)" }}>
+                  {attempt.sql}
+                  {attempt.ok ? "" : ` — ${attempt.error ?? "misslyckades"}`}
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
+      </div>
+    </details>
   );
 }
 

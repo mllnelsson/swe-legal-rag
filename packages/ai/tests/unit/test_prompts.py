@@ -7,6 +7,7 @@ import pytest
 from ai.prompts import (
     ANSWER_SYNTHESIS,
     CHAT_ORCHESTRATION,
+    CHAT_PLAN,
     DECISION_READING,
     DOCUMENT_SUMMARIZATION,
     ENTITY_EXTRACTION,
@@ -45,6 +46,10 @@ _TABULAR = (
 _ANNOTATIONS = "c1: bär avgörandet — obs: bilaga, underinstansens ord"
 _GAPS = "- Underlaget säger inget om tidsfristen."
 _TODAY = "2026-08-13"
+_PLAN = (
+    "Intent: whether a kyrkoherde may appeal a staffing decision. "
+    "Approach: search_decisions for the appeal rules. Cautions: appendix vs board."
+)
 
 # The evidence bundle every ANSWER_SYNTHESIS render needs. Spread into a context
 # so a new placeholder fails one dict here rather than every call site.
@@ -96,6 +101,16 @@ _ALL_TEMPLATES = [
     ),
     (
         CHAT_ORCHESTRATION,
+        {
+            "question": _QUESTION,
+            "today": _TODAY,
+            "conversation_history": _CONVERSATION,
+            "tools": _TOOL_INDEX,
+            "plan": _PLAN,
+        },
+    ),
+    (
+        CHAT_PLAN,
         {
             "question": _QUESTION,
             "today": _TODAY,
@@ -232,6 +247,7 @@ class TestChatOrchestration:
                 "today": _TODAY,
                 "conversation_history": _CONVERSATION,
                 "tools": _TOOL_INDEX,
+                "plan": _PLAN,
             },
         )
         assert not _has_placeholder(messages[1].content)
@@ -250,6 +266,7 @@ class TestChatOrchestration:
                 "today": _TODAY,
                 "conversation_history": _CONVERSATION,
                 "tools": _TOOL_INDEX,
+                "plan": _PLAN,
             },
         )
 
@@ -257,6 +274,20 @@ class TestChatOrchestration:
         # No signature survives above: a second, unexecutable list is exactly
         # what drifted last time.
         assert "search_decisions(" not in messages[0].content
+
+    def test_the_plan_reaches_the_user_message(self):
+        """The strategy the plan step set is what the executor carries out."""
+        messages = render(
+            CHAT_ORCHESTRATION,
+            {
+                "question": _QUESTION,
+                "today": _TODAY,
+                "conversation_history": _CONVERSATION,
+                "tools": _TOOL_INDEX,
+                "plan": _PLAN,
+            },
+        )
+        assert _PLAN in messages[1].content
 
     def test_points_at_the_generated_list(self):
         """Named in the system prompt so `How to work` has something to refer to."""
@@ -269,14 +300,64 @@ class TestChatOrchestration:
         assert "list_vocabulary first" in system
         assert "Never count search hits yourself" in system
 
+    def test_carries_out_a_plan_rather_than_setting_one(self):
+        """The split from CHAT_PLAN: this prompt executes, it does not triage.
+
+        The conversational branch and the "write a reply yourself" section moved
+        to CHAT_PLAN, so nothing here invites the executor to answer in prose.
+        """
+        system = CHAT_ORCHESTRATION.system_prompt
+        assert "You are given a plan" in system
+        assert "greeting" not in system
+
     def test_written_in_english(self):
         """Deliberate, and the one prompt here that is.
 
-        This model plans and calls tools; it never writes a word the user reads.
+        This model carries out a plan and calls tools; it never writes a word the
+        user reads.
         """
         system = CHAT_ORCHESTRATION.system_prompt
         assert "You research questions" in system
         assert "Du är" not in system
+
+
+class TestChatPlan:
+    """The plan step: it routes a turn or answers it directly, and calls only
+    begin_research — the split that lets the executor run on a smaller model."""
+
+    def test_no_unrendered_placeholders_in_user_message(self):
+        messages = render(
+            CHAT_PLAN,
+            {
+                "question": _QUESTION,
+                "today": _TODAY,
+                "conversation_history": _CONVERSATION,
+                "tools": _TOOL_INDEX,
+            },
+        )
+        assert not _has_placeholder(messages[1].content)
+
+    def test_states_its_two_outcomes(self):
+        system = CHAT_PLAN.system_prompt
+        assert "begin_research" in system
+        # The direct-reply branch that used to live in CHAT_ORCHESTRATION.
+        assert "reply to the user directly, in Swedish" in system
+
+    def test_written_in_english(self):
+        assert "You are the planning step" in CHAT_PLAN.system_prompt
+        assert "Du är" not in CHAT_PLAN.system_prompt
+
+    def test_shows_the_executors_tools_for_a_realistic_plan(self):
+        messages = render(
+            CHAT_PLAN,
+            {
+                "question": _QUESTION,
+                "today": _TODAY,
+                "conversation_history": _CONVERSATION,
+                "tools": _TOOL_INDEX,
+            },
+        )
+        assert _TOOL_INDEX in messages[1].content
 
 
 class TestRenderToolIndex:

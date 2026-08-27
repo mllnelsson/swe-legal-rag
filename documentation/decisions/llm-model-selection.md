@@ -3,13 +3,14 @@ type: Decision
 title: Per-task LLM model and provider selection
 description: Why each task gets its own model and provider, declared in llm_config.yaml rather than in environment variables or code.
 tags: [llm, model, provider, berget, config, cost]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # Per-task LLM model and provider selection
 
-**Status:** Accepted — four roles (`structured`, `summarize`, `chat`, `sql`) on Berget.ai
-by default, declared in [`llm_config.yaml`](/reference/llm-config.md)
+**Status:** Accepted — six roles (`structured`, `summarize`, `chat`, `orchestrate`,
+`read`, `sql`) on Berget.ai by default, declared in
+[`llm_config.yaml`](/reference/llm-config.md)
 
 Embedding choices have their own records ([model](/decisions/embedding-model.md),
 [hosting](/decisions/embedding-hosting.md),
@@ -26,10 +27,12 @@ they run at wildly different volumes.
 |---|---|---|---|
 | `structured` | [query decomposition](/retrieval/chat-agent.md), [metadata](/pipeline/metadata.md) and [entity extraction](/pipeline/extract.md), rerank | Once per document at ingestion, plus once per query | Cheap, reliable JSON-schema output |
 | `summarize` | [document summarisation](/pipeline/chunk.md) for contextual chunking | Once per ingested document, sees whole documents | Context length over price |
-| `chat` | [answer synthesis](/api/chat-endpoint.md) | A handful per day, streaming, user-facing | The strongest model here; it is not run at ingestion scale |
+| `chat` | [the conversational agent's](/retrieval/chat-agent.md) plan step and answer synthesis | A handful per day, streaming, user-facing | The strongest model here; it is not run at ingestion scale |
+| `orchestrate` | [the conversational agent's](/retrieval/chat-agent.md) executor tool loop | Several calls per turn, on demand | Reliable multi-turn tool-calling, no prose — the mechanical half of a chat turn, once `chat` has set the strategy |
+| `read` | the conversational agent's document-reading sub-agent | Low volume, on demand | Context length — sees one whole decision per call |
 | `sql` | [the SQL agent](/packages/agents.md) | Low volume, on demand | Reliable multi-turn tool-calling; not the hard part of text-to-SQL, so no need for the strongest model — see [the grounding decision](/decisions/sql-agent.md) |
 
-Running one model across all four either overpays for extraction or underpowers
+Running one model across all six either overpays for extraction or underpowers
 synthesis. With a [<$5/month LLM budget](/reference/cost-estimate.md) the difference
 matters.
 
@@ -47,7 +50,7 @@ defaults:
   provider: berget
 roles:
   structured: {model: mistralai/Mistral-Small-3.2-24B-Instruct-2506}
-  summarize:  {model: mistralai/Mistral-Medium-3.5-128B}
+  summarize:  {model: google/gemma-4-31B-it}
   chat:       {model: zai-org/GLM-5.2}
 ```
 

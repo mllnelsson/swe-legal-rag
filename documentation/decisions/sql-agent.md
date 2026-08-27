@@ -3,7 +3,7 @@ type: Decision
 title: Forced grounding for the text-to-SQL agent
 description: Why the SQL agent's predicates over free-text columns must be grounded against real column values before a query runs, why that precondition is enforced in code rather than left to the prompt, the rejected structured-query-DTO alternative, and the safety posture — including why no dedicated read-only database role was added.
 tags: [sql, agent, decision, safety, grounding]
-timestamp: 2026-08-09T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # Forced grounding for the text-to-SQL agent
@@ -53,8 +53,8 @@ to satisfy the precondition for the query whose purpose is to satisfy it. See [t
 fix](#the-guard-fix-a-join-no-longer-drags-group-by-into-the-predicate) below for why segments,
 rather than "everything after the first `WHERE`", is the right scan.
 
-This is what makes a mid-tier model (Mistral Medium, chosen because text-to-SQL syntax
-itself is not the hard part of this task) defensible for an ungrounded, unsupervised
+This is what makes a mid-tier model (`openai/gpt-oss-120b`, chosen because text-to-SQL
+syntax itself is not the hard part of this task) defensible for an ungrounded, unsupervised
 Swedish question: the model does not have to reliably *remember* to check a column's
 values, because it is structurally prevented from filtering on one it has not checked.
 

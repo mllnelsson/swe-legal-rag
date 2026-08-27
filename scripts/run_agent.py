@@ -194,6 +194,7 @@ async def _prepare_chat(session: AsyncSession) -> TaskRunner:
         sql_llm_provider=create_llm_provider(LLMRole.SQL),
     )
     chat_provider = create_llm_provider(LLMRole.CHAT)
+    orchestrate_provider = create_llm_provider(LLMRole.ORCHESTRATE)
     read_provider = create_llm_provider(LLMRole.READ)
 
     async def run(question: str) -> dict[str, Any]:
@@ -207,6 +208,7 @@ async def _prepare_chat(session: AsyncSession) -> TaskRunner:
             toolset,
             llm_provider=chat_provider,
             reader_provider=read_provider,
+            executor_provider=orchestrate_provider,
         ):
             match event:
                 case ToolCallEvent():

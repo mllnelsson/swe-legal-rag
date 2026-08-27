@@ -36,6 +36,7 @@ class LLMRole(StrEnum):
     STRUCTURED = auto()
     SUMMARIZE = auto()
     CHAT = auto()
+    ORCHESTRATE = auto()
     SQL = auto()
     READ = auto()
 

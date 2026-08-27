@@ -2,6 +2,7 @@ from ai.prompts._renderer import PromptTemplate, render, render_tool_index
 from ai.prompts._templates import (
     ANSWER_SYNTHESIS,
     CHAT_ORCHESTRATION,
+    CHAT_PLAN,
     DECISION_READING,
     DOCUMENT_SUMMARIZATION,
     ENTITY_EXTRACTION,
@@ -19,6 +20,7 @@ __all__ = [
     "QUERY_EXPANSION",
     "ANSWER_SYNTHESIS",
     "CHAT_ORCHESTRATION",
+    "CHAT_PLAN",
     "DECISION_READING",
     "METADATA_EXTRACTION",
     "ENTITY_EXTRACTION",

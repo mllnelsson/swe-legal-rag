@@ -44,7 +44,7 @@ roles:
   # One call per ingested document, no structured output, sees whole documents —
   # so it wants context length more than it wants to be cheap.
   summarize:
-    model: mistralai/Mistral-Medium-3.5-128B
+    model: google/gemma-4-31B-it
     stream_usage: false
     # The summary is prepended to every chunk before embedding, so a long one
     # displaces chunk text inside the embedding model's window. This is the coarse
@@ -53,10 +53,20 @@ roles:
     # truncation, because a provider-side cut lands mid-word.
     max_tokens: 256
 
-  # Low-volume, streaming, user-facing answer synthesis. Not run at ingestion
-  # scale, so it can afford to be the strongest model here.
+  # The strong end of the conversational agent: it plans the turn (reading intent
+  # and setting a strategy, or replying directly to a chatty message) and writes
+  # the streamed Swedish answer. Both are reasoning-heavy and low-volume, so this
+  # can afford to be the strongest model here; the mechanical tool loop between
+  # them runs on `orchestrate` instead.
   chat:
     model: zai-org/GLM-5.2
+
+  # The conversational agent's executor tool loop, carrying out a plan `chat`
+  # already set. Reliable tool-calling across several turns rather than reasoning
+  # about intent, and it writes no prose — so, like `sql` and `read`, it does not
+  # need the chat model.
+  orchestrate:
+    model: openai/gpt-oss-120b
 
   # Reading one whole decision on the conversational agent's behalf. Sees a full
   # document — median ~7k characters, p90 ~21k, worst case ~165k — so like
@@ -64,7 +74,7 @@ roles:
   # hands it a document and a question and gets a focused extract back, which is
   # what keeps whole decisions out of the orchestrator's own context.
   read:
-    model: mistralai/Mistral-Medium-3.5-128B
+    model: openai/gpt-oss-120b
 
   # Text-to-SQL over the corpus. Low volume, needs reliable tool-calling across
   # several turns, and writes no prose — so it does not need the chat model. The
@@ -73,8 +83,7 @@ roles:
   # code rather than left to the model (see /decisions/sql-agent.md), which is
   # what makes a mid-tier model defensible here.
   sql:
-    model: mistralai/Mistral-Medium-3.5-128B
-
+    model: openai/gpt-oss-120b
 embedding:
   # A name from `providers` above, or the literal "local" to run
   # sentence-transformers in-process (no API key, no network).

@@ -4,7 +4,7 @@ title: api Package
 description: The FastAPI application and the deterministic search/browse/traversal REST API — search/document/concept/keyword services, the session service, the chat toolset the conversational agent is driven through, and their routes.
 resource: packages/api
 tags: [package, api, fastapi, retrieval, sse, search, rest]
-timestamp: 2026-08-25T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # api Package (`packages/api/`)
@@ -155,9 +155,10 @@ files, unrelated to `app.state.storage` — so the dimension probe below is reco
 like any other billed embedding call. It then sets `app.state.storage` and
 `app.state.embedding_provider` at startup (and runs `ai.verify_embedding_dimension` — see
 [embedding dimension](/decisions/embedding-dimension.md)), then constructs one provider
-per [role](/reference/llm-config.md): `structured`, `chat`, `read` and `sql`. The chat
-agent uses two of them — `chat` drives its loop and writes the answer, `read` is the
-sub-agent it hands a whole decision to. Routes: the search, documents, concepts,
+per [role](/reference/llm-config.md): `structured`, `chat`, `orchestrate`, `read` and
+`sql`. The chat agent uses four of them — `chat` plans the turn and writes the answer,
+`orchestrate` runs the executor tool loop between them, `read` is the sub-agent it
+hands a whole decision to, and `sql` answers its counting questions. Routes: the search, documents, concepts,
 keywords and sql routers are registered ahead of the chat router, plus `GET /healthz`.
 
 Each lifespan stage logs at DEBUG as it completes, and the whole sequence logs one INFO
