@@ -233,3 +233,6 @@ logs/
 
 # ATM (disabled for this repo)
 .atm_project_id
+
+# Agent scratch memory — regenerated per run, not a deliverable
+.claude/agent-memory/

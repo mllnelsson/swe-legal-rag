@@ -1,1 +1,0 @@
-- [Repo facts: OKF bundle mapping](repo_facts_okf.md) — fan-out sets (one code change, many docs), where each kind of thing gets documented, bundle anchor/log conventions, standing scope rules, recurring drift to grep for.
