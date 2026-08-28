@@ -7,7 +7,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -277,12 +277,16 @@ describe("rule 10 — category and outcome are free text, rendered exactly as re
     );
     renderWithApi(<FacetRail state={EMPTY_SEARCH} onChange={vi.fn()} />);
 
+    // Kategori is now a type-to-filter combobox: the options live in a listbox
+    // that opens on focus. Opening it is how a reader sees them, and the rule is
+    // that both near-duplicates survive to be seen — neither is merged away.
     const kategori = await screen.findByLabelText("Kategori");
+    fireEvent.focus(kategori);
     expect(
-      within(kategori).getByRole("option", { name: "Utlämnande av handling (6)" }),
+      screen.getByRole("option", { name: "Utlämnande av handling (6)" }),
     ).toBeInTheDocument();
     expect(
-      within(kategori).getByRole("option", { name: "Utlämnande av handlingar (2)" }),
+      screen.getByRole("option", { name: "Utlämnande av handlingar (2)" }),
     ).toBeInTheDocument();
   });
 

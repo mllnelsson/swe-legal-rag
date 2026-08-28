@@ -59,7 +59,7 @@ export function AppShell() {
         >
           <ShellLink to="/agent">Agent</ShellLink>
           <ShellLink to="/sokord">Sökord</ShellLink>
-          <ShellLink to="/begrepp">Begrepp</ShellLink>
+          <ShellLink to="/begrepp">Referenser</ShellLink>
         </nav>
       </header>
 

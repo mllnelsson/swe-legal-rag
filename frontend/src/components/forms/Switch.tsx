@@ -1,11 +1,21 @@
 import { useState, type CSSProperties } from "react";
 
-/* The design system draws the switch at a fixed 36×20 track with a 16px knob;
-   the spacing scale has no step for a control this small. */
-const TRACK_WIDTH = "36px"; // token-exempt: fixed switch geometry
-const TRACK_HEIGHT = "20px"; // token-exempt: fixed switch geometry
-const KNOB_SIZE = "16px"; // token-exempt: fixed switch geometry
-const KNOB_TRAVEL = "16px"; // token-exempt: knob travel is track minus knob
+export type SwitchSize = "sm" | "lg";
+
+/* The design system draws the small switch at a fixed 36×20 track with a 16px
+   knob; the spacing scale has no step for a control this small. `lg` is the
+   prominent variant used for the home page's mode toggle, where the switch has
+   to be the easy-to-find thing on the screen. Knob travel is track width minus
+   knob size minus the two 2px padding steps. */
+const TRACK: Record<SwitchSize, { width: string; height: string; knob: string; travel: string }> = {
+  sm: { width: "36px", height: "20px", knob: "16px", travel: "16px" }, // token-exempt: fixed switch geometry
+  lg: { width: "52px", height: "30px", knob: "24px", travel: "22px" }, // token-exempt: fixed switch geometry
+};
+
+const LABEL_SIZE: Record<SwitchSize, string> = {
+  sm: "var(--text-small-size)",
+  lg: "var(--text-body-size)",
+};
 
 export type SwitchProps = {
   checked: boolean;
@@ -14,6 +24,8 @@ export type SwitchProps = {
   label: string;
   /** One line under the label saying what turning it on does. */
   hint?: string | undefined;
+  /** `lg` for a control that has to stand out; `sm` (default) for everything else. */
+  size?: SwitchSize;
   disabled?: boolean;
   style?: CSSProperties;
 };
@@ -29,6 +41,7 @@ export function Switch({
   onChange,
   label,
   hint,
+  size = "sm",
   disabled = false,
   style,
 }: SwitchProps) {
@@ -65,10 +78,10 @@ export function Switch({
           opacity: disabled ? 0.42 : 1,
         }}
       >
-        <Track checked={checked} focus={focus} />
+        <Track checked={checked} focus={focus} size={size} />
         <span
           style={{
-            fontSize: "var(--text-small-size)",
+            fontSize: LABEL_SIZE[size],
             fontWeight: "var(--weight-semibold)",
             color: checked ? "var(--text-strong)" : "var(--text-muted)",
             transition: "var(--transition-control)",
@@ -98,13 +111,14 @@ export function Switch({
   );
 }
 
-function Track({ checked, focus }: { checked: boolean; focus: boolean }) {
+function Track({ checked, focus, size }: { checked: boolean; focus: boolean; size: SwitchSize }) {
+  const geometry = TRACK[size];
   return (
     <span
       aria-hidden="true"
       style={{
-        width: TRACK_WIDTH,
-        height: TRACK_HEIGHT,
+        width: geometry.width,
+        height: geometry.height,
         flex: "none",
         padding: "var(--space-1)",
         borderRadius: "var(--radius-pill)",
@@ -118,12 +132,12 @@ function Track({ checked, focus }: { checked: boolean; focus: boolean }) {
     >
       <span
         style={{
-          width: KNOB_SIZE,
-          height: KNOB_SIZE,
+          width: geometry.knob,
+          height: geometry.knob,
           borderRadius: "var(--radius-pill)",
           background: "var(--paper)",
           boxShadow: "var(--shadow-sm)",
-          transform: checked ? `translateX(${KNOB_TRAVEL})` : "translateX(0)",
+          transform: checked ? `translateX(${geometry.travel})` : "translateX(0)",
           transition: "transform var(--dur-base) var(--ease-standard)",
         }}
       />

@@ -197,6 +197,13 @@ Path components are built from the (client-suppliable) interaction id and the
 caller-set `source`, so both are whitelisted to `[A-Za-z0-9._-]` before becoming a
 path segment — a hostile id cannot escape the trace root.
 
+**This is why a local dev reloader must not watch `data/`.** A trace file lands
+under `data/llm-traces/` on every LLM/embedding call; a `uvicorn --reload` run from
+the repo root would watch that directory too and reload the server on its own
+traffic. The documented dev command scopes the reloader with `--reload-dir
+packages` — see [local dev](/playbooks/local-dev.md#typical-dev-workflow) and
+[live testing](/playbooks/live-testing.md#running-the-api-server).
+
 ### Writes are synchronous
 
 Each record is written whole: serialized, written under a `.tmp` name, then moved

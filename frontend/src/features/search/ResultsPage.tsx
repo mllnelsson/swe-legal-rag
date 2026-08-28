@@ -47,18 +47,21 @@ export function ResultsPage() {
 
   return (
     <main
-      className="layout-columns"
       style={{
-        maxWidth: "var(--content-max)",
+        maxWidth: "var(--measure-prose)",
         margin: "0 auto",
         padding: `var(--space-8) var(--gutter-page) ${BOTTOM_GUTTER}`,
         fontFamily: "var(--font-sans)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-6)",
       }}
     >
+      {/* The filters live above the results now, collapsed behind a Filter button,
+          so the page opens on what came back rather than on a wall of controls. */}
       <FacetRail state={state} onChange={apply} />
 
       <div
-        className="layout-main"
         style={{
           display: "flex",
           flexDirection: "column",
@@ -176,25 +179,21 @@ export function ResultsPage() {
           pointerEvents: "none",
         }}
       >
-        {/* Mirrors the page grid so the box sits over the results column rather
-            than straddling the filter rail. */}
+        {/* Centred on the same measure as the results column above it. */}
         <div
-          className="layout-columns"
           style={{
-            maxWidth: "var(--content-max)",
+            maxWidth: "var(--measure-prose)",
             margin: "0 auto",
             padding: "var(--space-8) var(--gutter-page) var(--space-6)",
+            pointerEvents: "auto",
           }}
         >
-          <div className="layout-rail-spacer" aria-hidden />
-          <div className="layout-main" style={{ pointerEvents: "auto" }}>
-            <AskBox
-              value={draft}
-              onChange={setDraft}
-              onSubmit={(text) => apply({ ...state, query: text, page: 1 })}
-              scope={filterCount === 0 ? undefined : `${filterCount} filter`}
-            />
-          </div>
+          <AskBox
+            value={draft}
+            onChange={setDraft}
+            onSubmit={(text) => apply({ ...state, query: text, page: 1 })}
+            scope={filterCount === 0 ? undefined : `${filterCount} filter`}
+          />
         </div>
       </div>
     </main>

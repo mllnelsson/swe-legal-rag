@@ -3,7 +3,7 @@ type: Playbook
 title: Local Development Environment
 description: How to run the whole system locally — Postgres via Compose on Linux or Homebrew on macOS, application code on the host via uv, optionally in containers — by swapping GCP dependencies for local equivalents via environment variables.
 tags: [local-dev, postgres, homebrew, docker, environment, workflow]
-timestamp: 2026-08-20T00:00:00Z
+timestamp: 2026-08-27T00:00:00Z
 ---
 
 # Local Development Environment
@@ -569,7 +569,11 @@ Postgres runs in the background either way — a Compose service or a `brew serv
 daemon — so there is nothing to start each day.
 
 1. `uv run alembic upgrade head` — apply any new migrations
-2. Start the API: `uv run --package api uvicorn api.main:app --reload`
+2. Start the API: `uv run --package api uvicorn api.main:app --reload --reload-dir packages` —
+   `--reload-dir packages` scopes the reloader to first-party source; without it,
+   watchfiles also watches `data/`, and the API writes a trace file there on every
+   LLM/embedding call (see [LLM Observability](/observability.md)), which reloads the
+   server in a loop
 3. Run the pipeline: `uv run python scripts/run_pipeline.py`
 4. Iterate — code changes reflect immediately, no container rebuilds
 

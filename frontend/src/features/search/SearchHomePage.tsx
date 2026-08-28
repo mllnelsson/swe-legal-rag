@@ -45,6 +45,10 @@ export function SearchHomePage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<Mode>("search");
+  /** Smart sökning is the home-page entry to query expansion — additive
+   *  reformulations of the question, never a replacement. Search-only, so it is
+   *  offered only in search mode and does not travel into the agent. */
+  const [smart, setSmart] = useState(false);
   const facets = useFacets();
 
   function submit(text: string) {
@@ -54,7 +58,7 @@ export function SearchHomePage() {
 
   function runSearch(text: string) {
     if (text.trim() === "") return;
-    navigate(`/sok?${toSearchParams({ ...EMPTY_SEARCH, query: text }).toString()}`);
+    navigate(`/sok?${toSearchParams({ ...EMPTY_SEARCH, query: text, expand: smart }).toString()}`);
   }
 
   /** The question travels in router state, not in the URL, so the agent page can
@@ -141,7 +145,20 @@ export function SearchHomePage() {
             onChange={(on) => setMode(on ? "agent" : "search")}
             label="Agentläge"
             hint={MODE_NOTE[mode]}
+            size="lg"
           />
+
+          {/* Search-only, and secondary to the mode choice: expansion widens a
+              search, it does not change what the box does. Hidden in agent mode,
+              where it has nothing to act on. */}
+          {mode === "search" && (
+            <Switch
+              checked={smart}
+              onChange={setSmart}
+              label="Smart sökning"
+              hint="Söker även på omformuleringar av frågan för fler träffar."
+            />
+          )}
         </div>
 
         {facets.data !== undefined && (

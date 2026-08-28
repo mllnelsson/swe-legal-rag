@@ -402,8 +402,12 @@ matching trace records instead.
 ## Running the API Server
 
 ```bash
-uv run --package api uvicorn api.main:app --reload --port 8000
+uv run --package api uvicorn api.main:app --reload --reload-dir packages --port 8000
 ```
+
+`--reload-dir packages` scopes the reloader to first-party source; without it,
+watchfiles also watches `data/`, where every LLM/embedding call writes a trace file
+(see [LLM Observability](/observability.md)), reloading the server in a loop.
 
 Exposes `GET /healthz` and the chat endpoint [`POST /api/chat`](/api/chat-endpoint.md)
 (SSE).
@@ -417,7 +421,7 @@ model call:
 
 ```bash
 LLM_PROVIDER=none CHAT_SCRIPT=auto EMBEDDING_DIMENSION=1024 \
-  uv run --package api uvicorn api.main:app --reload --port 8000
+  uv run --package api uvicorn api.main:app --reload --reload-dir packages --port 8000
 npm run dev        # in frontend/
 ```
 

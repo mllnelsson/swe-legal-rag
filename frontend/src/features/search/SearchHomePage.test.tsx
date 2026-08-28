@@ -108,6 +108,30 @@ describe("choosing what the question is for", () => {
   });
 });
 
+describe("smart search — query expansion, reachable up front", () => {
+  test("a plain search carries no expansion flag", () => {
+    renderHome();
+    submit("jäv i kyrkoråd");
+    expect(screen.getByTestId("went").textContent ?? "").not.toContain("utoka");
+  });
+
+  test("turning smart search on adds the expansion flag to the search URL", () => {
+    renderHome();
+    fireEvent.click(screen.getByRole("switch", { name: /Smart sökning/ }));
+    submit("jäv i kyrkoråd");
+    expect(screen.getByTestId("went")).toHaveTextContent("utoka=1");
+  });
+
+  test("smart search is offered in search mode and withdrawn in agent mode", () => {
+    // Expansion widens a search; the agent has no search to widen, so the control
+    // has nothing to act on there.
+    renderHome();
+    expect(screen.getByRole("switch", { name: /Smart sökning/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: /Agentläge/ }));
+    expect(screen.queryByRole("switch", { name: /Smart sökning/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("what the page says about the corpus", () => {
   test("the count is the API's, and the keywords are the nämnd's own", async () => {
     renderHome();
