@@ -40,6 +40,7 @@ dev = [
     "worker-extract",
     "worker-chunk",
     "worker-embed",
+    "agent-kit",
     "ai",
     "agents",
     "api",
@@ -57,6 +58,7 @@ worker-metadata = { workspace = true }
 worker-extract = { workspace = true }
 worker-chunk = { workspace = true }
 worker-embed = { workspace = true }
+agent-kit = { workspace = true }
 ai = { workspace = true }
 agents = { workspace = true }
 api = { workspace = true }
@@ -109,6 +111,7 @@ testpaths = [
     "packages/api/tests",
     "packages/agents/tests",
     "packages/llm-core/tests",
+    "packages/agent-kit/tests",
     "scripts/tests",
 ]
 markers = [

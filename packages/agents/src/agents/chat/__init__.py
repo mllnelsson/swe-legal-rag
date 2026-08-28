@@ -6,7 +6,7 @@ that reaches into a database itself. `ChatToolset` is what keeps it that way,
 and what keeps the dependency running `api -> agents`.
 """
 
-from agents.chat._agent import run_chat_agent
+from agents.chat._agent import chat_context_carry, run_chat_agent
 from agents.chat._dtos import (
     EXCERPT_MAX_CHARS,
     MAX_CHAT_QUESTION_CHARS,
@@ -37,6 +37,7 @@ from agents.chat._tools import FREE_TEXT_FILTER_FIELDS, ChatState, build_chat_to
 
 __all__ = [
     "run_chat_agent",
+    "chat_context_carry",
     "ChatAgentRequest",
     "ChatToolset",
     # Events

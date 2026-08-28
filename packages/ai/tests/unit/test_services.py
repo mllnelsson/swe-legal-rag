@@ -149,7 +149,7 @@ async def test_synthesize_answer_streams_tokens() -> None:
         ],
     )
 
-    with patch("ai.services.generate_stream", mock_generate_stream):
+    with patch("agent_kit.synthesis._synthesize.generate_stream", mock_generate_stream):
         tokens: list[str] = []
         async for token in synthesize_answer(request):
             tokens.append(token)
@@ -174,7 +174,7 @@ async def test_synthesize_answer_uses_answer_synthesis_template() -> None:
         ],
     )
 
-    with patch("ai.services.generate_stream", mock_generate_stream):
+    with patch("agent_kit.synthesis._synthesize.generate_stream", mock_generate_stream):
         async for _ in synthesize_answer(request):
             pass
 
@@ -212,7 +212,7 @@ async def test_synthesize_answer_marks_appendix_excerpts() -> None:
         ],
     )
 
-    with patch("ai.services.generate_stream", mock_generate_stream):
+    with patch("agent_kit.synthesis._synthesize.generate_stream", mock_generate_stream):
         async for _ in synthesize_answer(request):
             pass
 

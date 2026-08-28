@@ -1,4 +1,4 @@
-from ai.prompts._renderer import PromptTemplate, render, render_tool_index
+from agent_kit.prompts import PromptTemplate, render, render_tool_index
 from ai.prompts._templates import (
     ANSWER_SYNTHESIS,
     CHAT_ORCHESTRATION,

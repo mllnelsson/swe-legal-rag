@@ -116,6 +116,7 @@ _ALL_TEMPLATES = [
             "today": _TODAY,
             "conversation_history": _CONVERSATION,
             "tools": _TOOL_INDEX,
+            "context": "{}",
         },
     ),
     (
@@ -333,6 +334,7 @@ class TestChatPlan:
                 "today": _TODAY,
                 "conversation_history": _CONVERSATION,
                 "tools": _TOOL_INDEX,
+                "context": "{}",
             },
         )
         assert not _has_placeholder(messages[1].content)
@@ -355,6 +357,7 @@ class TestChatPlan:
                 "today": _TODAY,
                 "conversation_history": _CONVERSATION,
                 "tools": _TOOL_INDEX,
+                "context": "{}",
             },
         )
         assert _TOOL_INDEX in messages[1].content

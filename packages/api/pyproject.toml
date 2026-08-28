@@ -11,6 +11,9 @@ dependencies = [
     # Imported directly by services/retriever.py for its rerank call, which
     # reaches past `ai`. Declared rather than left to resolve through `ai`.
     "llm-core",
+    # The agent core: `ContextStore`/`JsonBlob` for the chat session's carry-over
+    # store. Imported directly, the same as llm-core.
+    "agent-kit",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
 ]
@@ -20,6 +23,7 @@ shared = { workspace = true }
 ai = { workspace = true }
 agents = { workspace = true }
 llm-core = { workspace = true }
+agent-kit = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]

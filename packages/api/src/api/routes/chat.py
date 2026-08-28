@@ -16,6 +16,7 @@ from agents.chat import (
     TokenEvent,
     ToolCallEvent,
     ToolResultEvent,
+    chat_context_carry,
 )
 from ai import interaction_scope
 from fastapi import APIRouter, Depends, Request
@@ -36,6 +37,7 @@ from api.correlation import INTERACTION_ID_HEADER, interaction_id_of
 from api.dependencies import get_db
 from api.dev.chat_scripts import SCRIPTS, replay, select_script
 from api.services.chat_toolset import build_chat_toolset
+from api.services.context_store import PostgresContextStore
 from api.services.session_service import (
     append_turn,
     get_or_create_session,
@@ -130,7 +132,13 @@ async def chat_endpoint(
     scripted = select_script(dev_settings.chat_script, body.message)
     if scripted is None:
         agent_events = run_chat_agent(
-            ChatAgentRequest(question=body.message, history=history),
+            ChatAgentRequest(
+                question=body.message,
+                history=history,
+                # Keys the carry-over blob to this conversation, so a follow-up's
+                # planner sees what earlier turns established.
+                conversation_id=str(chat_session.id),
+            ),
             build_chat_toolset(
                 db,
                 embedding_provider=request.app.state.embedding_provider,
@@ -140,6 +148,10 @@ async def chat_endpoint(
             llm_provider=request.app.state.chat_llm_provider,
             reader_provider=request.app.state.read_llm_provider,
             executor_provider=request.app.state.orchestrate_llm_provider,
+            # The blob lives in `sessions.context`, written in the same
+            # transaction as the turn's history — see `PostgresContextStore`.
+            context_store=PostgresContextStore(db),
+            derive_context=chat_context_carry,
         )
     else:
         # A server answering from a script while someone believes it is

@@ -131,6 +131,35 @@ async def append_history(
     await session.execute(statement)
 
 
+async def get_context(session: AsyncSession, session_id: uuid.UUID) -> dict[str, Any]:
+    """The conversation's carry-over blob, or `{}` when there is no such row.
+
+    A copy: the caller may hand it to a model and mutate it, and the ORM
+    instance behind it must not change with it.
+    """
+    chat_session = await session.get(Session, session_id)
+    if chat_session is None:
+        return {}
+    return dict(chat_session.context)
+
+
+async def set_context(
+    session: AsyncSession, session_id: uuid.UUID, context: dict[str, Any]
+) -> None:
+    """Replace the conversation's carry-over blob.
+
+    Like `append_history`, the write is one UPDATE and takes no row lock — it
+    runs inside the request-scoped session and is committed with the turn. A
+    missing session is a no-op, because the UPDATE matches no row.
+    """
+    statement = (
+        sql_update(Session)
+        .where(Session.id == session_id)
+        .values(context=bindparam("new_context", value=context, type_=JSONB))
+    )
+    await session.execute(statement)
+
+
 async def update(
     session: AsyncSession, session_id: uuid.UUID, dto: SessionUpdate
 ) -> SessionRead | None:

@@ -16,7 +16,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from shared.enums import ChunkSection
 
+# The generic run status (ok / refused / error) is the agent core's; re-exported
+# so this module stays the one place the chat wire contract is named.
+from agent_kit.orchestrator import ToolStatus
+
 from agents.sql._dtos import SqlAttempt
+
+__all__ = ["ToolStatus"]
 
 MAX_CHAT_QUESTION_CHARS = 4000
 
@@ -103,12 +109,6 @@ class ProgressLabel(StrEnum):
     ANSWER_COMPOSE = "answer.compose"
 
 
-class ToolStatus(StrEnum):
-    OK = "ok"
-    # The tool declined on policy — an ungrounded filter, a budget reached. Not
-    # a failure: the loop repairs itself from it.
-    REFUSED = "refused"
-    ERROR = "error"
 
 
 class ChatAgentRequest(BaseModel):
@@ -118,6 +118,9 @@ class ChatAgentRequest(BaseModel):
     # Prior turns, oldest first, as `{"role": ..., "content": ...}` — the shape
     # `session_service.history_for_llm` already returns.
     history: list[dict] = []
+    # The conversation this turn belongs to, for the carry-over context store. A
+    # `None` (a stateless caller, a test) turns the store off for the turn.
+    conversation_id: str | None = None
 
 
 # --- what the toolset hands back -------------------------------------------
