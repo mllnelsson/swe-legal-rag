@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-27T00:00:00Z
+timestamp: 2026-08-28T00:00:00Z
 ---
 
 # LLM Observability
@@ -239,8 +239,8 @@ directly, not through `shared.create_storage_backend`.
 
 | Key | Set by |
 |---|---|
-| `interaction_id` | `ai.interaction_scope()` (`packages/ai/src/ai/_tracing_scope.py`) — an explicit id wins; failing that, one already in the trace context is **inherited**; failing that, one is **minted**. Opened around the whole request by `api/routes/chat.py` and `api/routes/sql.py` (the id resolved from the `X-Interaction-Id` request header — see below) and by `api/routes/search.py` (source `api.search`, no header, always mints); opened again by `agents.chat.run_chat_agent` / `agents.sql.run_sql_agent` themselves, which is what lets `query_corpus` join the turn that called it instead of starting one of its own; and opened by every non-API entry point too — `ai.worker_trace_scope(source)` (one per queue message), `scripts/run_step.py` (one per step dispatch) and `scripts/run_agent.py` (one per case), all of which mint since none has anything to inherit from. See [below](#every-unit-of-work-opens-an-interaction) |
-| `agent_run_id` | `ai.agent_run_scope()`, same module — **always mints**, never inherits. Opened once per sub-agent invocation: `run_chat_agent`, `run_sql_agent`, and each `read_decision_text` reading. A turn may make several `query_corpus` calls and read up to `chat_agent_max_documents_read` decisions, and those otherwise share every key they carry; this is what keeps them apart |
+| `interaction_id` | `interaction_scope()`, defined in `agent_kit.tracing` and re-exported as `ai.interaction_scope()` (`packages/ai/src/ai/_tracing_scope.py`) — an explicit id wins; failing that, one already in the trace context is **inherited**; failing that, one is **minted**. Opened around the whole request by `api/routes/chat.py` and `api/routes/sql.py` (the id resolved from the `X-Interaction-Id` request header — see below) and by `api/routes/search.py` (source `api.search`, no header, always mints); opened again by `agents.sql.run_sql_agent` itself, and — for chat — by `agent_kit.run_agent`, which `agents.chat.run_chat_agent` configures with `source="agents.chat"` rather than opening the scope itself; either way this is what lets `query_corpus` join the turn that called it instead of starting one of its own; and opened by every non-API entry point too — `ai.worker_trace_scope(source)` (one per queue message), `scripts/run_step.py` (one per step dispatch) and `scripts/run_agent.py` (one per case), all of which mint since none has anything to inherit from. See [below](#every-unit-of-work-opens-an-interaction) |
+| `agent_run_id` | `agent_run_scope()`, same module — **always mints**, never inherits. Opened once per sub-agent invocation: by `agent_kit.run_agent` for the whole chat turn, by `run_sql_agent` for itself, and by each `read_decision_text` reading. A turn may make several `query_corpus` calls and read up to `chat_agent_max_documents_read` decisions, and those otherwise share every key they carry; this is what keeps them apart |
 | `session_id` | The API, inside the SSE generator in `api/routes/chat.py` |
 | `document_id`, `task_id` | Each worker, via the `MessageScope` `ai.worker_trace_scope(name)` supplies to `shared.worker.subscribe_step`, entered around `asyncio.run` inside its `handle_message` |
 | `document_id`, `task_id` | `scripts/run_step.py`, around the step dispatch in `_run_step` |
@@ -433,10 +433,15 @@ grep -l "$doc_id" data/llm-traces/$(date -u +%F)/*/*.json \
 | Instrumentation of the four entry points | `llm-core`, `_service.py` |
 | Token/model mapping per provider | `llm-core`, `providers/` |
 | Blob `store`/`retrieve` — no JSON, no append, PDFs only | `shared`, `storage/` |
-| Storage layout, synchronous writes, serialization, `install_file_tracing` | `ai`, `_observability.py` |
-| `interaction_scope`/`agent_run_scope` — the correlation keys | `ai`, `_tracing_scope.py` |
+| Storage layout, synchronous writes, serialization, `FileTraceRecorder` | `agent-kit`, `tracing/_recorder.py` |
+| `interaction_scope`/`agent_run_scope` — the correlation keys | `agent-kit`, `tracing/_scopes.py` |
+| Trace root: `install_file_tracing()` supplying `StorageSettings().local_storage_path`, and the re-exports every existing `ai.*`/`agents.*` call site imports | `ai`, `_observability.py` / `_tracing_scope.py` |
 | Rates and how to apply them | [LLM pricing](/reference/llm-pricing.md) — reference data, no code |
 
 llm-core carries the hook but never a writer, which is what lets it stay free of
-any dependency on the rest of the project. See
-[llm-core](/packages/llm-core.md) and [ai](/packages/ai.md).
+any dependency on the rest of the project; `agent-kit` supplies the writer and the
+correlation scopes but takes the trace root as an argument rather than deciding
+where traces live, which is what lets `ai` root them under this project's
+`LOCAL_STORAGE_PATH` with no change to the path a reader already expects. See
+[llm-core](/packages/llm-core.md), [agent-kit](/packages/agent-kit.md) and
+[ai](/packages/ai.md).

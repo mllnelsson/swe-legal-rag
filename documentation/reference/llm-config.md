@@ -4,17 +4,17 @@ title: llm_config.yaml — LLM and Embedding Configuration
 description: The single source of truth for which model and provider each LLM role and the embedder use — file format, precedence rules against environment variables, and the full env-var registry.
 resource: llm_config.yaml
 tags: [llm, config, yaml, provider, embedding, precedence]
-timestamp: 2026-08-27T00:00:00Z
+timestamp: 2026-08-28T00:00:00Z
 ---
 
 # llm_config.yaml — LLM and Embedding Configuration
 
 `llm_config.yaml`, at the repo root, is **the single source of truth for which model
-and which provider each task uses.** It replaces the per-task model env vars that
-used to live only in `.env.example` and package docs — those still exist, but now as
-*overrides* of the file, not as the primary source. Loaded by
-[`ai.llm_config`](/packages/ai.md); resolution and precedence live there, this page
-documents the contract.
+and which provider each task uses.** The per-task model env vars in `.env.example` and
+package docs are *overrides* of the file, not the primary source. Loaded by
+[`ai.llm_config`](/packages/ai.md), which re-exports the provider/role resolution and
+precedence logic from [`agent_kit.config`](/packages/agent-kit.md) — this page
+documents the contract regardless of which module a caller imports it from.
 
 Swapping a task's model is a YAML edit. **Adding** a task needs both an entry
 under `roles:` here and a matching `LLMRole` member in
@@ -141,7 +141,7 @@ This is the **opposite** of pydantic-settings' native ordering, where an explici
 init keyword argument beats an environment variable. The loader achieves the reversal
 by *withholding* the keyword argument whenever the corresponding environment variable
 is set, letting `LLMConfig`'s own env-reading fill the field instead — see
-`ai.llm_config._without_env_overrides`.
+`agent_kit.config.without_env_overrides`, re-exported as `ai.llm_config.without_env_overrides`.
 
 **`model` is the one field with a different rule**, because it must resist the
 pre-existing global `LLM_MODEL` env var:
@@ -159,8 +159,9 @@ Every other field (`provider`, `temperature`, `max_tokens`, `stream_usage`,
 `base_url`, `api_key`) follows the four-level list above exactly: the matching
 environment variable, if set, overrides the role and `defaults` regardless of which
 role is being resolved — including `LLM_PROVIDER`, which is process-wide and
-therefore flattens **every** role onto one host. `ai.llm_config` logs a `WARNING`
-when a set `LLM_PROVIDER` masks a role's own `provider:` entry, because the YAML
+therefore flattens **every** role onto one host. The resolver (`agent_kit.config`,
+reached via `ai.llm_config`) logs a `WARNING` when a set `LLM_PROVIDER` masks a
+role's own `provider:` entry, because the YAML
 still reads as though the per-role choice is in effect while the environment quietly
 overrides it. Unset `LLM_PROVIDER` to let the file decide.
 

@@ -3,7 +3,7 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-08-28T00:00:00Z
 ---
 
 # Architectural Decision Register
@@ -112,6 +112,37 @@ window](/decisions/embedding-window.md); the mandatory crawl
   else in the stack ever required Docker: storage is the filesystem, the queue is
   in-process, MinIO and Redis were already optional. See
   [local dev](/playbooks/local-dev.md).
+
+## Agent core
+
+- **The domain-free half of the agent machinery is its own package, not a
+  module inside `ai`/`agents`.** [`agent-kit`](/packages/agent-kit.md) depends
+  only on `llm-core` plus pydantic/pydantic-settings/pyyaml, and imports
+  nothing from `shared`, `ai`, `agents` or `api`. What moved: the
+  plan→execute→synthesize orchestrator (`run_agent`), the streaming synthesis
+  step, the prompt renderer, the LLM role/provider config loader, the file
+  trace recorder, and the `interaction_scope`/`agent_run_scope` correlation
+  scopes. `ai` and `agents` are thin consumers — `ai` re-exports the moved
+  config/tracing/prompt symbols so no existing import broke, and
+  `agents.run_chat_agent` is a configuration of `agent_kit.run_agent` plus an
+  event mapping onto this app's own wire events. The boundary is the point:
+  agent-kit is meant to be lifted whole into a different agent project, which
+  a module entangled with `shared`'s models or this project's Swedish prompts
+  could not be.
+- **Per-conversation carry-over is a Protocol the orchestrator calls, not a
+  feature the orchestrator implements.** `agent_kit.ContextStore` is two
+  methods (`get`/`set` on a JSON blob keyed by conversation id); `run_agent`
+  injects the stored blob into the plan call and persists a host-supplied
+  `derive_context(blob, request, evidence)` afterwards, but never opens a
+  database connection or decides what the blob holds. This app backs the
+  Protocol with `api.services.context_store.PostgresContextStore` against a
+  new `sessions.context` column, and supplies `chat_context_carry` — a
+  deterministic, model-free default that accumulates cited case numbers — as
+  its `derive_context`. Keeping the store an injected Protocol is what lets
+  `InMemoryContextStore` back every agent-kit unit test with no database, and
+  what lets a future host swap Postgres for a cache with no orchestrator
+  change. See [the conversational agent](/retrieval/chat-agent.md#carry-over-context)
+  and [sessions](/data-model/sessions.md).
 
 ## Data layer and libraries
 

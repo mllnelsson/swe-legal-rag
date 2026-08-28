@@ -1,27 +1,38 @@
 ---
 type: Package
 title: ai Package
-description: Project-specific LLM logic — prompt templates, domain DTOs, service functions, per-task model selection, the embedding abstraction, and the LLM trace recorder.
+description: Project-specific LLM logic — Swedish prompt templates, domain DTOs, service functions, per-task model selection, and the embedding abstraction, layered over the agent-kit core.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-27T00:00:00Z
+timestamp: 2026-08-28T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
 
-Project-specific LLM logic consuming [llm-core](/packages/llm-core.md). Knows about
-Swedish legal documents; provides domain DTOs, prompt templates, service functions, and
-the embedding abstraction. Depends on both `shared` and `llm-core`.
+Project-specific LLM logic consuming [llm-core](/packages/llm-core.md) and
+[agent-kit](/packages/agent-kit.md). Knows about Swedish legal documents; provides
+domain DTOs, prompt templates, service functions, and the embedding abstraction.
+Depends on `shared`, `llm-core` and `agent-kit`.
+
+A thin consumer of agent-kit, not a reimplementation: the prompt renderer, the
+LLM role/provider config loader, the file trace recorder and the correlation
+scopes are all defined in `agent_kit` and re-exported here so every existing
+`ai.*` import keeps working. What stays genuinely this package's own: the
+Swedish prompt template *text*, the domain DTOs and formatters,
+`synthesize_answer` (a wrapper over `agent_kit.synthesize`), the embedding
+config half (`ai.llm_config` validates `embedding:`, which `agent_kit`'s config
+document carries only as an opaque passthrough), the `LLMRole` closed role-name
+enum, and `install_file_tracing` (a wrapper supplying the on-disk trace root).
 
 ## Module layout
 
 | Module | Role |
 |---|---|
 | `dtos.py` | All domain DTOs — frozen Pydantic v2 models for every LLM use case |
-| `_observability.py` | `FileTraceRecorder`, `LLMTraceConfig`, `install_file_tracing()` — writes each LLM trace as its own local file |
-| `_tracing_scope.py` | `interaction_scope()` / `agent_run_scope()` — the project's two correlation primitives, layered over llm-core's `trace_context`. See [Trace recording](#trace-recording-ai_observabilitypy) below |
+| `_observability.py` | A thin wrapper over `agent_kit.tracing`: `install_file_tracing()` supplies the trace root (`StorageSettings().local_storage_path/<dir>`) and re-exports `FileTraceRecorder`, `LLMTraceConfig`, `serialize_record` unchanged |
+| `_tracing_scope.py` | Re-exports `interaction_scope()` / `agent_run_scope()` from `agent_kit.tracing` — see [Trace recording](#trace-recording-ai_observabilitypy) below |
 | `services.py` | Six async service functions (below) |
-| `llm_config.py` | Reads `llm_config.yaml` — document models, discovery, and role/embedding resolution |
+| `llm_config.py` | The embedding half — `EmbeddingBackend`/`EmbeddingSpec`/`EmbeddingConfig`/`resolve_embedding_config`/`get_embedding_prefixes` — plus a re-export of `agent_kit.config`'s document model, discovery and role/precedence resolution |
 | `embedding.py` | `EmbeddingProvider` Protocol, `create_embedding_provider` factory, `verify_embedding_dimension` |
 | `tokenization.py` | Measures text in the embedding model's own tokens: `EmbeddingRuler`, `create_embedding_ruler()`, `verify_embedding_window()`, `SPECIAL_TOKEN_COUNT`. The only module that imports `transformers`. |
 | `providers/openai_compatible_embeddings.py` | `OpenAiCompatibleEmbeddingProvider` — any OpenAI-compatible embeddings endpoint, Berget included; not the checked-in default, see below |
@@ -160,14 +171,22 @@ finding itself.
 
 Reads [`llm_config.yaml`](/reference/llm-config.md) — which model and provider each task
 uses — and resolves it into the settings objects the rest of the package consumes. The
-loader lives here rather than in [llm-core](/packages/llm-core.md) because llm-core is
-project-agnostic and knows nothing about a file at this project's root.
+provider/role half of that resolution — discovery, document validation, precedence
+against environment variables — is implemented in
+[`agent_kit.config`](/packages/agent-kit.md#llm-roleprovider-config-config), which is
+project-agnostic and knows nothing about a file at this project's root; `ai.llm_config`
+re-exports those names unchanged and adds the one half agent-kit has no opinion on: the
+`embedding:` block, which `agent_kit.LLMConfigDocument` carries only as an opaque
+passthrough. `ai.llm_config.load_config_document` wraps
+`agent_kit.config.load_config_document` and additionally validates that block into an
+`EmbeddingSpec`, so a malformed or undeclared-provider `embedding:` still fails at load,
+exactly as before the split.
 
 | Function | Returns |
 |---|---|
 | `get_llm_config()` | The validated `LLMConfigDocument`, read once (`@lru_cache`) |
 | `resolve_role_config(role)` | An `llm_core.LLMConfig` for a named role |
-| `resolve_embedding_config()` | An `EmbeddingConfig` |
+| `resolve_embedding_config()` | An `EmbeddingConfig` — this package's own, since `agent_kit` does not resolve it |
 | `get_embedding_prefixes()` | `(query_prefix, passage_prefix)` |
 | `find_config_path()` / `load_config_document(path)` | Discovery and parsing, for tests and tooling |
 | `role_model_env_var(role)` | That role's override variable, `LLM_MODEL_<ROLE>` |
@@ -190,10 +209,14 @@ and sometimes a different provider — per task, so the assignment lives in
 `llm_config.yaml` under `roles:`. See
 [the decision record](/decisions/llm-model-selection.md) for why.
 
-`LLMRole` (a `StrEnum`: `STRUCTURED`, `SUMMARIZE`, `CHAT`, `ORCHESTRATE`, `SQL`, `READ`) is
-the closed set code asks for. **The role set has two halves that must agree** — adding a
-task needs both a new `LLMRole` member here and a matching entry under `roles:` in the
-YAML; the enum is what turns a misspelled role into a type error instead of a runtime
+`create_llm_provider` and `llm_role_is_disabled` are `agent_kit.config` functions taking
+a plain `str` role name — agent-kit has no closed role vocabulary of its own, since it
+does not know what tasks a host declares. `LLMRole` (a `StrEnum`: `STRUCTURED`,
+`SUMMARIZE`, `CHAT`, `ORCHESTRATE`, `SQL`, `READ`) is the closed set *this project* asks
+for; a `StrEnum` member is a `str`, so it flows straight into the agent-kit functions
+unchanged. **The role set has two halves that must agree** — adding a task needs both a
+new `LLMRole` member here and a matching entry under `roles:` in the YAML; the enum is
+what turns a misspelled role into a type error instead of a runtime
 `UnknownLLMRoleError`.
 
 | Role | Used by | Default (Berget model) |
@@ -334,15 +357,24 @@ the root `pyproject.toml`, and a second ceiling here would only fight it.
 
 ## Trace recording (`ai/_observability.py`)
 
-`ai` supplies the concrete recorder behind llm-core's hook. It belongs here because it
-needs llm-core's record type, and `shared` must not depend on llm-core.
+The concrete recorder behind llm-core's hook — `FileTraceRecorder`, the JSON contract,
+and the storage layout — is defined in
+[`agent_kit.tracing`](/packages/agent-kit.md#tracing-tracing), which is domain-free and
+takes the trace root as an argument rather than deciding where traces live.
+`ai._observability.install_file_tracing(root=None, config=None)` is a thin wrapper
+supplying that one project-specific fact: when `root` is omitted, it resolves to
+`StorageSettings().local_storage_path / config.directory_name`, which is the exact path
+every reader and the pricing analysis already expect — so
+`ai.install_file_tracing()` stays the no-argument call every composition root makes,
+and the on-disk path did not move when the recorder itself did. `FileTraceRecorder`,
+`LLMTraceConfig`, `relative_path_for` and `serialize_record` are re-exported here
+unchanged.
 
-`install_file_tracing(root=None, config=None)` is called **once at startup** by every
-process that makes LLM calls — the API lifespan and each of the four LLM workers. It
-takes no storage backend: traces never went through `shared`'s `StorageBackend`, and
-now nothing in this module imports it. It never raises: a trace root it cannot create
-leaves no recorder at all, and llm-core treats that as tracing off. `trace_context` is
-re-exported here so callers need no direct llm-core dependency.
+`install_file_tracing()` is called **once at startup** by every process that makes LLM
+calls — the API lifespan and each of the four LLM workers. It never raises: a trace root
+it cannot create leaves no recorder at all, and llm-core treats that as tracing off.
+`trace_context` is re-exported here (from llm-core, via `agent_kit`) so callers need no
+direct llm-core dependency.
 
 The recorder owns the **storage layout** — one JSON file per billed call, under
 `{LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{date}/{interaction_id}/`, so the
@@ -364,11 +396,15 @@ in.
 
 ### Correlation (`ai/_tracing_scope.py`)
 
-`interaction_scope(interaction_id=None, **values)` and `agent_run_scope(**values)` sit
-next to `worker_trace_scope` for the same reason: `trace_context` itself carries an
-opaque mapping and llm-core deliberately gives no key a meaning, but `interaction_id`
-and `agent_run_id` are project concepts, so the module that gives them one lives in `ai`,
-not `llm-core`.
+`interaction_scope(interaction_id=None, **values)` and `agent_run_scope(**values)` are
+defined in `agent_kit.tracing` and re-exported here unchanged — `interaction_id` and
+`agent_run_id` are still project-shaped correlation keys, not llm-core concepts
+(`trace_context` itself carries an opaque mapping and llm-core deliberately gives no key
+a meaning), but the scope mechanics that give them meaning are domain-free enough that
+`agent_kit`'s own `run_agent` opens both around every turn it drives, which is what lets
+`agents.run_chat_agent` configure a `source` rather than open the scope itself. This
+module stays the import path `ai.worker_trace_scope` and the existing `ai`/`agents` call
+sites already use.
 
 `interaction_scope` is what lets a sub-agent join its caller's interaction instead of
 starting a separate one: an explicit id wins, else an id already in the trace context is
