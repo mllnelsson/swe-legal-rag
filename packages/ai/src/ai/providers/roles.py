@@ -20,9 +20,12 @@ from __future__ import annotations
 
 from enum import StrEnum, auto
 
-from llm_core import LLMProvider, ProviderKind, create_provider
-
-from ai.llm_config import LLMConfigDocument, resolve_role_config
+# The role-to-provider machinery is domain-free and now lives in agent-kit;
+# `create_llm_provider` and `llm_role_is_disabled` take a plain role-name string.
+# This module keeps the closed set of role *names* this project assigns models
+# to, so a misspelled role is a type error here rather than a runtime miss. An
+# `LLMRole` member is a `str`, so it flows straight into the agent-kit functions.
+from agent_kit.config import create_llm_provider, llm_role_is_disabled
 
 __all__ = ["LLMRole", "create_llm_provider", "llm_role_is_disabled"]
 
@@ -39,26 +42,3 @@ class LLMRole(StrEnum):
     ORCHESTRATE = auto()
     SQL = auto()
     READ = auto()
-
-
-def create_llm_provider(
-    role: LLMRole, document: LLMConfigDocument | None = None
-) -> LLMProvider:
-    """Build the provider `llm_config.yaml` assigns to `role`.
-
-    Raises `UnknownLLMRoleError` if the file declares no such role.
-    """
-    return create_provider(resolve_role_config(role, document))
-
-
-def llm_role_is_disabled(
-    role: LLMRole, document: LLMConfigDocument | None = None
-) -> bool:
-    """Whether `llm_config.yaml` assigns `role` no model at all — `kind: none`.
-
-    For the callers that have a genuine no-model path and want to choose it at
-    startup, where every other provider decision is made. Everyone else should
-    just build the provider: constructing a `none` one always succeeds, and it
-    raises `LLMDisabledError` at the call that wanted a model.
-    """
-    return resolve_role_config(role, document).provider is ProviderKind.NONE

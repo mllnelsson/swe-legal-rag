@@ -11,6 +11,7 @@ import json
 import uuid
 
 import pytest
+from agent_kit import InMemoryContextStore
 from ai import interaction_scope
 from llm_core import LLMResponse, Message, Role, StreamChunk, ToolCall
 from llm_core._tracing import LLMCallRecord, set_trace_recorder
@@ -1332,3 +1333,74 @@ async def test_a_wrong_argument_name_is_refused_and_the_loop_goes_on() -> None:
     ]
     assert len(refused) == 1
     assert refused[0].id == "call-1"
+
+
+class TestContextCarryOver:
+    """The per-conversation carry-over blob, injected into the plan step.
+
+    Empty on the first turn, and whatever `derive_context` returned on the turn
+    before on every turn after. The store keys on `request.conversation_id`; a
+    `None` id (or no store) turns the mechanism off for the turn.
+    """
+
+    @staticmethod
+    def _run(store, *, conversation_id, derive_context):
+        provider = ScriptedProvider(
+            Message(role=Role.assistant, content="Varsågod!"),
+            routes=False,
+        )
+        agent = run_chat_agent(
+            ChatAgentRequest(
+                question="Tack!", history=[], conversation_id=conversation_id
+            ),
+            FakeToolset(),
+            llm_provider=provider,
+            settings=_settings(),
+            context_store=store,
+            derive_context=derive_context,
+        )
+        return provider, agent
+
+    @staticmethod
+    def _plan_user_text(provider) -> str:
+        """The user message of the first (plan) model call."""
+        return provider.seen_messages[0][1].content
+
+    @staticmethod
+    def _derive(blob, request, state):
+        return {"turns": blob.get("turns", 0) + 1}
+
+    async def test_blob_is_empty_first_then_carried_forward(self) -> None:
+        store = InMemoryContextStore()
+
+        provider1, agent1 = self._run(
+            store, conversation_id="c1", derive_context=self._derive
+        )
+        await _collect(agent1)
+        # Turn one sees an empty blob and leaves one behind.
+        assert "{}" in self._plan_user_text(provider1)
+        assert '"turns"' not in self._plan_user_text(provider1)
+        assert await store.get("c1") == {"turns": 1}
+
+        provider2, agent2 = self._run(
+            store, conversation_id="c1", derive_context=self._derive
+        )
+        await _collect(agent2)
+        # Turn two sees turn one's blob, and advances it.
+        assert '{"turns": 1}' in self._plan_user_text(provider2)
+        assert await store.get("c1") == {"turns": 2}
+
+    async def test_no_store_leaves_the_blob_empty_and_persists_nothing(self) -> None:
+        provider, agent = self._run(None, conversation_id="c1", derive_context=None)
+        await _collect(agent)
+        assert "{}" in self._plan_user_text(provider)
+
+    async def test_a_none_conversation_id_turns_the_store_off(self) -> None:
+        store = InMemoryContextStore()
+        provider, agent = self._run(
+            store, conversation_id=None, derive_context=self._derive
+        )
+        await _collect(agent)
+        assert "{}" in self._plan_user_text(provider)
+        # Nothing was keyed, so nothing was stored.
+        assert await store.get("c1") == {}

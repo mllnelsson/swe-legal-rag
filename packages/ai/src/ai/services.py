@@ -7,10 +7,11 @@ from llm_core import (
     LLMProvider,
     LLMResponse,
     generate,
-    generate_stream,
     generate_structured,
     trace_context,
 )
+
+from agent_kit import synthesize
 
 from shared.enums import ChunkSection
 
@@ -215,11 +216,17 @@ def _format_tabular(tabular: TabularEvidence | None) -> str:
     return "\n".join(parts)
 
 
-async def synthesize_answer(
+def synthesize_answer(
     request: SynthesizeRequest,
     *,
     provider: LLMProvider | None = None,
 ) -> AsyncIterator[str]:
+    """Stream the Swedish answer from the evidence the agent selected.
+
+    The generic "render an evidence bundle and stream it" mechanism lives in
+    `agent_kit.synthesize`; this wrapper owns the domain — the `ANSWER_SYNTHESIS`
+    template and the formatters that lay each kind of evidence out for it.
+    """
     context = {
         "question": request.question,
         "chunks": _format_chunks(request.chunks),
@@ -231,7 +238,6 @@ async def synthesize_answer(
             request.conversation_history or [], ensure_ascii=False
         ),
     }
-    messages = render(ANSWER_SYNTHESIS, context)
-    with trace_context(source=_SOURCE_SYNTHESIZE, prompt=ANSWER_SYNTHESIS.name):
-        async for token in generate_stream(messages, provider=provider):
-            yield token
+    return synthesize(
+        ANSWER_SYNTHESIS, context, provider=provider, source=_SOURCE_SYNTHESIZE
+    )

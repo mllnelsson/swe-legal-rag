@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai.prompts._renderer import PromptTemplate
+from agent_kit.prompts import PromptTemplate
 
 _QUERY_DECOMPOSITION_SYSTEM = """\
 Du är ett system som analyserar svenska juridiska frågor rörande kyrkorätt.
@@ -415,7 +415,12 @@ Question: {question}
 Today's date: {today}
 
 Conversation history:
-{conversation_history}"""
+{conversation_history}
+
+Carry-over from earlier turns (JSON, {{}} on the first turn) — running notes an
+earlier turn left for this one. Treat it as context, never as a source; assert
+nothing from it you cannot point to in the history above:
+{context}"""
 
 CHAT_PLAN = PromptTemplate(
     name="CHAT_PLAN",

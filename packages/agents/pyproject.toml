@@ -9,12 +9,16 @@ dependencies = [
     # types, which reach past `ai`. Declared rather than left to resolve through
     # it — same reasoning as `api`.
     "llm-core",
+    # The generic orchestrator, synthesis and context store the chat agent is a
+    # thin configuration of. Imported directly for the same reason as llm-core.
+    "agent-kit",
 ]
 
 [tool.uv.sources]
 shared = { workspace = true }
 ai = { workspace = true }
 llm-core = { workspace = true }
+agent-kit = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]

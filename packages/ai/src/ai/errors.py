@@ -1,6 +1,33 @@
-"""Domain errors for the ai package."""
+"""Domain errors for the ai package.
+
+The LLM-config error family (`LLMConfigError` and friends) is re-exported from
+`agent_kit.errors`: the config loader moved to the agent core, and its errors
+moved with it. They are kept importable from `ai.errors` so existing call sites
+and tests are unaffected. They subclass `agent_kit.errors.AgentKitError`, not
+`AiError` — nothing catches `AiError` to reach them.
+"""
 
 from __future__ import annotations
+
+from agent_kit.errors import (
+    LLMConfigError,
+    LLMConfigInvalidError,
+    LLMConfigNotFoundError,
+    UnknownLLMRoleError,
+)
+
+__all__ = [
+    "AiError",
+    "EmbeddingDimensionMismatchError",
+    "EmbeddingWindowError",
+    "TokenizerUnavailableError",
+    "UnsupportedEmbeddingBackendError",
+    "MissingApiKeyError",
+    "LLMConfigError",
+    "LLMConfigNotFoundError",
+    "LLMConfigInvalidError",
+    "UnknownLLMRoleError",
+]
 
 
 class AiError(Exception):
@@ -55,24 +82,3 @@ class UnsupportedEmbeddingBackendError(AiError):
 
 class MissingApiKeyError(AiError):
     """An embedding provider was constructed without the API key it needs."""
-
-
-class LLMConfigError(AiError):
-    """Base class for problems with `llm_config.yaml`."""
-
-
-class LLMConfigNotFoundError(LLMConfigError):
-    """No `llm_config.yaml` could be located.
-
-    Deliberately fatal rather than falling back to built-in defaults: a silent
-    fallback is how the documented model set and the one actually in use drift
-    apart, which has already happened once in this project.
-    """
-
-
-class LLMConfigInvalidError(LLMConfigError):
-    """`llm_config.yaml` was found but is malformed or internally inconsistent."""
-
-
-class UnknownLLMRoleError(LLMConfigError):
-    """A provider was requested for a role that `llm_config.yaml` does not declare."""

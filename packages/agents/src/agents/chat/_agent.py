@@ -23,13 +23,13 @@ and saves the loop entirely.
 
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import Any
 
 import ai
-from ai import agent_run_scope, interaction_scope
 from ai.dtos import (
     ChunkContext,
     PassageNote,
@@ -39,17 +39,25 @@ from ai.dtos import (
 from ai.prompts import CHAT_ORCHESTRATION, CHAT_PLAN, render, render_tool_index
 from llm_core import (
     LLMProvider,
-    MaxIterationsError,
     Message,
     ToolCall,
-    ToolCallFinished,
-    ToolCallStarted,
     ToolDefinition,
-    ToolExecutionError,
-    run_tool_loop,
-    tool_loop,
-    trace_context,
 )
+
+from agent_kit import (
+    AgentRequest,
+    ContextStore,
+    ExecutionPhase,
+    JsonBlob,
+    PlanPhase,
+    run_agent,
+)
+from agent_kit.orchestrator import DoneEvent as GenericDoneEvent
+from agent_kit.orchestrator import ErrorEvent as GenericErrorEvent
+from agent_kit.orchestrator import EvidenceEvent, PlanReplyEvent
+from agent_kit.orchestrator import TokenEvent as GenericTokenEvent
+from agent_kit.orchestrator import ToolCallEvent as GenericToolCallEvent
+from agent_kit.orchestrator import ToolResultEvent as GenericToolResultEvent
 
 from agents.chat._dtos import (
     EXCERPT_MAX_CHARS,
@@ -115,15 +123,6 @@ _BEGIN_RESEARCH_TOOL = ToolDefinition(
         "required": ["plan"],
     },
 )
-
-
-async def _begin_research(**_arguments: Any) -> dict[str, Any]:
-    """The plan step's tool executor, deliberately inert.
-
-    The plan is read off the call's arguments, not from what this returns, and
-    the one-iteration loop it runs in ends on this terminal tool.
-    """
-    return {"ok": True}
 
 
 def _plan_from(message: Message) -> str | None:
@@ -289,12 +288,14 @@ def _has_evidence(state: ChatState) -> bool:
 
 
 def _plan_messages_for(
-    request: ChatAgentRequest, tools: list[ToolDefinition]
+    request: ChatAgentRequest, tools: list[ToolDefinition], context: JsonBlob
 ) -> list[Message]:
     """The plan step's prompt.
 
     Shown the executor's tools so the plan it writes is realistic, though the
-    only tool it holds is `begin_research`.
+    only tool it holds is `begin_research`. The carry-over `context` blob — the
+    running notes an earlier turn left, `{}` on the first — is rendered into it
+    so the planner sees the conversation's state before it chooses an approach.
     """
     return render(
         CHAT_PLAN,
@@ -303,6 +304,7 @@ def _plan_messages_for(
             "today": datetime.now(UTC).date().isoformat(),
             "conversation_history": _format_history(request.history),
             "tools": render_tool_index(tools),
+            "context": json.dumps(context, ensure_ascii=False),
         },
     )
 
@@ -362,6 +364,48 @@ def _format_history(history: list[dict]) -> str:
     )
 
 
+def chat_context_carry(
+    blob: JsonBlob, _request: AgentRequest, state: ChatState
+) -> JsonBlob:
+    """The carry-over the chat agent leaves for the next turn.
+
+    Deterministic and free — read off the passages this turn cited, not from a
+    model call. It accumulates the case numbers the conversation has surfaced so
+    the next turn's planner has continuity ("we have already looked at Mål
+    12/2024") without re-retrieving. A chatty turn cites nothing and carries the
+    blob forward unchanged.
+
+    The default a caller passes as `run_chat_agent(..., derive_context=...)`; a
+    caller that wants a richer carry-over (an LLM-written running brief, say)
+    passes its own instead.
+    """
+    seen = {
+        case for case in blob.get("cases_discussed", []) if isinstance(case, str)
+    }
+    seen.update(
+        source.case_number for source in _sources(state) if source.case_number
+    )
+    return {"cases_discussed": sorted(seen)}
+
+
+def _synthesis_request(
+    request: ChatAgentRequest, state: ChatState
+) -> SynthesizeRequest:
+    """The evidence bundle the writer streams from, read out of the run's state."""
+    return SynthesizeRequest(
+        question=request.question,
+        chunks=_selected_chunk_contexts(state),
+        conversation_history=request.history,
+        readings=list(state.readings),
+        tabular=_tabular_evidence(state),
+        annotations=[
+            PassageNote(handle=note.handle, carries=note.carries, caution=note.caution)
+            for note in (state.selection.annotations if state.selection else [])
+        ],
+        gaps=list(state.selection.gaps) if state.selection else [],
+    )
+
+
 async def run_chat_agent(
     request: ChatAgentRequest,
     toolset: ChatToolset,
@@ -370,154 +414,116 @@ async def run_chat_agent(
     reader_provider: LLMProvider | None = None,
     executor_provider: LLMProvider | None = None,
     settings: ChatAgentSettings | None = None,
+    context_store: ContextStore | None = None,
+    derive_context: Callable[[JsonBlob, AgentRequest, ChatState], JsonBlob]
+    | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Answer `request.question` from the corpus, streaming progress then prose.
 
-    Three phases. A plan step on the strong `llm_provider` reads the question and
-    either replies directly — a greeting, a follow-up the history already answers
-    — or hands a plan to the executor. The executor loop then gathers evidence
-    with tools on `executor_provider`, a smaller model; it falls back to
-    `llm_provider` when unset, so a single-model run and every existing test still
-    work. A final streaming call on `llm_provider` writes the Swedish prose.
+    A thin configuration of `agent_kit.run_agent`: this owns the domain — the
+    tools, the Swedish prompts, and how the generic progress stream maps onto the
+    chat wire events — while the orchestrator owns the plan → execute → synthesize
+    control flow, the tracing scopes and the error funnel.
+
+    The plan step on the strong `llm_provider` reads the question and either
+    replies directly or hands a plan to the executor loop on `executor_provider`,
+    a smaller model that falls back to `llm_provider` when unset (so a single-model
+    run and every existing test still work). A final streaming call on
+    `llm_provider` writes the Swedish prose.
 
     Never raises for a question it cannot answer: a failure ends the stream with
-    an `ErrorEvent`, so a caller has one shape to handle rather than two. An
-    `ErrorEvent` is terminal — no `DoneEvent` follows it.
+    an `ErrorEvent`, which is terminal — no `DoneEvent` follows it.
     """
     settings = settings or get_chat_agent_settings()
     tools, executors, state = build_chat_tools(
         toolset, settings, reader_provider=reader_provider
     )
-    # The loop runs on the smaller model when one is wired; without it the whole
-    # turn is one model, which is what tests and `scripts/run_agent.py` do.
-    loop_provider = executor_provider or llm_provider
 
-    # Inherits the interaction the API opened, and mints one only when there is
-    # no caller to inherit from — a `scripts/run_agent.py` case, or a test. The
-    # `prompt` key attributes these records to a prompt version; the plan step
-    # overrides it to its own below, so a turn's cost splits by phase.
-    with (
-        interaction_scope(
-            source=_SOURCE, prompt=CHAT_ORCHESTRATION.name
-        ) as interaction_id,
-        agent_run_scope(),
-    ):
-        logger.info("Chat agent interaction %s", interaction_id)
+    # The prompt builders and the writer close over the concretely-typed request,
+    # tools and state, so the orchestrator's domain-free callbacks stay untyped by
+    # this project's shapes. The plan builder ignores the carry-over blob for now;
+    # it is threaded into the prompt when the context store is wired up.
+    plan = PlanPhase(
+        build_messages=lambda _req, _tools, blob: _plan_messages_for(
+            request, tools, blob
+        ),
+        plan_tool=_BEGIN_RESEARCH_TOOL,
+        read_plan=_plan_from,
+        prompt_name=CHAT_PLAN.name,
+        source=_PLAN_SOURCE,
+    )
+    execution = ExecutionPhase(
+        build_messages=lambda _req, _tools, strategy: _executor_messages_for(
+            request, tools, strategy
+        ),
+        terminal_tools={ChatTool.ANSWER},
+        max_iterations=settings.chat_agent_max_iterations,
+        prompt_name=CHAT_ORCHESTRATION.name,
+    )
 
-        # Phase 1 — plan. One call on the strong model: it either writes a direct
-        # reply (no tool) or calls begin_research with a plan. A one-iteration loop
-        # with begin_research as its terminal tool is the whole mechanism, and it
-        # is traced on its own source so planning cost is separable from executing.
-        try:
-            with trace_context(source=_PLAN_SOURCE, prompt=CHAT_PLAN.name):
-                plan_result = await run_tool_loop(
-                    _plan_messages_for(request, tools),
-                    [_BEGIN_RESEARCH_TOOL],
-                    {_BEGIN_RESEARCH: _begin_research},
-                    provider=llm_provider,
-                    max_iterations=1,
-                    terminal_tools={_BEGIN_RESEARCH},
-                )
-        except Exception:
-            logger.exception("Chat agent %s planning failed", interaction_id)
-            yield ErrorEvent(message=_FAILURE_MESSAGE)
-            return
-
-        plan = _plan_from(plan_result.message)
-        if plan is None:
-            # A direct reply: the plan step answered from the conversation itself.
-            # An empty sources list, and it is the truthful one — this answer rests
-            # on the history, not on any decision.
-            yield SourcesEvent(sources=[])
-            yield TokenEvent(text=plan_result.message.content)
-            yield DoneEvent()
-            return
-
-        # Phase 2 — execute. The tool loop, carrying the plan, on the smaller model.
-        try:
-            async for event in tool_loop(
-                _executor_messages_for(request, tools, plan),
-                tools,
-                executors,
-                provider=loop_provider,
-                max_iterations=settings.chat_agent_max_iterations,
-                terminal_tools={ChatTool.ANSWER},
-            ):
-                match event:
-                    case ToolCallStarted(call=call):
-                        # A name that is not one of ours has no progress to
-                        # report; the loop raises ToolExecutionError for it on
-                        # the next line, which is the failure worth logging.
-                        if (tool := _tool_or_none(call.name)) is not None:
-                            yield _call_event(tool, call)
-                    case ToolCallFinished(call=call, result=result):
-                        if (tool := _tool_or_none(call.name)) is None:
-                            continue
-                        if tool is ChatTool.QUERY_CORPUS and isinstance(result, dict):
-                            # Before the result event, so a client that renders
-                            # the query can do so while the label is on screen.
-                            yield _sql_event(result, state)
-                        yield _result_event(tool, call, result)
-                    # A loop ending with no tool call is the executor writing prose
-                    # despite a plan — rare, and not a direct reply (the plan step
-                    # owns those). It gathered nothing, so it falls to the evidence
-                    # gate below like any empty-handed loop.
-        except MaxIterationsError:
-            logger.warning(
-                "Chat agent %s exhausted its iteration budget", interaction_id
-            )
-            # An exhausted loop is not necessarily empty-handed: if the agent
-            # gathered evidence but never called answer, there is nothing to
-            # synthesize from, so this is terminal either way.
-            yield ErrorEvent(message=_FAILURE_MESSAGE)
-            return
-        except ToolExecutionError:
-            # An executor raised rather than returning an error result, which
-            # means a defect here and not a bad tool call — the tools turn every
-            # expected failure into a tool result on purpose.
-            logger.exception("Chat agent %s tool executor failed", interaction_id)
-            yield ErrorEvent(message=_FAILURE_MESSAGE)
-            return
-        except Exception:
-            logger.exception("Chat agent %s failed", interaction_id)
-            yield ErrorEvent(message=_FAILURE_MESSAGE)
-            return
-
+    async def _synthesize(
+        _req: AgentRequest, _evidence: ChatState
+    ) -> AsyncIterator[str]:
+        # The honest answer to a question the corpus does not address, said
+        # plainly rather than by asking a model to improvise around nothing.
         if not _has_evidence(state):
-            # The honest answer to a question the corpus does not address. Said
-            # plainly rather than by asking a model to improvise around nothing.
-            yield SourcesEvent(sources=[])
-            yield TokenEvent(text=_NO_EVIDENCE_MESSAGE)
-            yield DoneEvent()
+            yield _NO_EVIDENCE_MESSAGE
             return
+        async for token in ai.synthesize_answer(
+            _synthesis_request(request, state), provider=llm_provider
+        ):
+            yield token
 
-        synthesis = SynthesizeRequest(
-            question=request.question,
-            chunks=_selected_chunk_contexts(state),
-            conversation_history=request.history,
-            readings=list(state.readings),
-            tabular=_tabular_evidence(state),
-            annotations=[
-                PassageNote(
-                    handle=note.handle, carries=note.carries, caution=note.caution
+    async for event in run_agent(
+        request,
+        tools=tools,
+        executors=executors,
+        evidence=state,
+        plan=plan,
+        execution=execution,
+        synthesize=_synthesize,
+        plan_provider=llm_provider,
+        executor_provider=executor_provider,
+        source=_SOURCE,
+        context_store=context_store,
+        conversation_id=request.conversation_id,
+        derive_context=derive_context,
+    ):
+        match event:
+            case PlanReplyEvent(text=text):
+                # A direct reply rests on the history, not on any decision, so an
+                # empty sources list is the truthful one.
+                yield SourcesEvent(sources=[])
+                yield TokenEvent(text=text)
+            case GenericToolCallEvent(id=cid, name=name, arguments=arguments):
+                # A name that is not one of ours has no progress to report.
+                if (tool := _tool_or_none(name)) is not None:
+                    yield _call_event(
+                        tool, ToolCall(id=cid, name=name, arguments=arguments)
+                    )
+            case GenericToolResultEvent(
+                id=cid, name=name, arguments=arguments, result=result
+            ):
+                if (tool := _tool_or_none(name)) is None:
+                    continue
+                if tool is ChatTool.QUERY_CORPUS and isinstance(result, dict):
+                    # Before the result event, so a client that renders the
+                    # query can do so while the label is on screen.
+                    yield _sql_event(result, state)
+                yield _result_event(
+                    tool, ToolCall(id=cid, name=name, arguments=arguments), result
                 )
-                for note in (state.selection.annotations if state.selection else [])
-            ],
-            gaps=list(state.selection.gaps) if state.selection else [],
-        )
-
-        # Before the prose, not after it. The answer marks its claims with
-        # passage handles as it streams, and a mark a client cannot resolve yet
-        # is a citation it has to render as nothing. The evidence was chosen
-        # when `answer` was called, so this is also the truthful order.
-        yield SourcesEvent(sources=_sources(state))
-
-        try:
-            async for token in ai.synthesize_answer(synthesis, provider=llm_provider):
-                yield TokenEvent(text=token)
-        except Exception:
-            logger.exception("Chat agent %s synthesis failed", interaction_id)
-            yield ErrorEvent(message=_FAILURE_MESSAGE)
-            return
-
-        yield DoneEvent()
+            case EvidenceEvent():
+                # Before the prose, not after it. The answer marks its claims
+                # with passage handles as it streams, and a mark a client cannot
+                # resolve yet is a citation it renders as nothing. Empty in the
+                # no-evidence case — the same list a direct reply sends.
+                yield SourcesEvent(sources=_sources(state))
+            case GenericTokenEvent(text=text):
+                yield TokenEvent(text=text)
+            case GenericDoneEvent():
+                yield DoneEvent()
+            case GenericErrorEvent():
+                # The orchestrator's failure string is generic; the reader, whose
+                # stream has already started, gets this project's message.
+                yield ErrorEvent(message=_FAILURE_MESSAGE)

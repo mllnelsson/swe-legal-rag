@@ -4,7 +4,7 @@ title: Repository Layer
 description: The function-based data-access layer bridging SQLAlchemy models and Pydantic DTOs, injected into services as Protocol-typed namespaces.
 resource: packages/shared/src/shared/repositories
 tags: [data-model, repositories, data-layer, dto, protocol]
-timestamp: 2026-08-14T00:00:00Z
+timestamp: 2026-08-28T00:00:00Z
 ---
 
 # Repository Layer
@@ -111,6 +111,12 @@ the session/dependency flow explicit.
   never reading the column first. Replaces a read-modify-write that lost whichever of
   two concurrent turns on one session committed second; a missing session is a no-op
   because the `UPDATE` simply matches no row. See [sessions](/data-model/sessions.md).
+- `session.get_context(session, session_id)` / `session.set_context(session, session_id,
+  context)` — the conversational agent's carry-over blob in `sessions.context`, distinct
+  from `history`: `get_context` returns a copy (`{}` for a missing session), `set_context`
+  replaces the whole blob in one `UPDATE`, no row lock. Backs
+  `api.services.context_store.PostgresContextStore`. See
+  [sessions](/data-model/sessions.md#reading-and-writing-the-context-blob).
 - `session.list_summaries(session, *, limit, offset)` — the conversation list behind
   [`GET /api/sessions`](/api/sessions.md), projected in SQL so `history` never leaves
   Postgres: `jsonb_extract_path_text(history, '0', 'content')` for the opening question,

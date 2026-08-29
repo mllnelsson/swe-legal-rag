@@ -4,7 +4,7 @@ title: agents Package
 description: The LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — the text-to-SQL agent behind POST /api/sql and the conversational agent behind POST /api/chat — their module layout, and the injected-toolset seam that keeps the dependency running api to agents.
 resource: packages/agents
 tags: [package, agents, sql, chat, tool-loop, llm]
-timestamp: 2026-08-27T00:00:00Z
+timestamp: 2026-08-28T00:00:00Z
 ---
 
 # agents Package (`packages/agents/`)
@@ -13,7 +13,8 @@ An **agent** here means an LLM driving a tool loop toward an answer, as opposed 
 deterministic retrieval tool set in [api](/packages/api.md). Each is a function over its
 inputs rather than a service that reaches into a database itself, which is what lets one
 be called as a tool by another. Depends on `shared` (models, for the live schema) and
-`ai` + `llm-core` (the prompt templates and the tool loop); depended on by `api`.
+`ai` + `llm-core` + [`agent-kit`](/packages/agent-kit.md) (the prompt templates and the
+tool loop, plus — for the chat agent — the generic orchestrator); depended on by `api`.
 
 Two live here, and they differ in shape:
 
@@ -40,21 +41,25 @@ tools arrive as an injected `ChatToolset`, and it calls `run_sql_agent` as one o
 | `sql/_sandbox.py` | `execute_readonly()` — runs a statement inside `SET TRANSACTION READ ONLY` plus a `SET LOCAL statement_timeout`, always rolled back regardless of outcome |
 | `sql/_tools.py` | The three tools the loop is given (`list_column_values`, `run_sql`, `note_assumption`) and `GroundingState`, the mutable per-run record of what the agent has grounded, assumed, and attempted. `build_sql_tools(session, settings, document=None)` |
 | `sql/_agent.py` | `run_sql_agent(..., document=None)` — wires the prompt, the tools, and `llm_core.tool_loop` together, and assembles the result from the trail `GroundingState` left behind |
-| `chat/_dtos.py` | The chat wire contract: `ChatAgentRequest`, the `AgentEvent` union, `SourceReference`, `PassageNote` (a selected passage's structured guidance — `handle`, `carries`, `caution`), `ReadingSelection` (the reader's own output — `relevance`, `chunk_indices`, `summary`), the `ChatTool` / `ProgressLabel` / `ToolStatus` enums, and the shapes a toolset returns (`SearchOutcome`, `Vocabulary`, `DecisionText`, `DecisionProfile`) |
+| `chat/_dtos.py` | The chat wire contract: `ChatAgentRequest` (`question`, `history`, `conversation_id` — the last keys the [carry-over context store](#carry-over-context) to a conversation), the `AgentEvent` union, `SourceReference`, `PassageNote` (a selected passage's structured guidance — `handle`, `carries`, `caution`), `ReadingSelection` (the reader's own output — `relevance`, `chunk_indices`, `summary`), the `ChatTool` / `ProgressLabel` enums (`ToolStatus` is re-exported from `agent_kit.orchestrator`, the run status vocabulary being agent-kit's own), and the shapes a toolset returns (`SearchOutcome`, `Vocabulary`, `DecisionText`, `DecisionProfile`) |
 | `chat/_protocols.py` | The `ChatToolset` Protocol — five async capabilities in the agent's own shapes. See [the seam](#the-toolset-seam) below |
 | `chat/_tools.py` | `build_chat_tools(toolset, settings, reader_provider=None)` → the six tool definitions, their executors and `ChatState`; plus `label_for_call()` and `FREE_TEXT_FILTER_FIELDS`, the grounding precondition's column list |
 | `chat/_reader.py` | `read_decision_text()` — the one-shot sub-agent a whole decision goes to, returning a `ReadingSelection`: which passages bear on the question, by index, and how they connect. `format_numbered_chunks()`, which numbers each passage and marks each appendix boundary before it does |
-| `chat/_agent.py` | `run_chat_agent(request, toolset, *, llm_provider, reader_provider, executor_provider=None, ...)` — a one-iteration `llm_core.run_tool_loop` plans the turn (direct reply, or `begin_research(plan)`) on `llm_provider`; then, unless it replied directly, drives the executor's `llm_core.tool_loop` on `executor_provider` (falling back to `llm_provider` when unset) with a plain `async for`, translating its yielded events into `AgentEvent`s as it goes; then streams one synthesis call on `llm_provider` over the evidence the executor selected |
+| `chat/_agent.py` | `run_chat_agent(request, toolset, *, llm_provider, reader_provider, executor_provider=None, context_store=None, derive_context=None, ...)` — a thin configuration of [`agent_kit.run_agent`](/packages/agent-kit.md#run_agent-plan--execute--synthesize): owns the domain (the Swedish `PlanPhase`/`ExecutionPhase` prompt builders on `llm_provider`/`executor_provider`, the six chat tools, `chat_context_carry` as the default `derive_context`) and translates the orchestrator's generic event stream into `agents.chat`'s own `AgentEvent`s as it consumes it |
 
-Both agents open their correlation scope the same way, and neither mints an
-`interaction_id` outright: `ai.interaction_scope()` **inherits** one already in the
-trace context and mints only when there is none. That is what lets `run_sql_agent`,
-reached as the conversational agent's `query_corpus` tool, keep its spend inside the
-turn that asked for it, while the same function reached from `POST /api/sql` — with no
-caller to inherit from — still opens an interaction of its own. Every sub-agent
-invocation also opens an `ai.agent_run_scope()`, which always mints — both agents and
-each `read_decision_text` reading — so repeated calls to the same sub-agent within one
-turn stay distinguishable. See [LLM Observability](/observability.md).
+Both agents run inside the same correlation scope, and neither mints an
+`interaction_id` outright: `interaction_scope()` **inherits** one already in the trace
+context and mints only when there is none. `run_sql_agent` opens it directly around
+its own call; `run_chat_agent` opens none itself — it configures `agent_kit.run_agent`
+with `source="agents.chat"`, and the orchestrator is what opens `interaction_scope`
+(and `agent_run_scope`) around the whole turn. Either way that is what lets
+`run_sql_agent`, reached as the conversational agent's `query_corpus` tool, keep its
+spend inside the turn that asked for it, while the same function reached from
+`POST /api/sql` — with no caller to inherit from — still opens an interaction of its
+own. Every sub-agent invocation also opens an `agent_run_scope()`, which always
+mints — both agents and each `read_decision_text` reading — so repeated calls to the
+same sub-agent within one turn stay distinguishable. See [LLM
+Observability](/observability.md).
 
 Every function above the `_semantic_model.py` layer takes an optional `document`
 parameter and falls back to the cached, process-wide one — this is what lets a test
@@ -81,6 +86,27 @@ its own shapes; `api` supplies an object that satisfies them
 The second benefit is testing: a scripted toolset is a plain object with five methods,
 so the whole loop is exercised with no database, no HTTP and no model. See
 [testing strategy](/testing.md).
+
+## Carry-over context
+
+`run_chat_agent` accepts an optional `context_store` ([`agent_kit.ContextStore`](/packages/agent-kit.md#the-context-store-carry-over-without-redoing-the-work))
+and `derive_context` callable, threaded straight through to `agent_kit.run_agent`.
+When both are given and `ChatAgentRequest.conversation_id` is set, the stored JSON
+blob for that conversation is injected into the plan step's prompt ahead of every
+turn, and the turn's updated blob is persisted once the run reaches a terminal
+event.
+
+`chat_context_carry(blob, request, state) -> JsonBlob` in `chat/_agent.py` is the
+default `derive_context` a caller passes. It is deterministic and free — no model
+call — reading the case numbers this turn cited off `_sources(state)` and merging
+them into the blob's running `cases_discussed` list, so a later turn's planner sees
+"we have already looked at Mål 12/2024" without re-retrieving. A caller wanting a
+richer carry-over (an LLM-written running brief, say) passes its own function
+instead; `run_chat_agent` has no opinion on the blob's shape beyond passing it
+through. This app's own wiring — the durable store backing `ContextStore` — is
+`api.services.context_store.PostgresContextStore`, keyed by session id; see
+[sessions](/data-model/sessions.md) and [the conversational
+agent](/retrieval/chat-agent.md#carry-over-context).
 
 ## The semantic model (`agents/sql/_semantic_model.py`)
 

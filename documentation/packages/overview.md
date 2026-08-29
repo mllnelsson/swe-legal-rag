@@ -3,7 +3,7 @@ type: Concept
 title: Backend Packages Overview
 description: The uv workspace layout, package dependency graph, and the layered Model→Repo→Service→Endpoint architecture.
 tags: [backend, packages, workspace, architecture]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-08-28T00:00:00Z
 ---
 
 # Backend Packages Overview
@@ -24,8 +24,11 @@ Monorepo with a package per concern; shared code and AI tooling are internal pac
 packages/
   shared/            — SQLAlchemy models, Pydantic DTOs, repo layer, DB config, common utils
   llm-core/          — standalone, project-agnostic LLM abstraction
-  ai/                — project-specific LLM logic: prompts, domain DTOs, decomposition, synthesis, embeddings
-  agents/            — stateless LLM-tool-loop agents; today, the text-to-SQL agent behind POST /api/sql
+  agent-kit/         — domain-free agent core: orchestrator, context store, prompt renderer,
+                       LLM role/provider config, trace recorder — depends only on llm-core
+  ai/                — project-specific LLM logic: Swedish prompts, domain DTOs, synthesis, embeddings
+  agents/            — stateless LLM-tool-loop agents; the text-to-SQL agent behind POST /api/sql
+                       and the conversational agent behind POST /api/chat
   api/               — FastAPI app, endpoints, retrieval service layer
   worker-crawl/  worker-download/  worker-parse/  worker-metadata/
   worker-extract/  worker-chunk/  worker-embed/
@@ -62,11 +65,22 @@ markers; hyphenated directory names map to underscore Python names (`worker-craw
 ```
 shared          ← depended on by everything
 llm-core        ← standalone; depends only on pydantic, pydantic-settings, google-genai, openai
-ai              ← depends on shared + llm-core; depended on by api, agents + relevant workers
-agents          ← depends on shared + ai + llm-core; depended on by api
+agent-kit       ← depends only on llm-core + pydantic, pydantic-settings, pyyaml; imports
+                  nothing from shared, ai, agents or api
+ai              ← depends on shared + llm-core + agent-kit; depended on by api, agents +
+                  relevant workers
+agents          ← depends on shared + ai + llm-core + agent-kit; depended on by api
 api             ← depends on shared, ai, agents
 worker-*        ← depends on shared, some depend on ai
 ```
+
+`agent-kit` sits between `llm-core` and `ai` and never depends on `shared`: it is the
+reusable, domain-free agent core — the plan→execute→synthesize orchestrator, the
+prompt renderer, the LLM role/provider config, the file trace recorder and
+correlation scopes, and the per-conversation context store. `ai` and `agents` are thin consumers of it: `ai` keeps the Swedish
+prompt templates, the evidence DTOs and formatters, and the embedding abstraction;
+`agents.run_chat_agent` is a configuration of `agent_kit.run_agent` plus an event
+mapping onto the domain's own wire events. See [agent-kit](/packages/agent-kit.md).
 
 The [ai package](/packages/ai.md) is consumed by [api](/packages/api.md) (decomposition,
 synthesis), [agents](/packages/agents.md) (the `TEXT_TO_SQL` prompt and provider role

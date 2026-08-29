@@ -3,7 +3,7 @@ type: Concept
 title: Conversational Agent
 description: The agent behind the chat endpoint — a GLM plan step that either replies directly or hands a research plan to an executor tool loop over the deterministic retrieval tool set (openai/gpt-oss-120b, one terminal tool `answer`); two sub-agents on the same model, one that counts and one that selects citable passages from a decision rather than summarising it; and a streamed GLM writing call that marks each claim with the passage handle it rests on.
 tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-27T00:00:00Z
+timestamp: 2026-08-28T00:00:00Z
 ---
 
 # Conversational Agent
@@ -37,6 +37,13 @@ run_chat_agent(request, toolset)
   └─ (plan step replied directly: no executor loop, no synthesis call)
        → sources(empty) → token(whole) → done
 ```
+
+`run_chat_agent` is a configuration of
+[`agent_kit.run_agent`](/packages/agent-kit.md#run_agent-plan--execute--synthesize):
+the domain-free orchestrator owns the plan → execute → synthesize control flow,
+the tracing scopes and the error funnel, while this package supplies the
+Swedish prompts, the six tools, and the translation from the orchestrator's
+generic event stream onto the wire events above.
 
 **Three phases, and the split is the point.** A plan step reads the question
 once, on the strong model, and either writes the reply itself — a greeting, a
@@ -300,6 +307,33 @@ selection is fixed the moment `answer()` runs and a marker should be
 resolvable the instant it arrives. See [the sources
 event](/api/chat-endpoint.md#event-sources).
 
+## Carry-over context
+
+The plan step's prompt is shown a small JSON blob — the conversation's
+carry-over — ahead of the question, so a follow-up's planner sees what earlier
+turns established without redoing the retrieval that established it. It is
+`{}` on a conversation's first turn.
+
+`run_chat_agent(..., context_store=, derive_context=)` wires the feature up.
+When `request.conversation_id` is set and both are given,
+[`agent_kit.run_agent`](/packages/agent-kit.md#the-context-store-carry-over-without-redoing-the-work)
+reads the stored blob before the plan call, and — after a direct reply or after
+synthesis completes on a researched turn — persists `derive_context(blob,
+request, evidence)`. `chat_context_carry` (`agents/chat/_agent.py`) is the
+default: deterministic, free, and reading nothing from a model — it accumulates
+the case numbers this turn cited (off `event: sources`) into the blob's
+`cases_discussed` list. A chatty turn that cited nothing carries the blob
+forward unchanged.
+
+**Distinct from `history`.** The stored blob is the agent's own working notes,
+never shown to a user and never rendered into a reply; the transcript a client
+sees is `history`, projected separately by `history_for_llm()`. This app
+persists the blob in `sessions.context`, a column beside `sessions.history`,
+through `api.services.context_store.PostgresContextStore` — see
+[sessions](/data-model/sessions.md). A caller with no `conversation_id`, or no
+store wired up, gets a turn with no carry-over: the blob is always `{}` and
+nothing is persisted.
+
 ## Settings
 
 `ChatAgentSettings` (`agents/config.py`) — loop bounds live next to the agent
@@ -353,10 +387,12 @@ planning, executing and writing rather than one undifferentiated total. A
 direct reply writes only the one `agents.chat.plan` record: no executor loop
 runs and no synthesis call follows, so a greeting is one record total. All of them share one
 `interaction_id`, which is what makes "what did this question cost" a sum over
-one key: `run_chat_agent` opens an `interaction_scope` that **inherits** the id
+one key: `agent_kit.run_agent`, configured by `run_chat_agent` with
+`source="agents.chat"`, opens an `interaction_scope` that **inherits** the id
 the API already put in the trace context rather than minting its own, so
-`query_corpus` — itself another `interaction_scope` — joins the same turn
-instead of starting a separate one. Every sub-agent invocation also opens its own
+`query_corpus` — itself another `interaction_scope`, opened directly by
+`run_sql_agent` — joins the same turn instead of starting a separate one.
+Every sub-agent invocation also opens its own
 `agent_run_scope`, which always mints — the counting agent, and each individual
 reading. A turn can make several `query_corpus` calls and read up to
 `chat_agent_max_documents_read` decisions, and those are identical in every other
