@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -48,7 +48,6 @@ from agent_kit import (
     AgentRequest,
     ContextStore,
     ExecutionPhase,
-    JsonBlob,
     PlanPhase,
     run_agent,
 )
@@ -75,7 +74,12 @@ from agents.chat._dtos import (
     ToolStatus,
 )
 from agents.chat._protocols import ChatToolset
-from agents.chat._tools import ChatState, build_chat_tools, label_for_call
+from agents.chat._tools import (
+    ChatScratchpad,
+    build_chat_tools,
+    chat_scratchpad_codec,
+    label_for_call,
+)
 from agents.config import ChatAgentSettings, get_chat_agent_settings
 
 logger = logging.getLogger(__name__)
@@ -187,41 +191,46 @@ def _status_for_result(result: Any) -> ToolStatus:
     return ToolStatus.REFUSED if result.get("refused") else ToolStatus.ERROR
 
 
-def _sql_event(result: dict[str, Any], state: ChatState) -> SqlEvent:
-    """The query behind a count, with the whole attempt trail.
+def _sql_event(state: ChatScratchpad) -> SqlEvent:
+    """The query behind a count, with its full rows and the whole attempt trail.
 
-    `attempts` comes off the SQL agent's own result rather than the tool
-    payload: it is what shows a reader that the agent grounded a predicate
-    before committing to the query that produced the answer.
+    Read from the pad's stored `SqlAgentResult`, not the tool payload: the loop
+    payload now carries only a sample, but the client's obligation is to show the
+    query *and* the rows it produced, so the wire event carries the full result.
+    `attempts` is what shows a reader the agent grounded a predicate before
+    committing to the query that produced the answer.
     """
-    attempts = state.tabular.attempts if state.tabular is not None else []
+    tabular = state.tabular()
+    if tabular is None:
+        return SqlEvent(answered=False)
     return SqlEvent(
-        answered=bool(result.get("answered")),
-        sql=result.get("sql"),
-        columns=result.get("columns") or [],
-        rows=result.get("rows") or [],
-        row_count=result.get("row_count") or 0,
-        truncated=bool(result.get("truncated")),
-        assumptions=result.get("assumptions") or [],
-        attempts=list(attempts),
+        answered=tabular.answered,
+        sql=tabular.sql,
+        columns=tabular.columns,
+        rows=tabular.rows,
+        row_count=tabular.row_count,
+        truncated=tabular.truncated,
+        assumptions=tabular.assumptions,
+        attempts=list(tabular.attempts),
     )
 
 
-def _selected_chunk_contexts(state: ChatState) -> list[ChunkContext]:
+def _selected_chunk_contexts(state: ChatScratchpad) -> list[ChunkContext]:
     """The selected passages, in the order the agent named them.
 
     The handle travels with each one: it is what the writer marks a claim with
     and what the client resolves that mark back to a source.
     """
-    if state.selection is None:
+    selection = state.selection()
+    if selection is None:
         return []
     contexts: list[ChunkContext] = []
-    for handle in state.selection.chunk_handles:
-        record = state.chunks.get(handle)
+    for handle in selection.chunk_handles:
+        record = state.chunk(handle)
         if record is None:
             continue
-        decision_handle = state.handle_by_document.get(record.document_id)
-        decision = state.decisions.get(decision_handle or "")
+        decision_handle = state.decision_handle_for(record.document_id)
+        decision = state.decision(decision_handle or "")
         contexts.append(
             ChunkContext(
                 chunk_text=record.chunk.text,
@@ -234,8 +243,8 @@ def _selected_chunk_contexts(state: ChatState) -> list[ChunkContext]:
     return contexts
 
 
-def _tabular_evidence(state: ChatState) -> TabularEvidence | None:
-    result = state.tabular
+def _tabular_evidence(state: ChatScratchpad) -> TabularEvidence | None:
+    result = state.tabular()
     if result is None or not result.answered or result.sql is None:
         return None
     return TabularEvidence(
@@ -248,7 +257,7 @@ def _tabular_evidence(state: ChatState) -> TabularEvidence | None:
     )
 
 
-def _sources(state: ChatState) -> list[SourceReference]:
+def _sources(state: ChatScratchpad) -> list[SourceReference]:
     """One reference per cited passage, in the order the agent selected them.
 
     Not deduplicated by decision. The answer marks each claim with a passage
@@ -256,15 +265,16 @@ def _sources(state: ChatState) -> list[SourceReference]:
     passages of one decision would leave one of those marks pointing at
     nothing. A client that wants the decisions groups by `document_id`.
     """
-    if state.selection is None:
+    selection = state.selection()
+    if selection is None:
         return []
     sources: list[SourceReference] = []
-    for handle in state.selection.chunk_handles:
-        record = state.chunks.get(handle)
+    for handle in selection.chunk_handles:
+        record = state.chunk(handle)
         if record is None:
             continue
-        decision_handle = state.handle_by_document.get(record.document_id)
-        decision = state.decisions.get(decision_handle or "")
+        decision_handle = state.decision_handle_for(record.document_id)
+        decision = state.decision(decision_handle or "")
         sources.append(
             SourceReference(
                 handle=handle,
@@ -281,21 +291,22 @@ def _sources(state: ChatState) -> list[SourceReference]:
     return sources
 
 
-def _has_evidence(state: ChatState) -> bool:
+def _has_evidence(state: ChatScratchpad) -> bool:
     return bool(
-        _selected_chunk_contexts(state) or state.readings or _tabular_evidence(state)
+        _selected_chunk_contexts(state) or state.readings() or _tabular_evidence(state)
     )
 
 
 def _plan_messages_for(
-    request: ChatAgentRequest, tools: list[ToolDefinition], context: JsonBlob
+    request: ChatAgentRequest, tools: list[ToolDefinition], scratchpad: ChatScratchpad
 ) -> list[Message]:
     """The plan step's prompt.
 
     Shown the executor's tools so the plan it writes is realistic, though the
-    only tool it holds is `begin_research`. The carry-over `context` blob — the
-    running notes an earlier turn left, `{}` on the first — is rendered into it
-    so the planner sees the conversation's state before it chooses an approach.
+    only tool it holds is `begin_research`. The planner sees only the scratchpad's
+    *shorthand* — the per-entry previews an earlier turn left, restored before this
+    call — never the heavy values, which the executor recalls by handle. Empty on
+    the first turn.
     """
     return render(
         CHAT_PLAN,
@@ -304,7 +315,7 @@ def _plan_messages_for(
             "today": datetime.now(UTC).date().isoformat(),
             "conversation_history": _format_history(request.history),
             "tools": render_tool_index(tools),
-            "context": json.dumps(context, ensure_ascii=False),
+            "context": json.dumps(scratchpad.digest(), ensure_ascii=False),
         },
     )
 
@@ -364,45 +375,22 @@ def _format_history(history: list[dict]) -> str:
     )
 
 
-def chat_context_carry(
-    blob: JsonBlob, _request: AgentRequest, state: ChatState
-) -> JsonBlob:
-    """The carry-over the chat agent leaves for the next turn.
-
-    Deterministic and free — read off the passages this turn cited, not from a
-    model call. It accumulates the case numbers the conversation has surfaced so
-    the next turn's planner has continuity ("we have already looked at Mål
-    12/2024") without re-retrieving. A chatty turn cites nothing and carries the
-    blob forward unchanged.
-
-    The default a caller passes as `run_chat_agent(..., derive_context=...)`; a
-    caller that wants a richer carry-over (an LLM-written running brief, say)
-    passes its own instead.
-    """
-    seen = {
-        case for case in blob.get("cases_discussed", []) if isinstance(case, str)
-    }
-    seen.update(
-        source.case_number for source in _sources(state) if source.case_number
-    )
-    return {"cases_discussed": sorted(seen)}
-
-
 def _synthesis_request(
-    request: ChatAgentRequest, state: ChatState
+    request: ChatAgentRequest, state: ChatScratchpad
 ) -> SynthesizeRequest:
-    """The evidence bundle the writer streams from, read out of the run's state."""
+    """The evidence bundle the writer streams from, read out of the scratchpad."""
+    selection = state.selection()
     return SynthesizeRequest(
         question=request.question,
         chunks=_selected_chunk_contexts(state),
         conversation_history=request.history,
-        readings=list(state.readings),
+        readings=list(state.readings()),
         tabular=_tabular_evidence(state),
         annotations=[
             PassageNote(handle=note.handle, carries=note.carries, caution=note.caution)
-            for note in (state.selection.annotations if state.selection else [])
+            for note in (selection.annotations if selection else [])
         ],
-        gaps=list(state.selection.gaps) if state.selection else [],
+        gaps=list(selection.gaps) if selection else [],
     )
 
 
@@ -415,8 +403,6 @@ async def run_chat_agent(
     executor_provider: LLMProvider | None = None,
     settings: ChatAgentSettings | None = None,
     context_store: ContextStore | None = None,
-    derive_context: Callable[[JsonBlob, AgentRequest, ChatState], JsonBlob]
-    | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Answer `request.question` from the corpus, streaming progress then prose.
 
@@ -440,12 +426,12 @@ async def run_chat_agent(
     )
 
     # The prompt builders and the writer close over the concretely-typed request,
-    # tools and state, so the orchestrator's domain-free callbacks stay untyped by
-    # this project's shapes. The plan builder ignores the carry-over blob for now;
-    # it is threaded into the prompt when the context store is wired up.
+    # tools and scratchpad, so the orchestrator's domain-free callbacks stay
+    # untyped by this project's shapes. The plan builder reads the scratchpad's
+    # shorthand — restored from the store before this call — not the raw blob.
     plan = PlanPhase(
-        build_messages=lambda _req, _tools, blob: _plan_messages_for(
-            request, tools, blob
+        build_messages=lambda _req, _tools, _blob: _plan_messages_for(
+            request, tools, state
         ),
         plan_tool=_BEGIN_RESEARCH_TOOL,
         read_plan=_plan_from,
@@ -462,7 +448,7 @@ async def run_chat_agent(
     )
 
     async def _synthesize(
-        _req: AgentRequest, _evidence: ChatState
+        _req: AgentRequest, _evidence: ChatScratchpad
     ) -> AsyncIterator[str]:
         # The honest answer to a question the corpus does not address, said
         # plainly rather than by asking a model to improvise around nothing.
@@ -487,7 +473,12 @@ async def run_chat_agent(
         source=_SOURCE,
         context_store=context_store,
         conversation_id=request.conversation_id,
-        derive_context=derive_context,
+        # The scratchpad is both the evidence the executors write and the pad the
+        # loop boards and the store persists; the codec is the only domain hook.
+        scratchpad=state,
+        scratchpad_codec=chat_scratchpad_codec(
+            cap=settings.chat_agent_max_carried_entries
+        ),
     ):
         match event:
             case PlanReplyEvent(text=text):
@@ -509,7 +500,7 @@ async def run_chat_agent(
                 if tool is ChatTool.QUERY_CORPUS and isinstance(result, dict):
                     # Before the result event, so a client that renders the
                     # query can do so while the label is on screen.
-                    yield _sql_event(result, state)
+                    yield _sql_event(state)
                 yield _result_event(
                     tool, ToolCall(id=cid, name=name, arguments=arguments), result
                 )

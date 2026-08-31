@@ -28,6 +28,7 @@ from typing import Any
 from llm_core import (
     LLMProvider,
     MaxIterationsError,
+    Scratchpad,
     ToolCallFinished,
     ToolCallStarted,
     ToolDefinition,
@@ -40,7 +41,12 @@ from llm_core import (
 )
 
 from agent_kit.context import ContextStore, JsonBlob
-from agent_kit.orchestrator._dtos import AgentRequest, ExecutionPhase, PlanPhase
+from agent_kit.orchestrator._dtos import (
+    AgentRequest,
+    ExecutionPhase,
+    PlanPhase,
+    ScratchpadCodec,
+)
 from agent_kit.orchestrator._events import (
     AgentEvent,
     DoneEvent,
@@ -79,18 +85,32 @@ def _tool_status(result: Any) -> ToolStatus:
     return ToolStatus.REFUSED if result.get("refused") else ToolStatus.ERROR
 
 
-async def _persist_context(
+def _persistence_ready(
     context_store: ContextStore | None,
     conversation_id: str | None,
-    derive_context: Callable[[JsonBlob, AgentRequest, Any], JsonBlob] | None,
-    blob: JsonBlob,
-    request: AgentRequest,
-    evidence: Any,
+    scratchpad: Scratchpad[Any] | None,
+    codec: ScratchpadCodec[Any] | None,
+) -> bool:
+    """Whether all four pieces the scratchpad carry-over needs are wired."""
+    return (
+        context_store is not None
+        and conversation_id is not None
+        and scratchpad is not None
+        and codec is not None
+    )
+
+
+async def _persist_scratchpad(
+    context_store: ContextStore,
+    conversation_id: str,
+    scratchpad: Scratchpad[Any],
+    codec: ScratchpadCodec[Any],
 ) -> None:
-    """Write the turn's updated carry-over, if the host wired persistence up."""
-    if context_store is None or conversation_id is None or derive_context is None:
-        return
-    await context_store.set(conversation_id, derive_context(blob, request, evidence))
+    """Store the whole pad under this conversation, for the next turn to restore."""
+    await context_store.set(
+        conversation_id,
+        {"scratchpad": scratchpad.dump(codec.encode, cap=codec.cap)},
+    )
 
 
 async def run_agent[E](
@@ -107,7 +127,8 @@ async def run_agent[E](
     source: str = "agent",
     context_store: ContextStore | None = None,
     conversation_id: str | None = None,
-    derive_context: Callable[[JsonBlob, AgentRequest, E], JsonBlob] | None = None,
+    scratchpad: Scratchpad[Any] | None = None,
+    scratchpad_codec: ScratchpadCodec[Any] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Answer `request`, streaming progress events then answer tokens.
 
@@ -115,9 +136,15 @@ async def run_agent[E](
     an `ErrorEvent`, so a caller has one shape to handle. `executor_provider`
     falls back to `plan_provider` when unset, so a single-model run works.
 
-    When `context_store` and `conversation_id` are both given, the stored blob is
-    injected into the plan call and — if `derive_context` is given — the turn's
-    updated blob is persisted before the terminal event.
+    When a `scratchpad` is given it is the turn's working memory: the executors
+    write it (they close over it), the execute loop pins its board into the model
+    every iteration, and the host's `synthesize` reads it. When `context_store`,
+    `conversation_id` and `scratchpad_codec` are all also given, the pad is
+    restored from the store before planning and the whole pad is persisted before
+    the terminal event — so a later turn recalls what this one gathered, and the
+    planner is shown its shorthand. The pad is usually the same object passed as
+    `evidence`; they are separate parameters only because `evidence` is opaque
+    (`E`) while the pad must be typed for the board and persistence.
     """
     # The executor loop runs on the smaller model when one is wired; without it
     # the whole turn is one model, which is what a single-provider run does.
@@ -127,9 +154,19 @@ async def run_agent[E](
         interaction_scope(source=source, prompt=execution.prompt_name) as interaction_id,
         agent_run_scope(),
     ):
+        persist = _persistence_ready(
+            context_store, conversation_id, scratchpad, scratchpad_codec
+        )
+
         blob: JsonBlob = {}
         if context_store is not None and conversation_id is not None:
             blob = await context_store.get(conversation_id)
+        # Restore the pad from the store before the plan sees it, so an earlier
+        # turn's entries are recallable this turn and the planner is shown their
+        # shorthand. `persist` guarantees the codec below is not None.
+        if persist:
+            assert scratchpad is not None and scratchpad_codec is not None
+            scratchpad.restore(blob.get("scratchpad", {}), scratchpad_codec.decode)
 
         # Phase 1 — plan. One call, traced on its own source so planning cost is
         # separable from executing.
@@ -152,9 +189,12 @@ async def run_agent[E](
         if strategy is None:
             # A direct reply: the plan step answered from the conversation itself.
             yield PlanReplyEvent(text=plan_result.message.content)
-            await _persist_context(
-                context_store, conversation_id, derive_context, blob, request, evidence
-            )
+            if persist:
+                assert context_store is not None and conversation_id is not None
+                assert scratchpad is not None and scratchpad_codec is not None
+                await _persist_scratchpad(
+                    context_store, conversation_id, scratchpad, scratchpad_codec
+                )
             yield DoneEvent()
             return
 
@@ -168,6 +208,7 @@ async def run_agent[E](
                 provider=loop_provider,
                 max_iterations=execution.max_iterations,
                 terminal_tools=execution.terminal_tools,
+                scratchpad=scratchpad,
             ):
                 match event:
                     case ToolCallStarted(call=call):
@@ -213,7 +254,10 @@ async def run_agent[E](
             yield ErrorEvent(message=_FAILURE_MESSAGE)
             return
 
-        await _persist_context(
-            context_store, conversation_id, derive_context, blob, request, evidence
-        )
+        if persist:
+            assert context_store is not None and conversation_id is not None
+            assert scratchpad is not None and scratchpad_codec is not None
+            await _persist_scratchpad(
+                context_store, conversation_id, scratchpad, scratchpad_codec
+            )
         yield DoneEvent()

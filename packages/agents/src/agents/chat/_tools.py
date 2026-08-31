@@ -23,13 +23,15 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from ai.dtos import DecisionReading
-from llm_core import LLMProvider, ToolDefinition
+from llm_core import LLMProvider, Scratchpad, ToolDefinition
 from shared.dtos.search import DocumentFilter
 from shared.enums import ChunkSection
+
+from agent_kit import ScratchpadCodec
 
 from agents.chat._dtos import (
     ChatTool,
@@ -48,7 +50,8 @@ from agents.sql._dtos import SqlAgentResult
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "ChatState",
+    "ChatScratchpad",
+    "ChatRecord",
     "build_chat_tools",
     "label_for_call",
     "FREE_TEXT_FILTER_FIELDS",
@@ -62,6 +65,13 @@ FREE_TEXT_FILTER_FIELDS = ("category", "decision_outcome", "entity_names")
 
 _CHUNK_HANDLE_PREFIX = "c"
 _DOCUMENT_HANDLE_PREFIX = "d"
+_READING_HANDLE_PREFIX = "r"
+
+# Fixed keys for the pad's single-valued entries, kept out of the numbered
+# handle space so they never collide with a c/d/r handle.
+_TABULAR_KEY = "sql"
+_SELECTION_KEY = "selection"
+_CASES_KEY = "cases_discussed"
 
 # How many distinct values of one facet the vocabulary tool reports per call.
 _MAX_VOCABULARY_VALUES = 40
@@ -90,25 +100,250 @@ class AnswerSelection:
         return [note.handle for note in self.annotations]
 
 
-@dataclass
-class ChatState:
-    """What the agent has done so far in one run.
+# Every kind of value the pad can recall as typed evidence. `grounded` and
+# `documents_read` are per-turn control, not memory, so they stay off the pad
+# (see `ChatScratchpad`); `cases_discussed` is a small list carried as a K=V
+# entry and is not in this union.
+ChatRecord = (
+    SearchedDecision | ChunkRecord | DecisionReading | SqlAgentResult | AnswerSelection
+)
 
-    Mutable and single-run: `build_chat_tools` creates one per invocation and
-    the executors close over it, so nothing leaks between requests.
+
+class ChatScratchpad(Scratchpad[Any]):
+    """The chat agent's working memory: one `Scratchpad`, addressed by handle.
+
+    Replaces the old bag of typed fields. Every gathered thing is an entry —
+    decisions under `d1, d2, …`, passages under `c1, c2, …`, readings under
+    `r1, r2, …`, the last tabular answer under `sql`, the final selection under
+    `selection`, and the running list of cited case numbers under
+    `cases_discussed`. The heavy value lives here; the model sees only the
+    board's previews and recalls a value by its handle.
+
+    The chunk→decision graph is not stored: a `ChunkRecord` carries its
+    `document_id`, and the owning decision is found by matching it, so the pad
+    stays a flat key/value store and the generic primitive stays domain-free.
+
+    `grounded` and `documents_read` are per-*turn* control — a precondition and a
+    budget — so they are plain fields, reset each turn, and deliberately never
+    persisted with the pad.
     """
 
-    grounded: bool = False
-    chunks: dict[str, ChunkRecord] = field(default_factory=dict)
-    decisions: dict[str, SearchedDecision] = field(default_factory=dict)
-    handle_by_document: dict[uuid.UUID, str] = field(default_factory=dict)
-    handle_by_chunk: dict[uuid.UUID, str] = field(default_factory=dict)
-    readings: list[DecisionReading] = field(default_factory=list)
-    documents_read: set[uuid.UUID] = field(default_factory=set)
-    # The last tabular answer. A run that counts more than once keeps the most
-    # recent, matching the SQL agent's own "last successful query is the answer".
-    tabular: SqlAgentResult | None = None
-    selection: AnswerSelection | None = None
+    def __init__(self) -> None:
+        super().__init__()
+        # Set once the vocabulary has been read; gates an ungrounded free-text
+        # filter. Per-turn, so not a pad entry.
+        self.grounded: bool = False
+        # Decisions read in full this turn, for the reading budget. Per-turn.
+        self.documents_read: set[uuid.UUID] = set()
+
+    # -- handle minting -----------------------------------------------------
+
+    def _next_handle(self, prefix: str) -> str:
+        highest = 0
+        for key in self.keys():
+            if key.startswith(prefix) and key[len(prefix) :].isdigit():
+                highest = max(highest, int(key[len(prefix) :]))
+        return f"{prefix}{highest + 1}"
+
+    def remember_decision(self, decision: SearchedDecision) -> str:
+        """Store a decision, reusing its handle if it has already been seen."""
+        existing = self.decision_handle_for(decision.document_id)
+        handle = existing or self._next_handle(_DOCUMENT_HANDLE_PREFIX)
+        self.remember(handle, decision, preview=_decision_preview(decision))
+        return handle
+
+    def remember_chunk(
+        self, document_id: uuid.UUID, chunk: SearchedChunk, *, snippet_chars: int
+    ) -> str:
+        """Store a passage, reusing its handle if the same chunk is already here."""
+        for handle, record in self._chunk_records():
+            if record.chunk.chunk_id == chunk.chunk_id:
+                return handle
+        handle = self._next_handle(_CHUNK_HANDLE_PREFIX)
+        case_number = self.case_number_for(document_id)
+        self.remember(
+            handle,
+            ChunkRecord(document_id=document_id, chunk=chunk),
+            preview=_chunk_preview(chunk, case_number, snippet_chars),
+        )
+        return handle
+
+    def add_reading(self, reading: DecisionReading) -> str:
+        handle = self._next_handle(_READING_HANDLE_PREFIX)
+        self.remember(handle, reading, preview=_reading_preview(reading))
+        return handle
+
+    # -- typed accessors ----------------------------------------------------
+
+    def decision(self, handle: str) -> SearchedDecision | None:
+        value = self.get(handle)
+        return value if isinstance(value, SearchedDecision) else None
+
+    def chunk(self, handle: str) -> ChunkRecord | None:
+        value = self.get(handle)
+        return value if isinstance(value, ChunkRecord) else None
+
+    def has_chunk(self, handle: str) -> bool:
+        return self.chunk(handle) is not None
+
+    def decision_handles(self) -> list[str]:
+        return [key for key, value in self.entries() if isinstance(value, SearchedDecision)]
+
+    def decision_handle_for(self, document_id: uuid.UUID) -> str | None:
+        for handle, value in self.entries():
+            if isinstance(value, SearchedDecision) and value.document_id == document_id:
+                return handle
+        return None
+
+    def _chunk_records(self) -> list[tuple[str, ChunkRecord]]:
+        return [(k, v) for k, v in self.entries() if isinstance(v, ChunkRecord)]
+
+    def case_number_for(self, document_id: uuid.UUID) -> str | None:
+        handle = self.decision_handle_for(document_id)
+        decision = self.decision(handle or "")
+        return decision.case_number if decision else None
+
+    def readings(self) -> list[DecisionReading]:
+        return [v for _, v in self.entries() if isinstance(v, DecisionReading)]
+
+    def set_tabular(self, result: SqlAgentResult, *, sample_rows: int) -> None:
+        # Last-wins, matching the SQL agent's "last successful query is the
+        # answer"; the fixed key overwrites in place.
+        self.remember(
+            _TABULAR_KEY, result, preview=_tabular_preview(result, sample_rows)
+        )
+
+    def tabular(self) -> SqlAgentResult | None:
+        value = self.get(_TABULAR_KEY)
+        return value if isinstance(value, SqlAgentResult) else None
+
+    def set_selection(self, selection: AnswerSelection) -> None:
+        self.remember(_SELECTION_KEY, selection, preview=_selection_preview(selection))
+
+    def selection(self) -> AnswerSelection | None:
+        value = self.get(_SELECTION_KEY)
+        return value if isinstance(value, AnswerSelection) else None
+
+    def record_cases(self, case_numbers: list[str]) -> None:
+        """Merge case numbers into the running, cross-turn `cases_discussed` list."""
+        seen = {c for c in (self.get(_CASES_KEY) or []) if isinstance(c, str)}
+        seen.update(case_numbers)
+        # A small K=V entry (no separate preview): its value is its own shorthand.
+        self.remember(_CASES_KEY, sorted(seen))
+
+
+# -- previews: the dense, model-facing shorthand for each kind of entry -------
+# Each is JSON-safe: it rides the board on every iteration and is persisted in
+# the carry-over blob, so no UUIDs and no non-JSON scalars.
+
+
+def _decision_preview(decision: SearchedDecision) -> dict[str, Any]:
+    return {
+        "case_number": decision.case_number,
+        "decision_date": _as_text(decision.decision_date),
+        "decision_outcome": decision.decision_outcome,
+        "category": decision.category,
+        "summary": decision.summary,
+    }
+
+
+def _chunk_preview(
+    chunk: SearchedChunk, case_number: str | None, snippet_chars: int
+) -> dict[str, Any]:
+    return {
+        "case_number": case_number,
+        "origin": _chunk_origin(chunk),
+        "vector_similarity": chunk.vector_similarity,
+        "snippet": chunk.text[:snippet_chars],
+    }
+
+
+def _reading_preview(reading: DecisionReading) -> dict[str, Any]:
+    return {
+        "case_number": reading.case_number,
+        "passages": len(reading.handles),
+        "summary": reading.summary,
+    }
+
+
+def _tabular_preview(result: SqlAgentResult, sample_rows: int) -> dict[str, Any]:
+    return {
+        "answered": result.answered,
+        "sql": result.sql,
+        "columns": result.columns,
+        "row_count": result.row_count,
+        "sample_rows": result.rows[:sample_rows],
+    }
+
+
+def _selection_preview(selection: AnswerSelection) -> dict[str, Any]:
+    return {"cited": selection.chunk_handles, "gaps": selection.gaps}
+
+
+# -- persistence codec: how the pad's typed values round-trip through JSON -----
+
+
+def _encode_entry(_key: str, value: Any) -> dict[str, Any]:
+    """One stored value as JSON-safe, tagged with the kind `decode` dispatches on."""
+    if isinstance(value, SearchedDecision):
+        return {"kind": "decision", "data": value.model_dump(mode="json")}
+    if isinstance(value, ChunkRecord):
+        return {
+            "kind": "chunk",
+            "data": {
+                "document_id": str(value.document_id),
+                "chunk": value.chunk.model_dump(mode="json"),
+            },
+        }
+    if isinstance(value, DecisionReading):
+        return {"kind": "reading", "data": value.model_dump(mode="json")}
+    if isinstance(value, SqlAgentResult):
+        return {"kind": "sql", "data": value.model_dump(mode="json")}
+    if isinstance(value, AnswerSelection):
+        return {
+            "kind": "selection",
+            "data": {
+                "annotations": [note.model_dump(mode="json") for note in value.annotations],
+                "gaps": value.gaps,
+            },
+        }
+    # The one remaining entry is `cases_discussed`, a plain list of strings.
+    return {"kind": "cases", "data": value}
+
+
+def _decode_entry(_key: str, raw: dict[str, Any]) -> Any:
+    data = raw["data"]
+    match raw["kind"]:
+        case "decision":
+            return SearchedDecision.model_validate(data)
+        case "chunk":
+            return ChunkRecord(
+                document_id=uuid.UUID(data["document_id"]),
+                chunk=SearchedChunk.model_validate(data["chunk"]),
+            )
+        case "reading":
+            return DecisionReading.model_validate(data)
+        case "sql":
+            return SqlAgentResult.model_validate(data)
+        case "selection":
+            return AnswerSelection(
+                annotations=[
+                    PassageNote.model_validate(note) for note in data["annotations"]
+                ],
+                gaps=list(data["gaps"]),
+            )
+        case _:
+            return list(data)
+
+
+def chat_scratchpad_codec(*, cap: int) -> ScratchpadCodec[Any]:
+    """The codec `run_agent` uses to persist and restore a `ChatScratchpad`.
+
+    `cap` bounds the heavy (previewed) entries carried between turns; the small
+    `cases_discussed` list is exempt, so a conversation's cited case numbers
+    accumulate without being evicted.
+    """
+    return ScratchpadCodec(encode=_encode_entry, decode=_decode_entry, cap=cap)
 
 
 def label_for_call(tool: ChatTool, arguments: dict[str, Any]) -> ProgressLabel:
@@ -154,29 +389,6 @@ def _ungrounded_message(fields: list[str]) -> str:
     )
 
 
-def _assign_document_handle(state: ChatState, decision: SearchedDecision) -> str:
-    existing = state.handle_by_document.get(decision.document_id)
-    if existing is not None:
-        state.decisions[existing] = decision
-        return existing
-    handle = f"{_DOCUMENT_HANDLE_PREFIX}{len(state.handle_by_document) + 1}"
-    state.handle_by_document[decision.document_id] = handle
-    state.decisions[handle] = decision
-    return handle
-
-
-def _assign_chunk_handle(
-    state: ChatState, document_id: uuid.UUID, chunk: SearchedChunk
-) -> str:
-    existing = state.handle_by_chunk.get(chunk.chunk_id)
-    if existing is not None:
-        return existing
-    handle = f"{_CHUNK_HANDLE_PREFIX}{len(state.handle_by_chunk) + 1}"
-    state.handle_by_chunk[chunk.chunk_id] = handle
-    state.chunks[handle] = ChunkRecord(document_id=document_id, chunk=chunk)
-    return handle
-
-
 def _chunk_origin(chunk: SearchedChunk) -> str:
     if chunk.section is ChunkSection.APPENDIX:
         return f"{chunk.appendix_label or 'bilaga'} — the appealed decision"
@@ -184,7 +396,7 @@ def _chunk_origin(chunk: SearchedChunk) -> str:
 
 
 async def _list_vocabulary(
-    toolset: ChatToolset, state: ChatState, *, contains: str | None = None
+    toolset: ChatToolset, state: ChatScratchpad, *, contains: str | None = None
 ) -> dict[str, Any]:
     vocabulary = await toolset.vocabulary(contains=contains)
     state.grounded = True
@@ -220,7 +432,7 @@ def _as_text(value: Any) -> str | None:
 
 async def _search_decisions(
     toolset: ChatToolset,
-    state: ChatState,
+    state: ChatScratchpad,
     settings: ChatAgentSettings,
     *,
     query: str,
@@ -248,9 +460,10 @@ async def _search_decisions(
         chunks_per_decision=settings.chat_agent_chunks_per_decision,
     )
 
+    snippet_chars = settings.chat_agent_preview_snippet_chars
     decisions: list[dict[str, Any]] = []
     for decision in outcome.decisions:
-        document_handle = _assign_document_handle(state, decision)
+        document_handle = state.remember_decision(decision)
         decisions.append(
             {
                 "document_id": document_handle,
@@ -259,14 +472,17 @@ async def _search_decisions(
                 "decision_outcome": decision.decision_outcome,
                 "category": decision.category,
                 "summary": decision.summary,
+                # The full chunk text is stored in the pad under its handle and
+                # reaches the writer at synthesis; the loop model gets only the
+                # handle and a snippet, never the weight.
                 "chunks": [
                     {
-                        "chunk_id": _assign_chunk_handle(
-                            state, decision.document_id, chunk
+                        "chunk_id": state.remember_chunk(
+                            decision.document_id, chunk, snippet_chars=snippet_chars
                         ),
-                        "text": chunk.text,
                         "origin": _chunk_origin(chunk),
                         "vector_similarity": chunk.vector_similarity,
+                        "snippet": chunk.text[:snippet_chars],
                     }
                     for chunk in decision.chunks
                 ],
@@ -282,7 +498,7 @@ async def _search_decisions(
     }
 
 
-def _unknown_handle(handle: str, known: dict[str, Any], kind: str) -> dict[str, Any]:
+def _unknown_handle(handle: str, known: list[str], kind: str) -> dict[str, Any]:
     available = ", ".join(sorted(known)) or "none yet"
     return {
         "error": (
@@ -295,7 +511,7 @@ def _unknown_handle(handle: str, known: dict[str, Any], kind: str) -> dict[str, 
 
 async def _read_decision(
     toolset: ChatToolset,
-    state: ChatState,
+    state: ChatScratchpad,
     settings: ChatAgentSettings,
     reader_provider: LLMProvider | None,
     *,
@@ -303,9 +519,9 @@ async def _read_decision(
     question: str,
     include_appendices: bool = False,
 ) -> dict[str, Any]:
-    decision = state.decisions.get(document_id)
+    decision = state.decision(document_id)
     if decision is None:
-        return _unknown_handle(document_id, state.decisions, "decision")
+        return _unknown_handle(document_id, state.decision_handles(), "decision")
 
     if (
         decision.document_id not in state.documents_read
@@ -376,7 +592,7 @@ async def _read_decision(
             "note": "The reading pointed at no passage of this decision.",
         }
 
-    state.readings.append(
+    state.add_reading(
         DecisionReading(
             case_number=text.case_number or document_id,
             handles=list(handles),
@@ -387,19 +603,26 @@ async def _read_decision(
         "document_id": document_id,
         "relevance": selection.relevance,
         "summary": selection.summary,
-        "passages": [
-            {
-                "chunk_id": handle,
-                "text": state.chunks[handle].chunk.text,
-                "origin": _chunk_origin(state.chunks[handle].chunk),
-            }
-            for handle in handles
-        ],
+        "passages": [_reading_passage(state, handle) for handle in handles],
+    }
+
+
+def _reading_passage(state: ChatScratchpad, handle: str) -> dict[str, Any]:
+    # The handle was just minted by `_handles_for_reading`, so the record is
+    # present; the guard keeps the type checker honest rather than guarding a
+    # real absence.
+    record = state.chunk(handle)
+    if record is None:  # pragma: no cover - just-added handle is always present
+        return {"chunk_id": handle}
+    return {
+        "chunk_id": handle,
+        "text": record.chunk.text,
+        "origin": _chunk_origin(record.chunk),
     }
 
 
 def _handles_for_reading(
-    state: ChatState,
+    state: ChatScratchpad,
     decision: SearchedDecision,
     text: DecisionText,
     selection: ReadingSelection,
@@ -408,10 +631,11 @@ def _handles_for_reading(
     """The reading's chosen passages, as citable handles.
 
     The index addresses `text.chunks` by position, which is what the reader was
-    shown. Each survivor goes through `_assign_chunk_handle`, so a passage search
+    shown. Each survivor goes through `remember_chunk`, so a passage search
     already surfaced comes back under the handle it already has rather than a
     second one pointing at the same text.
     """
+    snippet_chars = settings.chat_agent_preview_snippet_chars
     handles: list[str] = []
     unknown: list[int] = []
     seen: set[int] = set()
@@ -427,8 +651,7 @@ def _handles_for_reading(
             continue
         chunk = text.chunks[index]
         handles.append(
-            _assign_chunk_handle(
-                state,
+            state.remember_chunk(
                 decision.document_id,
                 SearchedChunk(
                     chunk_id=chunk.chunk_id,
@@ -436,6 +659,7 @@ def _handles_for_reading(
                     section=chunk.section,
                     appendix_label=chunk.appendix_label,
                 ),
+                snippet_chars=snippet_chars,
             )
         )
 
@@ -443,11 +667,11 @@ def _handles_for_reading(
 
 
 async def _inspect_decision(
-    toolset: ChatToolset, state: ChatState, *, document_id: str
+    toolset: ChatToolset, state: ChatScratchpad, *, document_id: str
 ) -> dict[str, Any]:
-    decision = state.decisions.get(document_id)
+    decision = state.decision(document_id)
     if decision is None:
-        return _unknown_handle(document_id, state.decisions, "decision")
+        return _unknown_handle(document_id, state.decision_handles(), "decision")
 
     profile = await toolset.decision_profile(document_id=decision.document_id)
     if profile is None:
@@ -472,17 +696,25 @@ async def _inspect_decision(
 
 
 async def _query_corpus(
-    toolset: ChatToolset, state: ChatState, *, question: str
+    toolset: ChatToolset,
+    state: ChatScratchpad,
+    settings: ChatAgentSettings,
+    *,
+    question: str,
 ) -> dict[str, Any]:
     result = await toolset.tabular_query(question=question)
-    state.tabular = result
+    sample_rows = settings.chat_agent_preview_rows
+    state.set_tabular(result, sample_rows=sample_rows)
     if not result.answered:
         return {"answered": False, "note": result.note}
+    # The full row set is stored in the pad under `sql` and reaches the writer at
+    # synthesis; the loop model gets the query, the shape and a sample, never the
+    # whole result.
     return {
         "answered": True,
         "sql": result.sql,
         "columns": result.columns,
-        "rows": result.rows,
+        "sample_rows": result.rows[:sample_rows],
         "row_count": result.row_count,
         "truncated": result.truncated,
         "assumptions": result.assumptions,
@@ -490,7 +722,7 @@ async def _query_corpus(
 
 
 async def _answer(
-    state: ChatState,
+    state: ChatScratchpad,
     settings: ChatAgentSettings,
     *,
     annotations: list[dict[str, Any]] | None = None,
@@ -507,22 +739,40 @@ async def _answer(
             # the rest of the selection is still good evidence.
             logger.info("Chat agent sent an unreadable annotation: %r", raw)
             continue
-        if note.handle in state.chunks:
+        if state.has_chunk(note.handle):
             known.append(note)
         else:
             unknown.append(note.handle)
 
-    state.selection = AnswerSelection(
+    selection = AnswerSelection(
         annotations=known[: settings.chat_agent_max_chunks_cited],
         gaps=list(gaps or []),
     )
+    state.set_selection(selection)
+    # The cited passages' case numbers accumulate across the conversation, so a
+    # later turn's planner sees what has already been discussed.
+    state.record_cases(_cited_case_numbers(state, selection))
     if unknown:
         logger.info("Chat agent selected unknown chunk handles: %s", unknown)
     return {
         "ok": True,
-        "cited_chunks": len(state.selection.annotations),
+        "cited_chunks": len(selection.annotations),
         "ignored_unknown_handles": unknown,
     }
+
+
+def _cited_case_numbers(
+    state: ChatScratchpad, selection: AnswerSelection
+) -> list[str]:
+    numbers: list[str] = []
+    for handle in selection.chunk_handles:
+        record = state.chunk(handle)
+        if record is None:
+            continue
+        case_number = state.case_number_for(record.document_id)
+        if case_number:
+            numbers.append(case_number)
+    return numbers
 
 
 _TOOL_DEFINITIONS = [
@@ -745,13 +995,13 @@ def build_chat_tools(
     settings: ChatAgentSettings,
     *,
     reader_provider: LLMProvider | None = None,
-) -> tuple[list[ToolDefinition], dict[str, Any], ChatState]:
+) -> tuple[list[ToolDefinition], dict[str, Any], ChatScratchpad]:
     """Tool definitions, their executors, and the state all of them share.
 
     The state is returned rather than hidden so the caller can read the
     selected evidence back out once the loop has finished.
     """
-    state = ChatState()
+    state = ChatScratchpad()
 
     async def list_vocabulary(contains: str | None = None) -> dict[str, Any]:
         return await _list_vocabulary(toolset, state, contains=contains)
@@ -791,7 +1041,7 @@ def build_chat_tools(
         return await _inspect_decision(toolset, state, document_id=document_id)
 
     async def query_corpus(question: str) -> dict[str, Any]:
-        return await _query_corpus(toolset, state, question=question)
+        return await _query_corpus(toolset, state, settings, question=question)
 
     async def answer(
         annotations: list[dict[str, Any]] | None = None,

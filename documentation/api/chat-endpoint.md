@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys, sources, then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the per-passage sources event a citation marker resolves against, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-28T00:00:00Z
+timestamp: 2026-08-30T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -261,12 +261,12 @@ see [why](/data-model/sessions.md#a-row-exists-before-the-conversation-does).
 **Only the question and the answer are persisted as history.** The evidence a
 turn gathered is not, which is what stops turn two re-sending turn one's
 documents. A second, distinct column — `sessions.context` — carries the
-agent's own carry-over notes about the conversation, never shown to the
+agent's own scratchpad, its persisted working memory, never shown to the
 client and never part of this wire contract: the route passes
-`conversation_id=str(session.id)` to `run_chat_agent`, which reads and writes
-that blob through a `PostgresContextStore` in the same request-scoped
-transaction as the turn's `history` append. See [carry-over
-context](/retrieval/chat-agent.md#carry-over-context) and
+`conversation_id=str(session.id)` to `run_chat_agent`, which restores and
+persists the pad through a `PostgresContextStore` in the same request-scoped
+transaction as the turn's `history` append. See [the scratchpad and cross-turn
+recall](/retrieval/chat-agent.md#cross-turn-recall) and
 [sessions](/data-model/sessions.md).
 
 Sessions outlive the request that made them and are readable: [`/api/sessions`](/api/sessions.md)

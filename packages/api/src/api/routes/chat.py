@@ -16,7 +16,6 @@ from agents.chat import (
     TokenEvent,
     ToolCallEvent,
     ToolResultEvent,
-    chat_context_carry,
 )
 from ai import interaction_scope
 from fastapi import APIRouter, Depends, Request
@@ -148,10 +147,10 @@ async def chat_endpoint(
             llm_provider=request.app.state.chat_llm_provider,
             reader_provider=request.app.state.read_llm_provider,
             executor_provider=request.app.state.orchestrate_llm_provider,
-            # The blob lives in `sessions.context`, written in the same
-            # transaction as the turn's history — see `PostgresContextStore`.
+            # The scratchpad is persisted to `sessions.context`, written in the
+            # same transaction as the turn's history — see `PostgresContextStore`.
+            # `run_chat_agent` supplies the scratchpad and its codec itself.
             context_store=PostgresContextStore(db),
-            derive_context=chat_context_carry,
         )
     else:
         # A server answering from a script while someone believes it is

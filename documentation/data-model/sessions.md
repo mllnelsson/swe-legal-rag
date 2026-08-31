@@ -1,10 +1,10 @@
 ---
 type: Table
 title: sessions
-description: Conversation history backing the chat endpoint's follow-up support and the conversation list, plus the agent's own carry-over notes; the transcript holds the question and the answer only, never the evidence a turn gathered.
+description: Conversation history backing the chat endpoint's follow-up support and the conversation list, plus the agent's own persisted scratchpad; the transcript holds the question and the answer only, never the evidence a turn gathered.
 resource: postgres://sessions
-tags: [data-model, table, sessions, chat]
-timestamp: 2026-08-28T00:00:00Z
+tags: [data-model, table, sessions, chat, scratchpad]
+timestamp: 2026-08-30T00:00:00Z
 ---
 
 # `sessions`
@@ -34,7 +34,7 @@ endpoints](/api/sessions.md#every-conversation-is-listed-to-everyone).
 | created_at | TIMESTAMPTZ | |
 | last_active_at | TIMESTAMPTZ | For TTL cleanup |
 | history | JSONB | Array of message objects `[{role, content, interaction_id}]` — the transcript a user sees |
-| context | JSONB | The agent's carry-over blob (`{}` by default) — its working notes about the conversation, never shown to a user |
+| context | JSONB | The agent's persisted scratchpad (`{}` by default) — its working memory about the conversation, never shown to a user |
 
 Backs the multi-turn behaviour of the [chat endpoint](/api/chat-endpoint.md); only the
 most recent `SESSION_MAX_HISTORY_TURNS` are passed to the LLM while the full history
@@ -46,16 +46,22 @@ evidence would mean re-sending turn one's documents on turn two, and it is the
 agent's job to gather what the current question needs.
 
 **`context` is a different kind of state, and no relation to `history`
-beyond living on the same row.** It is the [conversational
-agent's](/retrieval/chat-agent.md#carry-over-context) own carry-over — a JSON
-blob a turn reads at the start of its plan step and a turn may hand back
-updated at the end — read and written through
-`api.services.context_store.PostgresContextStore`, which implements
-`agent_kit.ContextStore` against `get_context`/`set_context` below. Unlike
-`history`, nothing renders it: a client never sees this column's contents.
-The default `derive_context` this app wires up
-(`agents.chat.chat_context_carry`) accumulates the case numbers a conversation
-has surfaced, so a later turn's planner has continuity without re-retrieving.
+beyond living on the same row.** It holds the [conversational
+agent's](/retrieval/chat-agent.md#cross-turn-recall) own `ChatScratchpad`,
+serialized — a blob shaped `{"scratchpad": {"entries": [{key, preview,
+value}, ...]}}`, one entry per handle (`d1`, `c1`, `sql`, `selection`,
+`cases_discussed`, ...) — restored before a turn's plan step and, when the
+turn gathered anything new, persisted back updated at the end. Read and
+written through `api.services.context_store.PostgresContextStore`, which
+implements `agent_kit.ContextStore` against `get_context`/`set_context` below.
+Unlike `history`, nothing renders it: a client never sees this column's
+contents. The blob is bounded: `agents.chat.chat_scratchpad_codec`'s `cap`
+(`ChatAgentSettings.chat_agent_max_carried_entries`) keeps only the most
+recent `cap` heavy (previewed) entries, newest-wins, while the small
+`cases_discussed` entry — the running, cross-turn list of case numbers the
+conversation has surfaced — is exempt and always carries forward, so a later
+turn's planner has continuity without re-retrieving even once other entries
+have aged out.
 
 `interaction_id` is stored on both entries of a turn — it is the same id the
 `X-Interaction-Id` response header carried for that request, so a turn found in a
@@ -91,10 +97,10 @@ already loads its history once at the start and the append only ever adds to the
 cannot reach into the ORM instance behind it. `session.set_context(session,
 session_id, context)` **replaces** the whole blob with one `UPDATE ... SET
 context = :new_context`, unlike `append_history`'s append: the blob has no
-append-only shape to preserve, and the caller (`chat_context_carry`, or
-whatever `derive_context` a host passes) already computed the value the row
-should hold next. Like `append_history`, it takes no row lock and a missing
-session is a no-op.
+append-only shape to preserve, and the caller — `agent_kit.run_agent`, holding
+the pad's `dump(codec.encode, cap=codec.cap)` — already computed the value the
+row should hold next. Like `append_history`, it takes no row lock and a
+missing session is a no-op.
 
 ## A row exists before the conversation does
 

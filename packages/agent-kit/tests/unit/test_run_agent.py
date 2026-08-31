@@ -29,6 +29,8 @@ from agent_kit import (
     InMemoryContextStore,
     PlanPhase,
     PlanReplyEvent,
+    Scratchpad,
+    ScratchpadCodec,
     TokenEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -292,47 +294,70 @@ async def test_a_failing_plan_call_ends_in_error() -> None:
     assert [type(e) for e in events] == [ErrorEvent]
 
 
-async def test_context_blob_is_injected_into_the_plan_and_persisted() -> None:
-    """Empty on turn one, carried forward, and re-read on turn two."""
+async def test_scratchpad_is_restored_into_the_plan_and_persisted() -> None:
+    """A fresh pad each turn is rehydrated from the store before the plan sees it.
+
+    Turn one plans over an empty pad and persists the entry its executor wrote;
+    turn two builds a *new* pad, has turn one's entry restored into it before
+    planning, and can recall that turn's value — true cross-turn memory.
+    """
     store = InMemoryContextStore()
-    seen: list[dict] = []
+    codec: ScratchpadCodec[str] = ScratchpadCodec(
+        encode=lambda _k, v: v, decode=lambda _k, v: v
+    )
+    seen_digests: list[dict] = []
 
-    def _build(req: Any, tools: Any, blob: dict) -> list[Message]:
-        seen.append(dict(blob))
-        return [Message(role=Role.user, content=req.question)]
+    async def _turn(marker: str) -> Scratchpad[str]:
+        pad: Scratchpad[str] = Scratchpad()
+        evidence = Evidence()
 
-    def _derive(blob: dict, req: Any, evidence: Any) -> dict:
-        return {"turns": blob.get("turns", 0) + 1}
+        def _build(req: Any, tools: Any, _blob: dict) -> list[Message]:
+            # The plan reads the pad's shorthand (via closure), restored by now.
+            seen_digests.append(dict(pad.digest()))
+            return [Message(role=Role.user, content=req.question)]
 
-    async def _turn() -> None:
+        async def _remember(**_kwargs: Any) -> dict[str, Any]:
+            pad.remember(marker, marker, preview={"marker": marker})
+            evidence.answered = True
+            return {"ok": True}
+
         await _collect(
             run_agent(
                 Req("hi"),
                 tools=[_ANSWER_TOOL],
-                executors={},
-                evidence=Evidence(),
+                executors={"answer": _remember},
+                evidence=evidence,
                 plan=_plan_phase(build=_build),
                 execution=_execution_phase(),
                 synthesize=_make_synth(),
                 plan_provider=ScriptedProvider(
-                    [Message(role=Role.assistant, content="hej")]
+                    [_plan_call("go"), _tool_call("answer", "a1")]
                 ),
                 context_store=store,
                 conversation_id="c1",
-                derive_context=_derive,
+                scratchpad=pad,
+                scratchpad_codec=codec,
             )
         )
+        return pad
 
-    await _turn()
-    await _turn()
+    await _turn("first")
+    pad2 = await _turn("second")
 
-    assert seen[0] == {}
-    assert seen[1] == {"turns": 1}
-    assert await store.get("c1") == {"turns": 2}
+    assert seen_digests[0] == {}
+    assert seen_digests[1] == {"first": {"marker": "first"}}
+    # Turn two recalls the value turn one stored, plus its own.
+    assert pad2.recall("first") == "first"
+    assert pad2.recall("second") == "second"
+    stored = await store.get("c1")
+    assert [entry["key"] for entry in stored["scratchpad"]["entries"]] == [
+        "first",
+        "second",
+    ]
 
 
 async def test_no_store_means_no_persistence() -> None:
-    """Without a store and derive_context, a turn keeps no carry-over."""
+    """Without a store and a scratchpad, a turn keeps no carry-over."""
     seen: list[dict] = []
 
     def _build(req: Any, tools: Any, blob: dict) -> list[Message]:

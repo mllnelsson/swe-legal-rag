@@ -2,8 +2,8 @@
 type: Concept
 title: Conversational Agent
 description: The agent behind the chat endpoint — a GLM plan step that either replies directly or hands a research plan to an executor tool loop over the deterministic retrieval tool set (openai/gpt-oss-120b, one terminal tool `answer`); two sub-agents on the same model, one that counts and one that selects citable passages from a decision rather than summarising it; and a streamed GLM writing call that marks each claim with the passage handle it rests on.
-tags: [retrieval, agent, tool-loop, sse, synthesis]
-timestamp: 2026-08-28T00:00:00Z
+tags: [retrieval, agent, tool-loop, sse, synthesis, scratchpad]
+timestamp: 2026-08-31T00:00:00Z
 ---
 
 # Conversational Agent
@@ -307,32 +307,71 @@ selection is fixed the moment `answer()` runs and a marker should be
 resolvable the instant it arrives. See [the sources
 event](/api/chat-endpoint.md#event-sources).
 
-## Carry-over context
+## Working memory: the scratchpad
 
-The plan step's prompt is shown a small JSON blob — the conversation's
-carry-over — ahead of the question, so a follow-up's planner sees what earlier
-turns established without redoing the retrieval that established it. It is
-`{}` on a conversation's first turn.
+`agents.chat._tools.ChatScratchpad` — a
+[`llm_core.Scratchpad`](/packages/llm-core.md#scratchpad-working-memory) typed
+over this agent's evidence — is the single place a turn's gathered evidence
+lives, addressed by handle: decisions under `d1, d2, …`, passages under
+`c1, c2, …`, readings under `r1, r2, …`, the last tabular answer under the
+fixed key `sql`, the final selection under `selection`, and the running,
+cross-turn list of cited case numbers under a small `cases_discussed` entry.
+Every tool that gathers something stores the full value on the pad; the loop
+model is handed back only a handle and a preview, never the weight. The two
+heavy tools carry nothing full into the loop: `search_decisions` returns each
+passage as `{chunk_id, origin, vector_similarity, snippet}` — the full text is
+recalled from the pad at synthesis — and `query_corpus` returns
+`{sql, columns, row_count, sample_rows}`, the whole row set staying on the pad
+under `sql`. (The `event: sql` the client sees is read back from that stored
+result, so it still carries every row.) `read_decision` is the deliberate
+exception: its selected passages are small and capped, and the loop model needs
+their words to annotate them, so they come back verbatim. The chunk→decision
+graph is never stored on the pad: a stored passage carries its `document_id`,
+and the owning decision is found by matching it against the stored decisions,
+which keeps the pad a flat store.
 
-`run_chat_agent(..., context_store=, derive_context=)` wires the feature up.
-When `request.conversation_id` is set and both are given,
-[`agent_kit.run_agent`](/packages/agent-kit.md#the-context-store-carry-over-without-redoing-the-work)
-reads the stored blob before the plan call, and — after a direct reply or after
-synthesis completes on a researched turn — persists `derive_context(blob,
-request, evidence)`. `chat_context_carry` (`agents/chat/_agent.py`) is the
-default: deterministic, free, and reading nothing from a model — it accumulates
-the case numbers this turn cited (off `event: sources`) into the blob's
-`cases_discussed` list. A chatty turn that cited nothing carries the blob
-forward unchanged.
+`grounded` (has `list_vocabulary` been called this run) and `documents_read`
+(the reading budget) are plain fields on `ChatScratchpad`, reset at the start
+of every turn — per-turn control, not memory, so they are never persisted with
+the pad.
 
-**Distinct from `history`.** The stored blob is the agent's own working notes,
-never shown to a user and never rendered into a reply; the transcript a client
-sees is `history`, projected separately by `history_for_llm()`. This app
-persists the blob in `sessions.context`, a column beside `sessions.history`,
+The executor's `tool_loop` is given the pad, and every iteration pins its
+[rendered board](/packages/llm-core.md#scratchpad-working-memory) — `key
+preview` per line — in front of the history as an ephemeral system message,
+refreshed each pass rather than appended, so the model always sees everything
+gathered so far without the heavy values being re-sent. Synthesis reads the
+pad directly: `_synthesis_request` recalls the selected passages, the
+readings, the tabular result and the selection's annotations and gaps by
+handle to build the evidence bundle the writer streams from.
+
+## Cross-turn recall
+
+A follow-up's planner sees what earlier turns established without redoing the
+retrieval that established it: the plan prompt is shown the pad's `digest()` —
+`{handle: preview}`, the same shorthand the board renders — never the heavy
+values, which only the executor recalls by handle. It is `{}` on a
+conversation's first turn.
+
+`run_chat_agent` wires the whole pad up as both the evidence the executors
+write and the object [`agent_kit.run_agent`](/packages/agent-kit.md#scratchpad-persistence-cross-turn-recall)
+persists: when `context_store` and `request.conversation_id` are both set,
+`run_agent` restores the pad from the store before the plan call, and — after
+a direct reply or after synthesis completes on a researched turn — persists
+the whole pad via `chat_scratchpad_codec(cap=settings.chat_agent_max_carried_entries)`
+(`agents/chat/_tools.py`), which dispatches encode/decode by each entry's
+kind. The cap bounds the *previewed* (heavy) entries a turn carries forward,
+newest-wins; the small `cases_discussed` entry is exempt, so cited case
+numbers accumulate for as long as the conversation runs regardless of how much
+else has been dropped.
+
+**Distinct from `history`.** The persisted pad is the agent's own working
+notes, never shown to a user and never rendered into a reply; the transcript a
+client sees is `history`, projected separately by `history_for_llm()`. This
+app persists it in `sessions.context`, a column beside `sessions.history`,
 through `api.services.context_store.PostgresContextStore` — see
 [sessions](/data-model/sessions.md). A caller with no `conversation_id`, or no
-store wired up, gets a turn with no carry-over: the blob is always `{}` and
-nothing is persisted.
+store wired up, gets a turn with no cross-turn recall: the pad starts empty
+every time and nothing is persisted.
 
 ## Settings
 

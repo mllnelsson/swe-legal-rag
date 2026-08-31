@@ -21,6 +21,7 @@ from llm_core._service import (
     tool_loop,
 )
 from llm_core._tracing import LLMCallRecord, LLMOperation, set_trace_recorder
+from llm_core.scratchpad import Scratchpad
 from llm_core._types import (
     LLMResponse,
     Message,
@@ -153,6 +154,70 @@ async def test_tool_loop_multi_iteration() -> None:
 
     assert result.message.content == "All done"
     assert result.iterations == 3
+
+
+class _CapturingProvider:
+    """Records the messages of every `generate`, replaying scripted responses."""
+
+    def __init__(self, responses: list[LLMResponse]) -> None:
+        self._responses = responses
+        self.seen: list[list[Message]] = []
+
+    async def generate(self, messages, *, tools=None, response_schema=None):
+        self.seen.append(list(messages))
+        return self._responses.pop(0)
+
+    async def generate_stream(self, messages):
+        return _async_iter()
+
+
+async def test_tool_loop_pins_the_scratchpad_board_and_refreshes_it() -> None:
+    """The board is absent while the pad is empty, then pinned once it has an
+    entry — as a single system message, refreshed rather than stacked."""
+    pad: Scratchpad[str] = Scratchpad()
+    tc = ToolCall(id="tc-1", name="note", arguments={})
+    provider = _CapturingProvider(
+        [_make_response("", tool_calls=(tc,)), _make_response("done")]
+    )
+
+    async def note() -> str:
+        pad.remember("d1", "the full value", preview={"case": "12/2024"})
+        return "stored"
+
+    tools = [ToolDefinition(name="note", description="note", parameters={})]
+    messages = [Message(role=Role.user, content="go")]
+
+    await run_tool_loop(
+        messages, tools, {"note": note}, provider=provider, scratchpad=pad
+    )
+
+    # First call: the pad was empty, so nothing was pinned.
+    assert not any("[scratchpad]" in m.content for m in provider.seen[0])
+    # Second call: the board is the first message, carries the preview, and the
+    # heavy value is not on it — and it appears exactly once (refreshed in place).
+    board = provider.seen[1][0]
+    assert board.role is Role.system
+    assert "[scratchpad]" in board.content
+    assert "12/2024" in board.content
+    assert sum("[scratchpad]" in m.content for m in provider.seen[1]) == 1
+
+
+async def test_tool_loop_without_a_scratchpad_pins_no_board() -> None:
+    tc = ToolCall(id="tc-1", name="note", arguments={})
+    provider = _CapturingProvider(
+        [_make_response("", tool_calls=(tc,)), _make_response("done")]
+    )
+
+    async def note() -> str:
+        return "stored"
+
+    tools = [ToolDefinition(name="note", description="note", parameters={})]
+    await run_tool_loop(
+        [Message(role=Role.user, content="go")], tools, {"note": note}, provider=provider
+    )
+
+    for call in provider.seen:
+        assert not any("[scratchpad]" in m.content for m in call)
 
 
 async def test_tool_loop_terminal_tool_ends_the_run() -> None:

@@ -13,6 +13,8 @@ domain lives there and consumes this, never the other way round.
 
 from __future__ import annotations
 
+from llm_core import Handle, Scratchpad
+
 from agent_kit.config import (
     LLMConfigDocument,
     create_llm_provider,
@@ -39,6 +41,7 @@ from agent_kit.orchestrator import (
     ExecutionPhase,
     PlanPhase,
     PlanReplyEvent,
+    ScratchpadCodec,
     TokenEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -77,6 +80,10 @@ __all__ = [
     "DoneEvent",
     "ErrorEvent",
     "ToolStatus",
+    # Turn-scoped working-memory (from llm-core) and its persistence codec.
+    "Scratchpad",
+    "Handle",
+    "ScratchpadCodec",
     # Per-conversation carry-over.
     "ContextStore",
     "InMemoryContextStore",

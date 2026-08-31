@@ -4,6 +4,7 @@ from agent_kit.orchestrator._dtos import (
     ExecutionPhase,
     JsonBlob,
     PlanPhase,
+    ScratchpadCodec,
 )
 from agent_kit.orchestrator._events import (
     AgentEvent,
@@ -23,6 +24,7 @@ __all__ = [
     "ExecutionPhase",
     "JsonBlob",
     "PlanPhase",
+    "ScratchpadCodec",
     "AgentEvent",
     "DoneEvent",
     "ErrorEvent",

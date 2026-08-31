@@ -19,11 +19,35 @@ from llm_core._tracing import (
     traced_call,
 )
 from llm_core._types import LLMResponse, Message, Role, ToolCall, ToolDefinition
+from llm_core.scratchpad import Scratchpad
 
 ToolExecutor = Callable[..., Awaitable[Any]]
 
 # Safety bound on the agentic tool-calling loop before giving up.
 DEFAULT_MAX_ITERATIONS = 10
+
+# Preamble on the pinned scratchpad board, so the model reads it as its own
+# working memory rather than as another turn of conversation.
+_BOARD_PREAMBLE = (
+    "[scratchpad] Everything gathered so far, refreshed each step. Each line is "
+    "key  preview; recall a value by its key rather than fetching it again."
+)
+
+
+def _with_board(history: list[Message], scratchpad: Scratchpad[Any] | None) -> list[Message]:
+    """`history` with the pad's current board pinned in front, when there is one.
+
+    Rebuilt every iteration from the live pad and never appended to `history`, so
+    the board always reflects the latest state and refreshes in place rather than
+    stacking a stale copy on every pass.
+    """
+    if scratchpad is None:
+        return history
+    board = scratchpad.render_board()
+    if not board:
+        return history
+    pinned = Message(role=Role.system, content=f"{_BOARD_PREAMBLE}\n{board}")
+    return [pinned, *history]
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +207,7 @@ async def tool_loop(
     config: LLMConfig | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     terminal_tools: set[str] | None = None,
+    scratchpad: Scratchpad[Any] | None = None,
 ) -> AsyncIterator[ToolLoopEvent]:
     """Drive the model until it stops calling tools, or calls a terminal one.
 
@@ -207,6 +232,11 @@ async def tool_loop(
     True}` rather than raising — the one tool result this loop authors itself.
     An exception from *inside* an executor is still a `ToolExecutionError`: that
     is a defect, and the two must not be confused.
+
+    When a `scratchpad` is given, its board is pinned in front of the history on
+    every iteration, refreshed from the live pad — so the model always sees what
+    has been gathered without the heavy values being re-sent. The pad is the
+    executors' to write (they close over it); this loop only renders it.
     """
     p = _resolve_provider(provider, config)
     history = list(messages)
@@ -218,7 +248,10 @@ async def tool_loop(
         # that took ten turns to answer.
         with trace_context(tool_loop_iteration=iteration):
             response = await _generate_traced(
-                p, history, LLMOperation.tool_loop, tools=tools
+                p,
+                _with_board(history, scratchpad),
+                LLMOperation.tool_loop,
+                tools=tools,
             )
 
         history.append(response.message)
@@ -303,6 +336,7 @@ async def run_tool_loop(
     config: LLMConfig | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     terminal_tools: set[str] | None = None,
+    scratchpad: Scratchpad[Any] | None = None,
 ) -> ToolLoopResult:
     """`tool_loop` for a caller that wants the result and not the progress."""
     result: ToolLoopResult | None = None
@@ -314,6 +348,7 @@ async def run_tool_loop(
         config=config,
         max_iterations=max_iterations,
         terminal_tools=terminal_tools,
+        scratchpad=scratchpad,
     ):
         if isinstance(event, ToolLoopFinished):
             result = event.result

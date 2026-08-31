@@ -3,7 +3,7 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-08-28T00:00:00Z
+timestamp: 2026-08-30T00:00:00Z
 ---
 
 # Architectural Decision Register
@@ -129,19 +129,28 @@ window](/decisions/embedding-window.md); the mandatory crawl
   agent-kit is meant to be lifted whole into a different agent project, which
   a module entangled with `shared`'s models or this project's Swedish prompts
   could not be.
-- **Per-conversation carry-over is a Protocol the orchestrator calls, not a
-  feature the orchestrator implements.** `agent_kit.ContextStore` is two
-  methods (`get`/`set` on a JSON blob keyed by conversation id); `run_agent`
-  injects the stored blob into the plan call and persists a host-supplied
-  `derive_context(blob, request, evidence)` afterwards, but never opens a
-  database connection or decides what the blob holds. This app backs the
-  Protocol with `api.services.context_store.PostgresContextStore` against a
-  new `sessions.context` column, and supplies `chat_context_carry` — a
-  deterministic, model-free default that accumulates cited case numbers — as
-  its `derive_context`. Keeping the store an injected Protocol is what lets
-  `InMemoryContextStore` back every agent-kit unit test with no database, and
-  what lets a future host swap Postgres for a cache with no orchestrator
-  change. See [the conversational agent](/retrieval/chat-agent.md#carry-over-context)
+- **Per-conversation carry-over persists a typed `Scratchpad`, not an
+  opaque host-derived blob, and the storage backend is a Protocol the
+  orchestrator calls rather than implements.** `agent_kit.ContextStore` is two
+  methods (`get`/`set` on a JSON blob keyed by conversation id).
+  `llm_core.Scratchpad[V]` — a keyed, generic working-memory a host's
+  executors write, `tool_loop` boards, and the writer reads — is what
+  `run_agent` restores from that blob before the plan call and persists back
+  (`scratchpad.dump(codec.encode, cap=codec.cap)`) once a turn ends, given a
+  `context_store`, `conversation_id`, `scratchpad` and `scratchpad_codec`
+  together; short of all four the pad stays turn-scoped only. `Scratchpad`
+  lives in llm-core rather than agent-kit because `tool_loop` — an llm-core
+  primitive — has to name it to render its board. This app backs
+  `ContextStore` with `api.services.context_store.PostgresContextStore`
+  against a `sessions.context` column, and supplies its chat agent's own
+  `ChatScratchpad` plus `chat_scratchpad_codec` — a deterministic,
+  model-free encode/decode with a cap on carried entries, exempting the small
+  cross-turn `cases_discussed` list. Keeping the store an injected Protocol is
+  what lets `InMemoryContextStore` back every agent-kit unit test with no
+  database, and what lets a future host swap Postgres for a cache with no
+  orchestrator change. See [the conversational
+  agent](/retrieval/chat-agent.md#cross-turn-recall),
+  [agent-kit](/packages/agent-kit.md#scratchpad-persistence-cross-turn-recall)
   and [sessions](/data-model/sessions.md).
 
 ## Data layer and libraries

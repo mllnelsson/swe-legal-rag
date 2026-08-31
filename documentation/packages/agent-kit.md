@@ -1,10 +1,10 @@
 ---
 type: Package
 title: agent-kit Package
-description: The domain-free agent core — the prompt renderer, LLM role/provider config, file trace recorder and correlation scopes, the per-conversation context store, the streaming synthesis step, and the run_agent plan→execute→synthesize orchestrator; depends only on llm-core plus pydantic/pyyaml, and is consumed by ai and agents.
+description: The domain-free agent core — the prompt renderer, LLM role/provider config, file trace recorder and correlation scopes, the per-conversation context store, the streaming synthesis step, cross-turn scratchpad persistence, and the run_agent plan→execute→synthesize orchestrator; depends only on llm-core plus pydantic/pyyaml, and is consumed by ai and agents.
 resource: packages/agent-kit
-tags: [package, agent-kit, orchestrator, llm, context]
-timestamp: 2026-08-28T00:00:00Z
+tags: [package, agent-kit, orchestrator, llm, context, scratchpad]
+timestamp: 2026-08-30T00:00:00Z
 ---
 
 # agent-kit Package (`packages/agent-kit/`)
@@ -32,28 +32,30 @@ project.
 
 ## `run_agent`: plan → execute → synthesize
 
-`run_agent(request, *, tools, executors, evidence, plan, execution, synthesize, plan_provider=None, executor_provider=None, source="agent", context_store=None, conversation_id=None, derive_context=None)`
+`run_agent(request, *, tools, executors, evidence, plan, execution, synthesize, plan_provider=None, executor_provider=None, source="agent", context_store=None, conversation_id=None, scratchpad=None, scratchpad_codec=None)`
 is the orchestrator every host configures rather than reimplements. Three
 phases:
 
 1. **Plan.** One call on `plan_provider`, wrapped in `run_tool_loop` with the
-   host's single `plan.plan_tool` and `max_iterations=1`. The host's
-   `plan.build_messages` renders the question, the executor's tools and the
-   carry-over blob (see below); `plan.read_plan` reads the terminal message
-   back into a strategy string, or `None` when the model replied directly. A
-   direct reply short-circuits the run: `PlanReplyEvent`, the carry-over
-   persisted, `DoneEvent` — no executor loop, no synthesis call.
+   host's single `plan.plan_tool` and `max_iterations=1`. Before this call, a
+   restored `scratchpad` (see below) is ready for `plan.build_messages` to read
+   its shorthand from; `plan.read_plan` reads the terminal message back into a
+   strategy string, or `None` when the model replied directly. A direct reply
+   short-circuits the run: `PlanReplyEvent`, the pad persisted, `DoneEvent` —
+   no executor loop, no synthesis call.
 2. **Execute.** The host's `tool_loop` (`execution.build_messages`, `tools`,
-   `executors`, `execution.terminal_tools`, `execution.max_iterations`) runs on
-   `executor_provider`, which falls back to `plan_provider` when unset so a
-   single-model run works. Each `ToolCallStarted`/`ToolCallFinished` becomes a
-   generic `ToolCallEvent`/`ToolResultEvent`; a tool result carrying an
-   `error` key maps to `ToolStatus.REFUSED` when `refused` is true, else
-   `ToolStatus.ERROR`.
+   `executors`, `execution.terminal_tools`, `execution.max_iterations`,
+   `scratchpad`) runs on `executor_provider`, which falls back to
+   `plan_provider` when unset so a single-model run works. Each
+   `ToolCallStarted`/`ToolCallFinished` becomes a generic
+   `ToolCallEvent`/`ToolResultEvent`; a tool result carrying an `error` key maps
+   to `ToolStatus.REFUSED` when `refused` is true, else `ToolStatus.ERROR`.
 3. **Synthesize.** `evidence` — the host's own object, populated by its
    executor closures, never touched by the orchestrator itself — is surfaced
    once as an `EvidenceEvent` before the host's `synthesize(request, evidence)`
-   streams `TokenEvent`s.
+   streams `TokenEvent`s. `evidence` is usually the same object passed as
+   `scratchpad`; they are separate parameters because `evidence` is opaque
+   (`E`) while the pad must be typed for the board and persistence.
 
 Every phase failure funnels to one `ErrorEvent` (message
 `"The request could not be completed."`) and ends the stream; an `ErrorEvent`
@@ -67,28 +69,49 @@ is never followed by a `DoneEvent`. The whole call runs inside one
 satisfies it structurally, with no import from `agent_kit` needed on the host
 type itself.
 
-## The context store: carry-over without redoing the work
+## The context store
 
 `ContextStore` is a two-method Protocol — `get(conversation_id) -> JsonBlob`,
 `set(conversation_id, blob) -> None` — where `JsonBlob = dict[str, Any]`. It is
-what lets a later turn build on what an earlier one established without
-re-retrieving it. `InMemoryContextStore` is the dict-backed implementation for
-tests, scripts and single-process runs; it copies on the way in and out so a
-caller mutating a blob it received cannot reach back into the store.
-
-`run_agent` reads the stored blob (`{}` when `context_store` or
-`conversation_id` is `None`, or on a conversation's first turn) and hands it to
-`plan.build_messages` as the third argument — the *only* place it is injected,
-since the plan step is what decides whether a turn needs research at all.
-When `derive_context` is given, `run_agent` calls it
-(`derive_context(blob, request, evidence) -> JsonBlob`) and persists the result
-via `context_store.set` — once after a direct reply, once after synthesis
-completes on a researched turn. What the blob holds is entirely the host's
-choice; this layer only moves it and never inspects its shape.
+the pluggable storage backend a scratchpad's carry-over is written through;
+`run_agent` never opens a database connection or decides what the blob holds.
+`InMemoryContextStore` is the dict-backed implementation for tests, scripts and
+single-process runs; it copies on the way in and out so a caller mutating a
+blob it received cannot reach back into the store.
 
 A host durable-backs `ContextStore` with its own storage — see
 [`PostgresContextStore`](/data-model/sessions.md) for the concrete
 implementation this project wires the chat endpoint through.
+
+## Scratchpad persistence: cross-turn recall
+
+A [`Scratchpad`](/packages/llm-core.md#scratchpad-working-memory) — llm-core's
+generic, keyed working-memory — is a turn's evidence: a host's executors write
+it, `execution`'s `tool_loop` boards its previews every iteration, and the
+host's `synthesize` reads it directly. `run_agent` optionally makes that same
+pad recall across turns, given four things together: `context_store`,
+`conversation_id`, `scratchpad` and `scratchpad_codec`
+(`ScratchpadCodec[V]` — `encode`, `decode`, `cap`, the *only* domain hook in
+the whole mechanism, dispatched on an entry's key however the host likes).
+When all four are given, `run_agent`:
+
+1. Restores the pad from the store (`blob.get("scratchpad", {})`, via
+   `scratchpad_codec.decode`) before the plan call, so `plan.build_messages`
+   can show the planner the restored pad's shorthand — the *only* place a
+   host's plan step sees carried-over state, since the plan is what decides
+   whether a turn needs research at all.
+2. Threads the same pad into the execute-phase `tool_loop`, so its board keeps
+   growing across restored and newly-gathered entries alike.
+3. Persists the whole pad — `{"scratchpad": scratchpad.dump(codec.encode,
+   cap=codec.cap)}` — via `context_store.set`, once after a direct reply, once
+   after synthesis completes on a researched turn. `cap` bounds how many heavy
+   (previewed) entries survive a turn, newest-wins; a small "K=V" entry is
+   exempt and always carries forward.
+
+Any subset short of all four leaves the pad turn-scoped only: no restore, no
+persistence, and `run_agent` behaves exactly as it does with no `scratchpad`
+at all. What the pad's entries mean is entirely the host's choice — this layer
+only restores, boards and persists it.
 
 ## Prompt rendering (`prompts/`)
 
@@ -153,7 +176,7 @@ not a project-specific one.
 `packages/agent-kit/tests/unit/test_run_agent.py` exercises the orchestrator
 end to end against scripted providers and a fake toolset: both endings of the
 plan step, the executor loop's event mapping, the error funnel for each of the
-three phases, and the context-store round trip (blob read before planning,
-`derive_context` called and persisted on both a direct reply and a researched
-turn). `test_context_store.py` covers `InMemoryContextStore`'s copy-on-read and
-copy-on-write behaviour.
+three phases, and the scratchpad round trip (the pad restored from the store
+before planning, threaded into the execute-phase `tool_loop`, and persisted via
+the codec on both a direct reply and a researched turn). `test_context_store.py`
+covers `InMemoryContextStore`'s copy-on-read and copy-on-write behaviour.

@@ -13,6 +13,7 @@ import uuid
 import pytest
 from agent_kit import InMemoryContextStore
 from ai import interaction_scope
+from ai.dtos import DecisionReading
 from llm_core import LLMResponse, Message, Role, StreamChunk, ToolCall
 from llm_core._tracing import LLMCallRecord, set_trace_recorder
 from shared.dtos.search import DocumentFilter
@@ -37,8 +38,13 @@ from agents.chat import (
     VocabularyValue,
     run_chat_agent,
 )
-from agents.chat._dtos import DecisionText, DecisionTextChunk
-from agents.chat._tools import build_chat_tools
+from agents.chat._dtos import DecisionText, DecisionTextChunk, PassageNote
+from agents.chat._tools import (
+    AnswerSelection,
+    ChatScratchpad,
+    build_chat_tools,
+    chat_scratchpad_codec,
+)
 from agents.config import ChatAgentSettings
 from agents.sql._dtos import SqlAgentResult, SqlAttempt
 
@@ -290,6 +296,178 @@ async def test_search_then_answer_streams_prose_and_sources() -> None:
     assert [s.case_number for s in sources.sources] == ["12/2024"]
     assert sources.sources[0].document_id == _DOCUMENT_ID
     assert sources.sources[0].section is ChunkSection.BODY
+
+
+async def test_the_executor_sees_gathered_evidence_on_its_board() -> None:
+    """After a search, the pad's board — with the decision's shorthand — is pinned
+    into the executor's context on the next iteration, refreshed each pass."""
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv i kyrkoråd"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[{"handle": "c1", "carries": "bär avgörandet"}],
+        ),
+    )
+
+    await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad har nämnden sagt om jäv?"),
+            FakeToolset(),
+            llm_provider=provider,
+            settings=_settings(),
+        )
+    )
+
+    # Across the run's model calls, the executor's post-search iteration carries
+    # the board built from what the search gathered.
+    boards = [
+        message
+        for call in provider.seen_messages
+        for message in call
+        if "[scratchpad]" in message.content
+    ]
+    assert boards, "no scratchpad board was ever pinned into a model call"
+    assert all(board.role is Role.system for board in boards)
+    # The decision's shorthand (its handle and case number) is on the board.
+    assert any("d1" in board.content and "12/2024" in board.content for board in boards)
+
+
+async def test_search_keeps_full_chunk_text_in_the_pad_not_the_loop() -> None:
+    """The loop model sees only the snippet; the writer still gets the true text."""
+    long_text = "Detta är passagens fullständiga och ordagranna lydelse. " * 40
+    outcome = SearchOutcome(
+        decisions=[
+            SearchedDecision(
+                document_id=_DOCUMENT_ID,
+                case_number="12/2024",
+                decision_outcome="Avslag",
+                category="Tjänstetillsättning",
+                chunks=[
+                    SearchedChunk(
+                        chunk_id=_BODY_CHUNK_ID, text=long_text, vector_similarity=0.9
+                    )
+                ],
+            )
+        ]
+    )
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv"),
+        _tool_call(
+            ChatTool.ANSWER,
+            call_id="call-2",
+            annotations=[{"handle": "c1", "carries": "bär avgörandet"}],
+        ),
+    )
+
+    await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Vad beslutade nämnden?"),
+            FakeToolset(outcome=outcome),
+            llm_provider=provider,
+            settings=_settings(chat_agent_preview_snippet_chars=40),
+        )
+    )
+
+    # The last model call is the streaming synthesis prompt; everything before it
+    # is the plan and the executor loop.
+    loop_text = "".join(
+        m.content for call in provider.seen_messages[:-1] for m in call
+    )
+    synthesis_prompt = "".join(m.content for m in provider.seen_messages[-1])
+
+    assert long_text not in loop_text  # the weight never reached the loop
+    assert long_text[:40] in loop_text  # only its snippet did
+    assert long_text in synthesis_prompt  # the writer gets the true text, verbatim
+
+
+async def test_query_keeps_full_rows_in_the_pad_not_the_loop() -> None:
+    """The loop model sees a sample; the writer and the SqlEvent get every row."""
+    rows = [[f"parish-{n}", n] for n in range(50)]
+    tabular = SqlAgentResult(
+        answered=True,
+        sql="SELECT parish, count(*) FROM decisions GROUP BY parish",
+        columns=["parish", "n"],
+        rows=rows,
+        row_count=len(rows),
+    )
+    provider = ScriptedProvider(
+        _tool_call(ChatTool.QUERY_CORPUS, question="hur många per församling?"),
+        _tool_call(ChatTool.ANSWER, call_id="call-2", annotations=[], gaps=["—"]),
+    )
+
+    events = await _collect(
+        run_chat_agent(
+            ChatAgentRequest(question="Hur många beslut per församling?"),
+            FakeToolset(tabular=tabular),
+            llm_provider=provider,
+            settings=_settings(chat_agent_preview_rows=3),
+        )
+    )
+
+    loop_text = "".join(
+        m.content for call in provider.seen_messages[:-1] for m in call
+    )
+    synthesis_prompt = "".join(m.content for m in provider.seen_messages[-1])
+
+    # A late row is absent from the loop but present for the writer.
+    assert "parish-49" not in loop_text
+    assert "parish-49" in synthesis_prompt
+    # The early sample rows did reach the loop.
+    assert "parish-0" in loop_text
+    # The wire SqlEvent carries every row, read from the pad, not the sample.
+    sql_event = next(e for e in events if isinstance(e, SqlEvent))
+    assert sql_event.row_count == 50
+    assert len(sql_event.rows) == 50
+
+
+def test_the_scratchpad_codec_round_trips_every_entry_kind() -> None:
+    """Persist and restore a pad holding one of each kind, through the chat codec."""
+    decision = SearchedDecision(
+        document_id=_DOCUMENT_ID,
+        case_number="12/2024",
+        decision_outcome="Avslag",
+        category="Tjänstetillsättning",
+        chunks=[
+            SearchedChunk(
+                chunk_id=_BODY_CHUNK_ID, text=_BODY_TEXT, vector_similarity=0.86
+            )
+        ],
+    )
+    pad = ChatScratchpad()
+    pad.remember_decision(decision)
+    pad.remember_chunk(_DOCUMENT_ID, decision.chunks[0], snippet_chars=160)
+    pad.add_reading(
+        DecisionReading(case_number="12/2024", handles=["c1"], summary="jäv")
+    )
+    pad.set_tabular(
+        SqlAgentResult(
+            answered=True, sql="SELECT count(*)", columns=["n"], rows=[[3]], row_count=1
+        ),
+        sample_rows=5,
+    )
+    pad.set_selection(
+        AnswerSelection(
+            annotations=[PassageNote(handle="c1", carries="bär")],
+            gaps=["saknar årtal"],
+        )
+    )
+    pad.record_cases(["12/2024"])
+
+    codec = chat_scratchpad_codec(cap=40)
+    restored = ChatScratchpad()
+    restored.restore(pad.dump(codec.encode, cap=codec.cap), codec.decode)
+
+    assert restored.keys() == ["d1", "c1", "r1", "sql", "selection", "cases_discussed"]
+    assert restored.decision("d1") == decision
+    body = restored.chunk("c1")
+    assert body is not None and body.chunk.text == _BODY_TEXT
+    assert restored.readings()[0].summary == "jäv"
+    tabular = restored.tabular()
+    assert tabular is not None and tabular.sql == "SELECT count(*)"
+    selection = restored.selection()
+    assert selection is not None and selection.gaps == ["saknar årtal"]
+    assert restored.recall("cases_discussed") == ["12/2024"]
 
 
 async def test_progress_events_carry_keys_not_prose() -> None:
@@ -1336,15 +1514,17 @@ async def test_a_wrong_argument_name_is_refused_and_the_loop_goes_on() -> None:
 
 
 class TestContextCarryOver:
-    """The per-conversation carry-over blob, injected into the plan step.
+    """The scratchpad persisted to the store and restored into the next turn's plan.
 
-    Empty on the first turn, and whatever `derive_context` returned on the turn
-    before on every turn after. The store keys on `request.conversation_id`; a
-    `None` id (or no store) turns the mechanism off for the turn.
+    Empty on the first turn; on a later turn the planner is shown the *shorthand*
+    of what earlier turns gathered — the per-entry previews — never the heavy
+    values. The store keys on `request.conversation_id`; a `None` id (or no store)
+    turns the mechanism off for the turn.
     """
 
     @staticmethod
-    def _run(store, *, conversation_id, derive_context):
+    def _chatty(store, *, conversation_id):
+        """A turn the plan answers directly — it gathers nothing."""
         provider = ScriptedProvider(
             Message(role=Role.assistant, content="Varsågod!"),
             routes=False,
@@ -1357,7 +1537,30 @@ class TestContextCarryOver:
             llm_provider=provider,
             settings=_settings(),
             context_store=store,
-            derive_context=derive_context,
+        )
+        return provider, agent
+
+    @staticmethod
+    def _research(store, *, conversation_id):
+        """A turn that searches and answers, so it fills the pad."""
+        provider = ScriptedProvider(
+            _tool_call(ChatTool.SEARCH_DECISIONS, query="jäv i kyrkoråd"),
+            _tool_call(
+                ChatTool.ANSWER,
+                call_id="call-2",
+                annotations=[{"handle": "c1", "carries": "bär avgörandet"}],
+            ),
+        )
+        agent = run_chat_agent(
+            ChatAgentRequest(
+                question="Vad har nämnden sagt om jäv?",
+                history=[],
+                conversation_id=conversation_id,
+            ),
+            FakeToolset(),
+            llm_provider=provider,
+            settings=_settings(),
+            context_store=store,
         )
         return provider, agent
 
@@ -1366,40 +1569,40 @@ class TestContextCarryOver:
         """The user message of the first (plan) model call."""
         return provider.seen_messages[0][1].content
 
-    @staticmethod
-    def _derive(blob, request, state):
-        return {"turns": blob.get("turns", 0) + 1}
+    async def test_first_turn_plans_over_empty_shorthand(self) -> None:
+        store = InMemoryContextStore()
+        provider, agent = self._chatty(store, conversation_id="c1")
+        await _collect(agent)
+        # Turn one sees an empty pad, and a chatty turn gathered nothing to persist.
+        assert "{}" in self._plan_user_text(provider)
+        assert (await store.get("c1"))["scratchpad"]["entries"] == []
 
-    async def test_blob_is_empty_first_then_carried_forward(self) -> None:
+    async def test_a_research_turns_findings_reach_the_next_turns_plan(self) -> None:
         store = InMemoryContextStore()
 
-        provider1, agent1 = self._run(
-            store, conversation_id="c1", derive_context=self._derive
-        )
+        provider1, agent1 = self._research(store, conversation_id="c1")
         await _collect(agent1)
-        # Turn one sees an empty blob and leaves one behind.
-        assert "{}" in self._plan_user_text(provider1)
-        assert '"turns"' not in self._plan_user_text(provider1)
-        assert await store.get("c1") == {"turns": 1}
+        # The turn persisted the decision handle and the cited case number.
+        keys = [
+            entry["key"] for entry in (await store.get("c1"))["scratchpad"]["entries"]
+        ]
+        assert "d1" in keys
+        assert "cases_discussed" in keys
 
-        provider2, agent2 = self._run(
-            store, conversation_id="c1", derive_context=self._derive
-        )
+        provider2, agent2 = self._chatty(store, conversation_id="c1")
         await _collect(agent2)
-        # Turn two sees turn one's blob, and advances it.
-        assert '{"turns": 1}' in self._plan_user_text(provider2)
-        assert await store.get("c1") == {"turns": 2}
+        # The next turn's planner is shown the shorthand — the case number reaches
+        # it, restored from the store, without any new retrieval.
+        assert "12/2024" in self._plan_user_text(provider2)
 
-    async def test_no_store_leaves_the_blob_empty_and_persists_nothing(self) -> None:
-        provider, agent = self._run(None, conversation_id="c1", derive_context=None)
+    async def test_no_store_leaves_the_shorthand_empty(self) -> None:
+        provider, agent = self._chatty(None, conversation_id="c1")
         await _collect(agent)
         assert "{}" in self._plan_user_text(provider)
 
     async def test_a_none_conversation_id_turns_the_store_off(self) -> None:
         store = InMemoryContextStore()
-        provider, agent = self._run(
-            store, conversation_id=None, derive_context=self._derive
-        )
+        provider, agent = self._chatty(store, conversation_id=None)
         await _collect(agent)
         assert "{}" in self._plan_user_text(provider)
         # Nothing was keyed, so nothing was stored.

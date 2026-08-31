@@ -3,8 +3,8 @@ type: Package
 title: agents Package
 description: The LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — the text-to-SQL agent behind POST /api/sql and the conversational agent behind POST /api/chat — their module layout, and the injected-toolset seam that keeps the dependency running api to agents.
 resource: packages/agents
-tags: [package, agents, sql, chat, tool-loop, llm]
-timestamp: 2026-08-28T00:00:00Z
+tags: [package, agents, sql, chat, tool-loop, llm, scratchpad]
+timestamp: 2026-08-30T00:00:00Z
 ---
 
 # agents Package (`packages/agents/`)
@@ -43,9 +43,9 @@ tools arrive as an injected `ChatToolset`, and it calls `run_sql_agent` as one o
 | `sql/_agent.py` | `run_sql_agent(..., document=None)` — wires the prompt, the tools, and `llm_core.tool_loop` together, and assembles the result from the trail `GroundingState` left behind |
 | `chat/_dtos.py` | The chat wire contract: `ChatAgentRequest` (`question`, `history`, `conversation_id` — the last keys the [carry-over context store](#carry-over-context) to a conversation), the `AgentEvent` union, `SourceReference`, `PassageNote` (a selected passage's structured guidance — `handle`, `carries`, `caution`), `ReadingSelection` (the reader's own output — `relevance`, `chunk_indices`, `summary`), the `ChatTool` / `ProgressLabel` enums (`ToolStatus` is re-exported from `agent_kit.orchestrator`, the run status vocabulary being agent-kit's own), and the shapes a toolset returns (`SearchOutcome`, `Vocabulary`, `DecisionText`, `DecisionProfile`) |
 | `chat/_protocols.py` | The `ChatToolset` Protocol — five async capabilities in the agent's own shapes. See [the seam](#the-toolset-seam) below |
-| `chat/_tools.py` | `build_chat_tools(toolset, settings, reader_provider=None)` → the six tool definitions, their executors and `ChatState`; plus `label_for_call()` and `FREE_TEXT_FILTER_FIELDS`, the grounding precondition's column list |
+| `chat/_tools.py` | `build_chat_tools(toolset, settings, reader_provider=None)` → the six tool definitions, their executors and a `ChatScratchpad`; plus `chat_scratchpad_codec(cap)`, `label_for_call()` and `FREE_TEXT_FILTER_FIELDS`, the grounding precondition's column list |
 | `chat/_reader.py` | `read_decision_text()` — the one-shot sub-agent a whole decision goes to, returning a `ReadingSelection`: which passages bear on the question, by index, and how they connect. `format_numbered_chunks()`, which numbers each passage and marks each appendix boundary before it does |
-| `chat/_agent.py` | `run_chat_agent(request, toolset, *, llm_provider, reader_provider, executor_provider=None, context_store=None, derive_context=None, ...)` — a thin configuration of [`agent_kit.run_agent`](/packages/agent-kit.md#run_agent-plan--execute--synthesize): owns the domain (the Swedish `PlanPhase`/`ExecutionPhase` prompt builders on `llm_provider`/`executor_provider`, the six chat tools, `chat_context_carry` as the default `derive_context`) and translates the orchestrator's generic event stream into `agents.chat`'s own `AgentEvent`s as it consumes it |
+| `chat/_agent.py` | `run_chat_agent(request, toolset, *, llm_provider, reader_provider, executor_provider=None, context_store=None, ...)` — a thin configuration of [`agent_kit.run_agent`](/packages/agent-kit.md#run_agent-plan--execute--synthesize): owns the domain (the Swedish `PlanPhase`/`ExecutionPhase` prompt builders on `llm_provider`/`executor_provider`, the six chat tools, the `ChatScratchpad` it supplies as both `evidence` and `scratchpad`) and translates the orchestrator's generic event stream into `agents.chat`'s own `AgentEvent`s as it consumes it |
 
 Both agents run inside the same correlation scope, and neither mints an
 `interaction_id` outright: `interaction_scope()` **inherits** one already in the trace
@@ -87,26 +87,30 @@ The second benefit is testing: a scripted toolset is a plain object with five me
 so the whole loop is exercised with no database, no HTTP and no model. See
 [testing strategy](/testing.md).
 
-## Carry-over context
+## Working memory and cross-turn recall
 
-`run_chat_agent` accepts an optional `context_store` ([`agent_kit.ContextStore`](/packages/agent-kit.md#the-context-store-carry-over-without-redoing-the-work))
-and `derive_context` callable, threaded straight through to `agent_kit.run_agent`.
-When both are given and `ChatAgentRequest.conversation_id` is set, the stored JSON
-blob for that conversation is injected into the plan step's prompt ahead of every
-turn, and the turn's updated blob is persisted once the run reaches a terminal
-event.
+`build_chat_tools` returns a `ChatScratchpad` — a `llm_core.Scratchpad` typed
+over this agent's evidence — alongside the tool definitions and their
+executors; the tools close over that same pad and every gathered thing (a
+decision, a passage, a reading, the last tabular answer, the final selection,
+the running cross-turn `cases_discussed` list) is one of its entries,
+addressed by handle. See [the conversational
+agent](/retrieval/chat-agent.md#working-memory-the-scratchpad) for the entry
+shapes and the board.
 
-`chat_context_carry(blob, request, state) -> JsonBlob` in `chat/_agent.py` is the
-default `derive_context` a caller passes. It is deterministic and free — no model
-call — reading the case numbers this turn cited off `_sources(state)` and merging
-them into the blob's running `cases_discussed` list, so a later turn's planner sees
-"we have already looked at Mål 12/2024" without re-retrieving. A caller wanting a
-richer carry-over (an LLM-written running brief, say) passes its own function
-instead; `run_chat_agent` has no opinion on the blob's shape beyond passing it
-through. This app's own wiring — the durable store backing `ContextStore` — is
+`run_chat_agent` passes that pad to `agent_kit.run_agent` as both `evidence`
+(what `_synthesize` reads) and `scratchpad` (what the executor's `tool_loop`
+boards and what cross-turn recall restores and persists), plus
+`scratchpad_codec=chat_scratchpad_codec(cap=settings.chat_agent_max_carried_entries)`
+— the codec dispatches encode/decode by each entry's kind. When
+`context_store` is also given and `ChatAgentRequest.conversation_id` is set,
+[`agent_kit.run_agent`](/packages/agent-kit.md#scratchpad-persistence-cross-turn-recall)
+restores the pad from the store before the plan call — so the planner sees an
+earlier turn's shorthand (`digest()`, never the heavy values) — and persists
+the whole pad once the run reaches a terminal event. This app's own wiring —
+the durable store backing `ContextStore` — is
 `api.services.context_store.PostgresContextStore`, keyed by session id; see
-[sessions](/data-model/sessions.md) and [the conversational
-agent](/retrieval/chat-agent.md#carry-over-context).
+[sessions](/data-model/sessions.md).
 
 ## The semantic model (`agents/sql/_semantic_model.py`)
 

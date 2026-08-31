@@ -1,10 +1,10 @@
 ---
 type: Package
 title: llm-core Package
-description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer, and the trace hook.
+description: The standalone, project-agnostic LLM abstraction — provider Protocol, config/factory, Gemini and OpenAI-compatible providers, the service layer with its tool loop, the generic Scratchpad working-memory primitive, and the trace hook.
 resource: packages/llm-core
-tags: [package, llm, provider, abstraction]
-timestamp: 2026-08-25T00:00:00Z
+tags: [package, llm, provider, abstraction, scratchpad]
+timestamp: 2026-08-30T00:00:00Z
 ---
 
 # llm-core Package (`packages/llm-core/`)
@@ -123,6 +123,15 @@ lives in the [ai package](/packages/ai.md).
   it stays in `history` — the provider accepts UTF-8 directly either way, so there is
   nothing `ensure_ascii=True` buys.
 
+  `tool_loop`/`run_tool_loop` take an optional `scratchpad: Scratchpad[Any] | None`.
+  When given, every iteration pins the pad's [rendered
+  board](#scratchpad-working-memory) in front of the history as an ephemeral
+  `[scratchpad]`-tagged system message, rebuilt fresh from the live pad each
+  pass and never appended to `history`, so the pinned copy stays current on
+  every call rather than growing stale. `None` leaves the loop's behavior
+  unchanged. The loop only renders the pad; the executors it calls are what
+  write it, since they close over the same object the host constructed.
+
   `tool_loop` takes an optional `terminal_tools: set[str]`. Naming a tool there means
   the loop executes it and ends the run rather than looping again. Without it a run ends
   only when the model happens to stop calling tools, which makes termination incidental
@@ -143,6 +152,36 @@ the API says it **served** rather than the one configured — hosts resolve alia
 dated builds, and cost must attach to what actually ran. Gemini's thinking tokens are
 folded into output, since they bill at the output rate but are excluded from
 `candidates_token_count`.
+
+## Scratchpad working memory (`scratchpad/`)
+
+`Scratchpad[V]` (`scratchpad/_pad.py`, re-exported at package top level along
+with `Handle` and `Preview`) is a keyed, generic working-memory: the single
+place a turn's gathered evidence lives while the turn runs. A host `remember`s
+a full value under a stable key and gets back a `Handle` — the key plus a
+small, JSON-safe `preview` dict — while the heavy value stays on the pad;
+`recall(key)` gets it back later, by the same key. `preview=None` marks a small
+"K=V" entry whose value is its own shorthand (must itself be JSON-safe) rather
+than needing a separate preview.
+
+`digest()` is `{key: preview}` in insertion order — the shorthand a planner or
+an earlier turn is shown. `render_board()` renders that same digest as a dense
+`key  preview` text block, one line per entry, empty string when the pad holds
+nothing; [`tool_loop`](#modules) is what pins this into the model each
+iteration when a `scratchpad` is passed to it.
+
+`dump(encode, *, cap=None)` / `Scratchpad.load(blob, decode)` / `restore(blob,
+decode)` carry a pad through a host-supplied value codec, so typed values
+round-trip through a JSON store without the pad itself knowing what they are.
+`cap`, when given, keeps every K=V entry (small, cheap) but keeps only the most
+recent `cap` *previewed* (heavy) entries — older ones drop, newest-wins — so a
+long-running conversation's persisted pad cannot grow without bound.
+
+It lives here rather than in [agent-kit](/packages/agent-kit.md) because
+`tool_loop` — an llm-core primitive — has to name `Scratchpad` to render its
+board, and agent-kit depends on llm-core, never the reverse. It is single-run
+and not thread-safe: one pad is created per turn and the turn's executors close
+over it.
 
 ## Loop-bound clients (`_clients.py`)
 

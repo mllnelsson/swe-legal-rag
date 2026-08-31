@@ -67,6 +67,19 @@ class ChatAgentSettings(BaseSettings):
     # Two is enough to judge a decision's relevance; the whole text is a
     # `read_decision` away, and that goes to a sub-agent rather than here.
     chat_agent_chunks_per_decision: int = 2
+    # Characters of a passage's text carried in its scratchpad-board preview —
+    # enough for the model to recognise a passage on the board without the whole
+    # text, which it recalls by handle when it cites.
+    chat_agent_preview_snippet_chars: int = 160
+    # Rows of a tabular answer carried in its board preview. The full result is
+    # recalled by key for synthesis; the sample is only so the loop can see the
+    # shape of what the count returned.
+    chat_agent_preview_rows: int = 5
+    # Heavy scratchpad entries (decisions, passages, readings, the last count and
+    # the selection) carried between turns. Bounds `sessions.context` so a long
+    # conversation cannot grow it without end; the small `cases_discussed` list
+    # is exempt, so cited case numbers accumulate regardless.
+    chat_agent_max_carried_entries: int = 40
 
 
 @lru_cache(maxsize=1)

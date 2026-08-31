@@ -42,6 +42,7 @@ from llm_core._types import (
     ToolDefinition,
     Usage,
 )
+from llm_core.scratchpad import Handle, Preview, Scratchpad
 
 __all__ = [
     "LLMConfig",
@@ -73,6 +74,10 @@ __all__ = [
     "run_tool_loop",
     "ToolLoopResult",
     "ToolExecutor",
+    # Turn-scoped working-memory the loop renders as a board and the writer reads.
+    "Scratchpad",
+    "Handle",
+    "Preview",
     # What `tool_loop` yields as it goes; `ToolLoopFinished` is always last.
     "ToolLoopEvent",
     "ToolCallStarted",

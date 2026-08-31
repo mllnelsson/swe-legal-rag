@@ -55,6 +55,22 @@ class PlanPhase:
 
 
 @dataclass(frozen=True)
+class ScratchpadCodec[V]:
+    """How a host serializes its scratchpad's values for cross-turn persistence.
+
+    The *only* domain hook in scratchpad persistence: `encode` turns one stored
+    value into JSON-safe data and `decode` reverses it, dispatched on the entry's
+    key however the host likes. `cap` bounds how many heavy (previewed) entries
+    survive a turn, so the persisted pad cannot grow without bound. Everything
+    else about the pad — order, previews, the board — is domain-free.
+    """
+
+    encode: Callable[[str, V], Any]
+    decode: Callable[[str, Any], V]
+    cap: int | None = None
+
+
+@dataclass(frozen=True)
 class ExecutionPhase:
     """Phase 2: gather evidence with the tools, carrying the strategy.
 
