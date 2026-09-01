@@ -6,6 +6,7 @@ spanning a month boundary lives in one place, not two.
 
 ## 2026-08
 
+* [week of 2026-08-31](log/week-of-2026-08-31.md) - Documentation bundle changes recorded in the week of 2026-08-31, newest first.
 * [week of 2026-08-24](log/week-of-2026-08-24.md) - Documentation bundle changes recorded in the week of 2026-08-24, newest first.
 * [week of 2026-08-17](log/week-of-2026-08-17.md) - Documentation bundle changes recorded in the week of 2026-08-17, newest first.
 * [week of 2026-08-10](log/week-of-2026-08-10.md) - Documentation bundle changes recorded in the week of 2026-08-10, newest first.
