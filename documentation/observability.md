@@ -3,7 +3,7 @@ type: Concept
 title: LLM Observability
 description: How every LLM and embedding call is captured to a local file, one file per call, correlated by directory — the record schema, the correlation keys, and the wiring every process must do.
 tags: [observability, cost, tracing, llm]
-timestamp: 2026-08-28T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # LLM Observability
@@ -351,7 +351,8 @@ scope around the single call to `run_sql_agent` in one place.
 `asyncio.Runner` copies the current context when it builds the loop, so an outer
 set propagates in. Setting it after the run would do nothing. `shared.worker.subscribe_step`
 enters the `scope` it was given exactly there, around its own internal `asyncio.run` —
-`shared` cannot supply the context itself since it must not depend on `llm-core`, so each
+`shared` cannot supply the context itself since it must not depend on the `agent-kit`
+dependency, so each
 worker passes `ai.worker_trace_scope(name)` in; the two workers with no LLM calls
 (download, parse) pass no `scope` at all.
 
@@ -368,7 +369,7 @@ trade that makes.
   record either finished writing or it did not start, so a hard kill loses at most the
   one record in flight, not a window of seconds.
 - **Install never fails.** A trace root that cannot be created leaves no recorder at
-  all, which llm-core treats as tracing off. Observability must never stop a worker or
+  all, which `agent_kit.llm` treats as tracing off. Observability must never stop a worker or
   the API from starting.
 
 ## Configuration
@@ -429,19 +430,12 @@ grep -l "$doc_id" data/llm-traces/$(date -u +%F)/*/*.json \
 
 | Concern | Location |
 |---|---|
-| Hook: record type, recorder Protocol, `trace_context`, `traced_call` | `llm-core`, `_tracing.py` |
-| Instrumentation of the four entry points | `llm-core`, `_service.py` |
-| Token/model mapping per provider | `llm-core`, `providers/` |
+| The trace hook (record type, recorder Protocol, `trace_context`, `traced_call`), the instrumented entry points, per-provider token/model mapping, the `FileTraceRecorder` with its synchronous writes and serialization, and the `interaction_scope`/`agent_run_scope` correlation keys | the external `agent-kit` dependency (`agent_kit.llm` + `agent_kit.tracing`) |
 | Blob `store`/`retrieve` — no JSON, no append, PDFs only | `shared`, `storage/` |
-| Storage layout, synchronous writes, serialization, `FileTraceRecorder` | `agent-kit`, `tracing/_recorder.py` |
-| `interaction_scope`/`agent_run_scope` — the correlation keys | `agent-kit`, `tracing/_scopes.py` |
 | Trace root: `install_file_tracing()` supplying `StorageSettings().local_storage_path`, and the re-exports every existing `ai.*`/`agents.*` call site imports | `ai`, `_observability.py` / `_tracing_scope.py` |
 | Rates and how to apply them | [LLM pricing](/reference/llm-pricing.md) — reference data, no code |
 
-llm-core carries the hook but never a writer, which is what lets it stay free of
-any dependency on the rest of the project; `agent-kit` supplies the writer and the
-correlation scopes but takes the trace root as an argument rather than deciding
-where traces live, which is what lets `ai` root them under this project's
-`LOCAL_STORAGE_PATH` with no change to the path a reader already expects. See
-[llm-core](/packages/llm-core.md), [agent-kit](/packages/agent-kit.md) and
-[ai](/packages/ai.md).
+The `agent-kit` dependency carries the hook, the writer and the correlation scopes but
+takes the trace root as an argument rather than deciding where traces live — which is what
+lets `ai` root them under this project's `LOCAL_STORAGE_PATH` with no change to the path a
+reader already expects. See [ai](/packages/ai.md).

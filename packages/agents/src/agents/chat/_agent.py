@@ -37,7 +37,7 @@ from ai.dtos import (
     TabularEvidence,
 )
 from ai.prompts import CHAT_ORCHESTRATION, CHAT_PLAN, render, render_tool_index
-from llm_core import (
+from agent_kit.llm import (
     LLMProvider,
     Message,
     ToolCall,

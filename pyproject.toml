@@ -58,7 +58,7 @@ worker-metadata = { workspace = true }
 worker-extract = { workspace = true }
 worker-chunk = { workspace = true }
 worker-embed = { workspace = true }
-agent-kit = { workspace = true }
+agent-kit = { git = "ssh://git@github.com/mllnelsson/agent-kit.git", tag = "v0.1.0" }
 ai = { workspace = true }
 agents = { workspace = true }
 api = { workspace = true }
@@ -110,8 +110,6 @@ testpaths = [
     "packages/worker-embed/tests",
     "packages/api/tests",
     "packages/agents/tests",
-    "packages/llm-core/tests",
-    "packages/agent-kit/tests",
     "scripts/tests",
 ]
 markers = [

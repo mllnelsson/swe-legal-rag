@@ -14,8 +14,15 @@ import pytest
 from agent_kit import InMemoryContextStore
 from ai import interaction_scope
 from ai.dtos import DecisionReading
-from llm_core import LLMResponse, Message, Role, StreamChunk, ToolCall
-from llm_core._tracing import LLMCallRecord, set_trace_recorder
+from agent_kit.llm import (
+    LLMCallRecord,
+    LLMResponse,
+    Message,
+    Role,
+    StreamChunk,
+    ToolCall,
+    set_trace_recorder,
+)
 from shared.dtos.search import DocumentFilter
 from shared.enums import ChunkSection
 

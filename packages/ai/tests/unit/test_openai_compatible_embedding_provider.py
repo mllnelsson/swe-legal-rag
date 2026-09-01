@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from llm_core import LLMOperation, Usage, set_trace_recorder
+from agent_kit.llm import LLMOperation, Usage, set_trace_recorder
 
 from ai.embedding import EmbeddingConfig, create_embedding_provider
 from ai.errors import MissingApiKeyError
@@ -22,7 +22,7 @@ def sdk_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     Patched at the accessor rather than on the instance: the provider looks its
     client up per call, because a client outliving its event loop is what caused
-    the ingest's near-100 % retry rate. See `llm_core._clients`.
+    the ingest's near-100 % retry rate. See `agent_kit.llm.clients`.
     """
     client = MagicMock()
     monkeypatch.setattr(

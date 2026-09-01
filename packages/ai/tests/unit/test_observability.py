@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from llm_core import (
+from agent_kit.llm import (
     LLMCallRecord,
     LLMOperation,
     Message,

@@ -20,7 +20,7 @@ An OKF knowledge bundle for a Swedish-language semantic search and chat tool ove
 * [Ingestion Pipeline](pipeline/) - The seven queue-driven ingestion workers and the shared worker patterns.
 * [Retrieval](retrieval/) - The conversational agent behind the chat endpoint, and the deterministic search path (with opt-in query expansion) it and the search API share.
 * [Data Model](data-model/) - Tables, indexes, the repository layer, and schema design notes.
-* [Backend Packages](packages/) - The uv workspace packages: shared, llm-core, agent-kit, ai, agents, api.
+* [Backend Packages](packages/) - The uv workspace packages: shared, ai, agents, api — plus the external agent-kit git dependency they consume.
 * [API](api/) - The chat and sessions endpoints, the SQL agent, the health check, and the deterministic search/browse/traversal REST API — search, filters, documents, concepts and keywords.
 * [Frontend](frontend/) - The React SPA: deterministic search and agent mode, the SSE client for the chat endpoint, plus the honesty rules it enforces and the generated-types workflow it builds on.
 * [Decisions](decisions/) - Architecture decision records.

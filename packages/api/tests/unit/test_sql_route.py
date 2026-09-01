@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from agents import SqlAgentResult
 from fastapi.testclient import TestClient
-from llm_core._tracing import LLMCallRecord, set_trace_recorder
+from agent_kit.llm import LLMCallRecord, set_trace_recorder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.correlation import INTERACTION_ID_HEADER
@@ -82,7 +82,7 @@ class TestInteractionIdHeader:
         captured: list[str] = []
 
         async def _capture_context(*_args, **_kwargs):
-            from llm_core import current_trace_context
+            from agent_kit.llm import current_trace_context
 
             captured.append(current_trace_context()["interaction_id"])
             return SqlAgentResult(answered=False, sql=None, note="ingen fråga")

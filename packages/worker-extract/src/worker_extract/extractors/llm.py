@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ai import extract_entities
 from ai.dtos import EntityResult
-from llm_core import LLMProvider
+from agent_kit.llm import LLMProvider
 from shared.segmentation import DocumentSegments
 
 

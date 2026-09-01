@@ -3,7 +3,7 @@ type: Decision
 title: Architectural Decision Register
 description: The consolidated register of accepted system-shaping decisions — retrieval, storage, pipeline, data-layer, and library choices.
 tags: [architecture, decisions, register]
-timestamp: 2026-08-30T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # Architectural Decision Register
@@ -79,7 +79,7 @@ window](/decisions/embedding-window.md); the mandatory crawl
   entry; that is the price of a misspelled role being a type error. See
   [the decision](/decisions/llm-model-selection.md).
 - **A provider *kind* is a closed enum; a provider *name* is arbitrary** —
-  `llm_core.ProviderKind` (`openai_compatible`, `gemini`, `none`) is the set of client
+  `agent_kit.llm.ProviderKind` (`openai_compatible`, `gemini`, `none`) is the set of client
   implementations, and dispatch on it is exhaustive, so adding a kind without wiring it
   up is a type error. The names under `providers:` in the YAML are free-form labels for
   hosts. The same split governs roles: `LLMRole` is closed, the `roles:` keys are file
@@ -95,8 +95,8 @@ window](/decisions/embedding-window.md); the mandatory crawl
 - **No built-in default host or per-vendor credential fields** — a provider requires
   `base_url` and `api_key`, and refuses to start without them. A defaulted base URL
   sends traffic to the wrong host silently, which is harder to diagnose than a refusal.
-  See [llm-core](/packages/llm-core.md).
-- **No LLM proxy container** — containerizing `ai`/`llm-core` as a service was considered
+  See [llm_config.yaml](/reference/llm-config.md).
+- **No LLM proxy container** — containerizing `ai` as a service was considered
   as a way to give every worker its own container without each owning a private trace
   file. It solves neither half. What keeps the workers in one process is the `sync`
   queue, whose broker is a module-level singleton dispatching in-process — a proxy does
@@ -115,42 +115,37 @@ window](/decisions/embedding-window.md); the mandatory crawl
 
 ## Agent core
 
-- **The domain-free half of the agent machinery is its own package, not a
-  module inside `ai`/`agents`.** [`agent-kit`](/packages/agent-kit.md) depends
-  only on `llm-core` plus pydantic/pydantic-settings/pyyaml, and imports
-  nothing from `shared`, `ai`, `agents` or `api`. What moved: the
-  plan→execute→synthesize orchestrator (`run_agent`), the streaming synthesis
-  step, the prompt renderer, the LLM role/provider config loader, the file
-  trace recorder, and the `interaction_scope`/`agent_run_scope` correlation
-  scopes. `ai` and `agents` are thin consumers — `ai` re-exports the moved
-  config/tracing/prompt symbols so no existing import broke, and
-  `agents.run_chat_agent` is a configuration of `agent_kit.run_agent` plus an
-  event mapping onto this app's own wire events. The boundary is the point:
-  agent-kit is meant to be lifted whole into a different agent project, which
-  a module entangled with `shared`'s models or this project's Swedish prompts
-  could not be.
+- **The domain-free half of the agent machinery is an external dependency, not a
+  module inside `ai`/`agents`.** It was built domain-free specifically to be lifted
+  out, and it has been: `agent-kit` is now a standalone pinned git package (the
+  `agent_kit` namespace plus its `agent_kit.llm` layer) that imports nothing from
+  this repo. It carries the plan→execute→synthesize orchestrator (`run_agent`), the
+  streaming synthesis step, the prompt renderer, the LLM role/provider config loader,
+  the file trace recorder, and the `interaction_scope`/`agent_run_scope` correlation
+  scopes. `ai` and `agents` are thin consumers — `ai` re-exports the config/tracing/
+  prompt symbols so its callers import them locally, and `agents.run_chat_agent` is a
+  configuration of `agent_kit.run_agent` plus an event mapping onto this app's own wire
+  events. The boundary was the point, and the extraction proved it: nothing entangled
+  with `shared`'s models or this project's Swedish prompts had to move.
 - **Per-conversation carry-over persists a typed `Scratchpad`, not an
   opaque host-derived blob, and the storage backend is a Protocol the
   orchestrator calls rather than implements.** `agent_kit.ContextStore` is two
   methods (`get`/`set` on a JSON blob keyed by conversation id).
-  `llm_core.Scratchpad[V]` — a keyed, generic working-memory a host's
+  `agent_kit.llm.Scratchpad[V]` — a keyed, generic working-memory a host's
   executors write, `tool_loop` boards, and the writer reads — is what
   `run_agent` restores from that blob before the plan call and persists back
   (`scratchpad.dump(codec.encode, cap=codec.cap)`) once a turn ends, given a
   `context_store`, `conversation_id`, `scratchpad` and `scratchpad_codec`
   together; short of all four the pad stays turn-scoped only. `Scratchpad`
-  lives in llm-core rather than agent-kit because `tool_loop` — an llm-core
-  primitive — has to name it to render its board. This app backs
+  lives in the `agent_kit.llm` layer because `tool_loop` — a primitive there —
+  has to name it to render its board. This app backs
   `ContextStore` with `api.services.context_store.PostgresContextStore`
   against a `sessions.context` column, and supplies its chat agent's own
   `ChatScratchpad` plus `chat_scratchpad_codec` — a deterministic,
   model-free encode/decode with a cap on carried entries, exempting the small
   cross-turn `cases_discussed` list. Keeping the store an injected Protocol is
-  what lets `InMemoryContextStore` back every agent-kit unit test with no
-  database, and what lets a future host swap Postgres for a cache with no
-  orchestrator change. See [the conversational
-  agent](/retrieval/chat-agent.md#cross-turn-recall),
-  [agent-kit](/packages/agent-kit.md#scratchpad-persistence-cross-turn-recall)
+  what lets a future host swap Postgres for a cache with no orchestrator
+  change. See [the conversational agent](/retrieval/chat-agent.md#cross-turn-recall)
   and [sessions](/data-model/sessions.md).
 
 ## Data layer and libraries

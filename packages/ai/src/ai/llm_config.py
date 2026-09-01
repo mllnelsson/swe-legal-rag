@@ -24,7 +24,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from llm_core import ProviderKind
+from agent_kit.llm import ProviderKind
 
 from agent_kit.config import (
     CONFIG_FILENAME,

@@ -8,11 +8,9 @@ dependencies = [
     # The SQL agent behind POST /api/sql. The route is a thin adapter; the loop,
     # its tools and the read-only sandbox all live in `agents`.
     "agents",
-    # Imported directly by services/retriever.py for its rerank call, which
-    # reaches past `ai`. Declared rather than left to resolve through `ai`.
-    "llm-core",
-    # The agent core: `ContextStore`/`JsonBlob` for the chat session's carry-over
-    # store. Imported directly, the same as llm-core.
+    # The agent core, imported directly (it reaches past `ai`): `agent_kit.llm`
+    # for services/retriever.py's rerank call, plus `ContextStore`/`JsonBlob` for
+    # the chat session's carry-over store.
     "agent-kit",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -22,8 +20,7 @@ dependencies = [
 shared = { workspace = true }
 ai = { workspace = true }
 agents = { workspace = true }
-llm-core = { workspace = true }
-agent-kit = { workspace = true }
+agent-kit = { git = "ssh://git@github.com/mllnelsson/agent-kit.git", tag = "v0.1.0" }
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]

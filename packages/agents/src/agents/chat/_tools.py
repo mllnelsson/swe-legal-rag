@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ai.dtos import DecisionReading
-from llm_core import LLMProvider, Scratchpad, ToolDefinition
+from agent_kit.llm import LLMProvider, Scratchpad, ToolDefinition
 from shared.dtos.search import DocumentFilter
 from shared.enums import ChunkSection
 

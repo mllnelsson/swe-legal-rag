@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai import CountTokens, summarize_document
-from llm_core import LLMProvider
+from agent_kit.llm import LLMProvider
 from shared.dtos.chunk import ChunkCreate
 from shared.dtos.document import DocumentUpdate
 from shared.enums import PipelineStep

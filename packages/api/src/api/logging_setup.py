@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from llm_core import current_trace_context
+from agent_kit.llm import current_trace_context
 
 from shared.logging_config import TIME_FORMAT, configure_logging, resolve_log_level
 

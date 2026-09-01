@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from llm_core import aclose_async_openai
+from agent_kit.llm import aclose_async_openai
 from shared.queue.base import QueueMessage
 from shared.worker import MessageScope
 
@@ -25,7 +25,7 @@ async def close_llm_clients() -> None:
     A provider's HTTP client pools connections against the loop that opened
     them, and a worker opens one loop per message. Releasing them here — while
     that loop still runs — is what stopped the ingest retrying nearly every
-    call; see `llm_core._clients`.
+    call; see `agent_kit.llm.clients`.
     """
     await aclose_async_openai()
 

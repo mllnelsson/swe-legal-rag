@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from llm_core import ToolDefinition
+from agent_kit.llm import ToolDefinition
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.config import SqlAgentSettings

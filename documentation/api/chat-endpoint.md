@@ -4,7 +4,7 @@ title: Chat Endpoint (POST /api/chat)
 description: The POST /api/chat Server-Sent Events contract — a Swedish question in, progress keys, sources, then a streamed answer out; the closed label vocabulary a client maps its own words onto, the mandatory sql event, the per-passage sources event a citation marker resolves against, the terminal error semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/chat
 tags: [api, sse, chat, agent, contract]
-timestamp: 2026-08-30T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # Chat Endpoint (`POST /api/chat`)
@@ -239,7 +239,7 @@ model, which is what keeps each iteration to single digits. The plan step
 precedes the first progress event, so it is spent inside the pre-first-token
 wait like everything else in this table. Exactly one call per run streams —
 the final synthesis — because `LLMProvider.generate_stream` takes no tools and
-there is no streaming tool-call path in [llm-core](/packages/llm-core.md).
+`agent_kit.llm` has no streaming tool-call path.
 
 This is well past the 5-second budget [NFR1a](/prd.md) sets for search, deliberately.
 The agent is held to **[NFR1b](/prd.md) instead: a turn under one minute**, with the

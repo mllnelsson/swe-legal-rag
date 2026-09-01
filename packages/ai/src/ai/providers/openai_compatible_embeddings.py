@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from llm_core import (
+from agent_kit.llm import (
     LLMOperation,
     Usage,
     get_async_openai,
@@ -50,7 +50,7 @@ class OpenAiCompatibleEmbeddingProvider:
             )
 
         # Credentials here, client per call: its connection pool cannot outlive
-        # the event loop that filled it. See `llm_core._clients`.
+        # the event loop that filled it. See `agent_kit.llm.clients`.
         self._api_key = config.api_key
         self._base_url = config.base_url
         self._model = config.model

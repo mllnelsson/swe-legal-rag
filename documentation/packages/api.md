@@ -4,15 +4,16 @@ title: api Package
 description: The FastAPI application and the deterministic search/browse/traversal REST API — search/document/concept/keyword services, the session service, the chat toolset the conversational agent is driven through, and their routes.
 resource: packages/api
 tags: [package, api, fastapi, retrieval, sse, search, rest]
-timestamp: 2026-08-27T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # api Package (`packages/api/`)
 
 Hosts the FastAPI application and the deterministic search/browse/traversal REST API.
 Depends on `shared` (repositories, DTOs, storage), [ai](/packages/ai.md) (synthesize,
-embed, expand), [agents](/packages/agents.md) (both agents) and `llm-core` (provider
-types, declared directly rather than reached transitively through `ai`).
+embed, expand), [agents](/packages/agents.md) (both agents) and the external `agent-kit`
+git dependency (provider types, declared directly rather than reached transitively
+through `ai`).
 
 The retrieval algorithm is described in [deterministic
 search](/retrieval/deterministic-search.md) and the agent that drives it in [the

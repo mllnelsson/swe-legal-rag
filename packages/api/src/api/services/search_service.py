@@ -20,7 +20,7 @@ from ai.embedding import EmbeddingProvider
 from api.access_log import preview
 from api.config import SearchSettings
 from api.pagination import Page, clamp_limit
-from llm_core import LLMProvider
+from agent_kit.llm import LLMProvider
 from shared.dtos.document import DocumentRead
 from shared.dtos.search import ChunkSearchResult, DocumentFacets, DocumentFilter
 from shared.enums import ChunkSection

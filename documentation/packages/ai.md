@@ -4,15 +4,15 @@ title: ai Package
 description: Project-specific LLM logic — Swedish prompt templates, domain DTOs, service functions, per-task model selection, and the embedding abstraction, layered over the agent-kit core.
 resource: packages/ai
 tags: [package, ai, prompts, embedding, llm]
-timestamp: 2026-08-28T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # ai Package (`packages/ai/`)
 
-Project-specific LLM logic consuming [llm-core](/packages/llm-core.md) and
-[agent-kit](/packages/agent-kit.md). Knows about Swedish legal documents; provides
-domain DTOs, prompt templates, service functions, and the embedding abstraction.
-Depends on `shared`, `llm-core` and `agent-kit`.
+Project-specific LLM logic consuming the external `agent-kit` package. Knows
+about Swedish legal documents; provides domain DTOs, prompt templates, service
+functions, and the embedding abstraction.
+Depends on `shared` and the external `agent-kit` git dependency.
 
 A thin consumer of agent-kit, not a reimplementation: the prompt renderer, the
 LLM role/provider config loader, the file trace recorder and the correlation
@@ -75,12 +75,12 @@ substituted.
 
 `TEXT_TO_SQL` is rendered directly by [`agents.run_sql_agent`](/packages/agents.md) via
 `render()`, not through a function in `ai/services.py` — the agent owns its own tool loop
-(`llm_core.tool_loop`) rather than a single `generate`/`generate_structured` call, so there
+(`agent_kit.llm.tool_loop`) rather than a single `generate`/`generate_structured` call, so there
 is no service-layer wrapper for it to go through.
 
 `CHAT_PLAN`, `CHAT_ORCHESTRATION` and `TEXT_TO_SQL` are the three prompts with a
 `{tools}` block, and none spells its tools out by hand: `render_tool_index(tools)`
-builds it from the same [`ToolDefinition`](/packages/llm-core.md)s each agent hands
+builds it from the same `agent_kit.llm.ToolDefinition`s each agent hands
 `tool_loop`, one entry per tool — a signature line (`name(arg*, arg)`, `*` marking a
 required argument, argument order following the schema's `properties`) followed by
 the definition's `summary`. `CHAT_PLAN` is shown the executor's tools so its plan is
@@ -172,8 +172,7 @@ finding itself.
 Reads [`llm_config.yaml`](/reference/llm-config.md) — which model and provider each task
 uses — and resolves it into the settings objects the rest of the package consumes. The
 provider/role half of that resolution — discovery, document validation, precedence
-against environment variables — is implemented in
-[`agent_kit.config`](/packages/agent-kit.md#llm-roleprovider-config-config), which is
+against environment variables — is implemented in `agent_kit.config`, which is
 project-agnostic and knows nothing about a file at this project's root; `ai.llm_config`
 re-exports those names unchanged and adds the one half agent-kit has no opinion on: the
 `embedding:` block, which `agent_kit.LLMConfigDocument` carries only as an opaque
@@ -185,7 +184,7 @@ exactly as before the split.
 | Function | Returns |
 |---|---|
 | `get_llm_config()` | The validated `LLMConfigDocument`, read once (`@lru_cache`) |
-| `resolve_role_config(role)` | An `llm_core.LLMConfig` for a named role |
+| `resolve_role_config(role)` | An `agent_kit.llm.LLMConfig` for a named role |
 | `resolve_embedding_config()` | An `EmbeddingConfig` — this package's own, since `agent_kit` does not resolve it |
 | `get_embedding_prefixes()` | `(query_prefix, passage_prefix)` |
 | `find_config_path()` / `load_config_document(path)` | Discovery and parsing, for tests and tooling |
@@ -204,7 +203,7 @@ mechanism.
 
 ## Per-task model selection (`ai/providers/roles.py`)
 
-`llm_core.LLMConfig` carries one `model` field. This project needs a different model —
+`agent_kit.llm.LLMConfig` carries one `model` field. This project needs a different model —
 and sometimes a different provider — per task, so the assignment lives in
 `llm_config.yaml` under `roles:`. See
 [the decision record](/decisions/llm-model-selection.md) for why.
@@ -265,7 +264,7 @@ only for the hosted one; there is no fallback `case`, since a host whose kind ha
 embeddings client is already rejected earlier, by `resolve_embedding_config`.
 
 `EmbeddingBackend` (`local`, `openai_compatible`) is deliberately a subset of
-`llm_core.ProviderKind` plus `LOCAL` — its `OPENAI_COMPATIBLE` member takes its value
+`agent_kit.llm.ProviderKind` plus `LOCAL` — its `OPENAI_COMPATIBLE` member takes its value
 *from* `ProviderKind.OPENAI_COMPATIBLE` so the two vocabularies cannot drift apart. Not
 every `ProviderKind` has an embeddings client wired up here: naming a provider whose
 `kind` is `gemini` under `embedding.provider` raises
@@ -290,9 +289,10 @@ Both sides come from one place so they cannot drift apart; the query half is use
   `openai.AsyncOpenAI.embeddings.create()`. `__init__` validates `api_key` and
   `base_url` (raising `ai.errors.MissingApiKeyError` if the key is missing) but does
   not build the client — each `embed()` call fetches one from
-  `llm_core.get_async_openai()`, bound to the loop it is running on, rather than
-  holding one built at construction; see [loop-bound
-  clients](/packages/llm-core.md#loop-bound-clients-_clientspy). **Traced**: embedding
+  `agent_kit.llm.get_async_openai()`, bound to the loop it is running on, rather than
+  holding one built at construction; see [worker
+  patterns](/pipeline/worker-patterns.md) for why a loop-bound client matters to a
+  worker's teardown. **Traced**: embedding
   runs once per chunk over the whole corpus, so it is plausibly the largest single line
   of token spend.
 - **`LocalEmbeddingProvider`** (`embedding.provider: local` — the default in this
@@ -307,12 +307,11 @@ since `embed() -> list[list[float]]` has nowhere to put it. The embedded texts a
 recorded — they are chunk text already durable in Postgres — only their count and
 character total.
 
-Because the call bypasses llm-core's service layer, the provider opens its own trace with
-`traced_call()` and reports usage through `trace_outcome()` — the same context manager
-llm-core uses internally, so the lifecycle is not hand-rolled here. Model and provider are
-seeded on entry from config, which means a timeout is still attributed to the right model;
-whatever the API reports back overrides the seed. See
-[llm-core](/packages/llm-core.md).
+Because the call bypasses `agent_kit.llm`'s service layer, the provider opens its own
+trace with `traced_call()` and reports usage through `trace_outcome()` — the same
+context manager `agent_kit.llm` uses internally, so the lifecycle is not hand-rolled
+here. Model and provider are seeded on entry from config, which means a timeout is
+still attributed to the right model; whatever the API reports back overrides the seed.
 
 See the [embedding hosting](/decisions/embedding-hosting.md) decision. The width
 constraint and its startup verification (`verify_embedding_dimension`) are covered in
@@ -357,24 +356,19 @@ the root `pyproject.toml`, and a second ceiling here would only fight it.
 
 ## Trace recording (`ai/_observability.py`)
 
-The concrete recorder behind llm-core's hook — `FileTraceRecorder`, the JSON contract,
-and the storage layout — is defined in
-[`agent_kit.tracing`](/packages/agent-kit.md#tracing-tracing), which is domain-free and
-takes the trace root as an argument rather than deciding where traces live.
-`ai._observability.install_file_tracing(root=None, config=None)` is a thin wrapper
-supplying that one project-specific fact: when `root` is omitted, it resolves to
+The recorder, its JSON contract and the storage layout are defined in `agent_kit.tracing`,
+which is domain-free and takes the trace root as an argument rather than deciding where
+traces live. `ai._observability.install_file_tracing(root=None, config=None)` is a thin
+wrapper supplying that one project-specific fact: when `root` is omitted, it resolves to
 `StorageSettings().local_storage_path / config.directory_name`, which is the exact path
-every reader and the pricing analysis already expect — so
-`ai.install_file_tracing()` stays the no-argument call every composition root makes,
-and the on-disk path did not move when the recorder itself did. `FileTraceRecorder`,
-`LLMTraceConfig`, `relative_path_for` and `serialize_record` are re-exported here
-unchanged.
+every reader and the pricing analysis already expect — so `ai.install_file_tracing()`
+stays the no-argument call every composition root makes. A handful of `agent_kit.tracing`
+symbols (including `trace_context`) are re-exported here unchanged so callers need no
+direct dependency on `agent_kit`.
 
 `install_file_tracing()` is called **once at startup** by every process that makes LLM
 calls — the API lifespan and each of the four LLM workers. It never raises: a trace root
-it cannot create leaves no recorder at all, and llm-core treats that as tracing off.
-`trace_context` is re-exported here (from llm-core, via `agent_kit`) so callers need no
-direct llm-core dependency.
+it cannot create leaves no recorder at all, and `agent_kit.llm` treats that as tracing off.
 
 The recorder owns the **storage layout** — one JSON file per billed call, under
 `{LOCAL_STORAGE_PATH}/{LLM_TRACE_KEY_PREFIX}/{date}/{interaction_id}/`, so the
@@ -398,9 +392,9 @@ in.
 
 `interaction_scope(interaction_id=None, **values)` and `agent_run_scope(**values)` are
 defined in `agent_kit.tracing` and re-exported here unchanged — `interaction_id` and
-`agent_run_id` are still project-shaped correlation keys, not llm-core concepts
-(`trace_context` itself carries an opaque mapping and llm-core deliberately gives no key
-a meaning), but the scope mechanics that give them meaning are domain-free enough that
+`agent_run_id` are still project-shaped correlation keys, not `agent_kit.llm` concepts
+(`trace_context` itself carries an opaque mapping and `agent_kit.llm` deliberately gives
+no key a meaning), but the scope mechanics that give them meaning are domain-free enough that
 `agent_kit`'s own `run_agent` opens both around every turn it drives, which is what lets
 `agents.run_chat_agent` configure a `source` rather than open the scope itself. This
 module stays the import path `ai.worker_trace_scope` and the existing `ai`/`agents` call

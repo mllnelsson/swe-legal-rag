@@ -1,6 +1,6 @@
 """Per-task LLM provider construction.
 
-`llm_core.LLMConfig` carries a single `model` — one process-wide model for every
+`agent_kit.llm.LLMConfig` carries a single `model` — one process-wide model for every
 call. This project wants a different model per task, and sometimes a different
 *provider* per task, so the assignment lives in `llm_config.yaml` under `roles`
 and is resolved by `ai.llm_config`.

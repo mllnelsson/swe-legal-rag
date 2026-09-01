@@ -4,7 +4,7 @@ title: agents Package
 description: The LLM-tool-loop agents that answer questions the deterministic retrieval API cannot — the text-to-SQL agent behind POST /api/sql and the conversational agent behind POST /api/chat — their module layout, and the injected-toolset seam that keeps the dependency running api to agents.
 resource: packages/agents
 tags: [package, agents, sql, chat, tool-loop, llm, scratchpad]
-timestamp: 2026-08-30T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # agents Package (`packages/agents/`)
@@ -12,9 +12,9 @@ timestamp: 2026-08-30T00:00:00Z
 An **agent** here means an LLM driving a tool loop toward an answer, as opposed to the
 deterministic retrieval tool set in [api](/packages/api.md). Each is a function over its
 inputs rather than a service that reaches into a database itself, which is what lets one
-be called as a tool by another. Depends on `shared` (models, for the live schema) and
-`ai` + `llm-core` + [`agent-kit`](/packages/agent-kit.md) (the prompt templates and the
-tool loop, plus — for the chat agent — the generic orchestrator); depended on by `api`.
+be called as a tool by another. Depends on `shared` (models, for the live schema), `ai`,
+and the external `agent-kit` git dependency (the prompt templates and the tool loop,
+plus — for the chat agent — the generic orchestrator); depended on by `api`.
 
 Two live here, and they differ in shape:
 
@@ -40,12 +40,12 @@ tools arrive as an injected `ChatToolset`, and it calls `run_sql_agent` as one o
 | `sql/_guard.py` | `check_sql(sql, document=None)` — static checks on model-authored SQL before it reaches Postgres; `find_predicate_columns(sql, document=None)` — which free-text columns a query's predicate touches, as opposed to merely projecting or grouping by |
 | `sql/_sandbox.py` | `execute_readonly()` — runs a statement inside `SET TRANSACTION READ ONLY` plus a `SET LOCAL statement_timeout`, always rolled back regardless of outcome |
 | `sql/_tools.py` | The three tools the loop is given (`list_column_values`, `run_sql`, `note_assumption`) and `GroundingState`, the mutable per-run record of what the agent has grounded, assumed, and attempted. `build_sql_tools(session, settings, document=None)` |
-| `sql/_agent.py` | `run_sql_agent(..., document=None)` — wires the prompt, the tools, and `llm_core.tool_loop` together, and assembles the result from the trail `GroundingState` left behind |
+| `sql/_agent.py` | `run_sql_agent(..., document=None)` — wires the prompt, the tools, and `agent_kit.llm.tool_loop` together, and assembles the result from the trail `GroundingState` left behind |
 | `chat/_dtos.py` | The chat wire contract: `ChatAgentRequest` (`question`, `history`, `conversation_id` — the last keys the [carry-over context store](#carry-over-context) to a conversation), the `AgentEvent` union, `SourceReference`, `PassageNote` (a selected passage's structured guidance — `handle`, `carries`, `caution`), `ReadingSelection` (the reader's own output — `relevance`, `chunk_indices`, `summary`), the `ChatTool` / `ProgressLabel` enums (`ToolStatus` is re-exported from `agent_kit.orchestrator`, the run status vocabulary being agent-kit's own), and the shapes a toolset returns (`SearchOutcome`, `Vocabulary`, `DecisionText`, `DecisionProfile`) |
 | `chat/_protocols.py` | The `ChatToolset` Protocol — five async capabilities in the agent's own shapes. See [the seam](#the-toolset-seam) below |
 | `chat/_tools.py` | `build_chat_tools(toolset, settings, reader_provider=None)` → the six tool definitions, their executors and a `ChatScratchpad`; plus `chat_scratchpad_codec(cap)`, `label_for_call()` and `FREE_TEXT_FILTER_FIELDS`, the grounding precondition's column list |
 | `chat/_reader.py` | `read_decision_text()` — the one-shot sub-agent a whole decision goes to, returning a `ReadingSelection`: which passages bear on the question, by index, and how they connect. `format_numbered_chunks()`, which numbers each passage and marks each appendix boundary before it does |
-| `chat/_agent.py` | `run_chat_agent(request, toolset, *, llm_provider, reader_provider, executor_provider=None, context_store=None, ...)` — a thin configuration of [`agent_kit.run_agent`](/packages/agent-kit.md#run_agent-plan--execute--synthesize): owns the domain (the Swedish `PlanPhase`/`ExecutionPhase` prompt builders on `llm_provider`/`executor_provider`, the six chat tools, the `ChatScratchpad` it supplies as both `evidence` and `scratchpad`) and translates the orchestrator's generic event stream into `agents.chat`'s own `AgentEvent`s as it consumes it |
+| `chat/_agent.py` | `run_chat_agent(request, toolset, *, llm_provider, reader_provider, executor_provider=None, context_store=None, ...)` — a thin configuration of `agent_kit.run_agent`: owns the domain (the Swedish `PlanPhase`/`ExecutionPhase` prompt builders on `llm_provider`/`executor_provider`, the six chat tools, the `ChatScratchpad` it supplies as both `evidence` and `scratchpad`) and translates the orchestrator's generic event stream into `agents.chat`'s own `AgentEvent`s as it consumes it |
 
 Both agents run inside the same correlation scope, and neither mints an
 `interaction_id` outright: `interaction_scope()` **inherits** one already in the trace
@@ -89,7 +89,7 @@ so the whole loop is exercised with no database, no HTTP and no model. See
 
 ## Working memory and cross-turn recall
 
-`build_chat_tools` returns a `ChatScratchpad` — a `llm_core.Scratchpad` typed
+`build_chat_tools` returns a `ChatScratchpad` — an `agent_kit.llm.Scratchpad` typed
 over this agent's evidence — alongside the tool definitions and their
 executors; the tools close over that same pad and every gathered thing (a
 decision, a passage, a reading, the last tabular answer, the final selection,
@@ -104,8 +104,7 @@ boards and what cross-turn recall restores and persists), plus
 `scratchpad_codec=chat_scratchpad_codec(cap=settings.chat_agent_max_carried_entries)`
 — the codec dispatches encode/decode by each entry's kind. When
 `context_store` is also given and `ChatAgentRequest.conversation_id` is set,
-[`agent_kit.run_agent`](/packages/agent-kit.md#scratchpad-persistence-cross-turn-recall)
-restores the pad from the store before the plan call — so the planner sees an
+`agent_kit.run_agent` restores the pad from the store before the plan call — so the planner sees an
 earlier turn's shorthand (`digest()`, never the heavy values) — and persists
 the whole pad once the run reaches a terminal event. This app's own wiring —
 the durable store backing `ContextStore` — is

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from ai import agent_run_scope
 from ai.prompts import DECISION_READING, render
-from llm_core import LLMProvider, generate_structured
+from agent_kit.llm import LLMProvider, generate_structured
 from shared.enums import ChunkSection
 
 from agents.chat._dtos import DecisionText, ReadingSelection

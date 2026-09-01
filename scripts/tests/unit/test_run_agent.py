@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from llm_core import current_trace_context
+from agent_kit.llm import current_trace_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import run_agent

@@ -3,7 +3,7 @@ type: Decision
 title: Per-task LLM model and provider selection
 description: Why each task gets its own model and provider, declared in llm_config.yaml rather than in environment variables or code.
 tags: [llm, model, provider, berget, config, cost]
-timestamp: 2026-08-27T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # Per-task LLM model and provider selection
@@ -19,7 +19,7 @@ lived only as prose in the [ai package](/packages/ai.md) doc. This record is tha
 
 ## The problem
 
-`llm_core.LLMConfig` carries a single `model` field: one process-wide model for every
+`agent_kit.llm.LLMConfig` carries a single `model` field: one process-wide model for every
 call. But the tasks in this system have genuinely different cost/quality profiles, and
 they run at wildly different volumes.
 
@@ -96,7 +96,7 @@ a role to Gemini means changing its `model:` in the same edit — and
 ## `LLM_MODEL` is deliberately ignored
 
 `LLM_MODEL` (singular) predates per-task roles. It is still a field on
-`llm_core.LLMConfig`, but **role resolution never consults it**: allowing it through
+`agent_kit.llm.LLMConfig`, but **role resolution never consults it**: allowing it through
 would silently collapse all three roles onto one model, which is exactly what this
 design exists to prevent. The per-role override is `LLM_MODEL_<ROLE>`, derived from the
 role name, so a newly declared role gets one for free.
@@ -133,7 +133,7 @@ loader logs a `WARNING` whenever it masks a role's declared provider.
 Revisit if:
 
 - A task needs a model whose API is neither OpenAI-compatible nor Gemini — that is a new
-  provider class in [llm-core](/packages/llm-core.md), not a config entry.
+  provider class in the external `agent-kit` package, not a config entry.
 - Per-role secrets diverge such that one `api_key_env` per provider is not enough.
 - Roles proliferate to the point that the flat `roles:` map wants grouping.
 - Berget publishes rates that change the cost argument for the role split (none are

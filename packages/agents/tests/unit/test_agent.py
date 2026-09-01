@@ -6,8 +6,14 @@ from typing import cast
 
 import pytest
 from ai import interaction_scope
-from llm_core import LLMResponse, Message, Role, ToolCall
-from llm_core._tracing import LLMCallRecord, set_trace_recorder
+from agent_kit.llm import (
+    LLMCallRecord,
+    LLMResponse,
+    Message,
+    Role,
+    ToolCall,
+    set_trace_recorder,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.config import SqlAgentSettings

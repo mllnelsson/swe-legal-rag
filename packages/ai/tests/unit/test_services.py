@@ -26,7 +26,7 @@ from ai.services import (
     summarize_document,
     synthesize_answer,
 )
-from llm_core import LLMResponse, Message, Role, StreamChunk
+from agent_kit.llm import LLMResponse, Message, Role, StreamChunk
 from shared.enums import EntityRelevance, EntityType
 
 
@@ -149,7 +149,7 @@ async def test_synthesize_answer_streams_tokens() -> None:
         ],
     )
 
-    with patch("agent_kit.synthesis._synthesize.generate_stream", mock_generate_stream):
+    with patch("agent_kit.synthesis.synthesize.generate_stream", mock_generate_stream):
         tokens: list[str] = []
         async for token in synthesize_answer(request):
             tokens.append(token)
@@ -174,7 +174,7 @@ async def test_synthesize_answer_uses_answer_synthesis_template() -> None:
         ],
     )
 
-    with patch("agent_kit.synthesis._synthesize.generate_stream", mock_generate_stream):
+    with patch("agent_kit.synthesis.synthesize.generate_stream", mock_generate_stream):
         async for _ in synthesize_answer(request):
             pass
 
@@ -212,7 +212,7 @@ async def test_synthesize_answer_marks_appendix_excerpts() -> None:
         ],
     )
 
-    with patch("agent_kit.synthesis._synthesize.generate_stream", mock_generate_stream):
+    with patch("agent_kit.synthesis.synthesize.generate_stream", mock_generate_stream):
         async for _ in synthesize_answer(request):
             pass
 
@@ -261,7 +261,7 @@ class TestTraceAttribution:
 
     @pytest.fixture
     def recorder(self):
-        from llm_core import set_trace_recorder
+        from agent_kit.llm import set_trace_recorder
 
         class Recording:
             def __init__(self):
@@ -339,7 +339,7 @@ class TestTraceAttribution:
 
     async def test_outer_correlation_survives_into_the_record(self, recorder) -> None:
         """The caller's interaction id must reach the innermost trace."""
-        from llm_core import trace_context
+        from agent_kit.llm import trace_context
 
         provider = AsyncMock()
         provider.generate = AsyncMock(return_value=_response("{}"))

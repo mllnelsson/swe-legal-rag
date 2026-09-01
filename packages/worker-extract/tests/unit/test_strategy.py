@@ -14,7 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai.dtos import EntityResult
-from llm_core import LLMDisabledError
+from agent_kit.llm import LLMDisabledError
 from shared.segmentation import split_document
 from worker_extract.config import ExtractStrategyMode, get_extract_settings
 from worker_extract.extractors.factory import create_extraction_strategy

@@ -4,7 +4,7 @@ title: llm_config.yaml — LLM and Embedding Configuration
 description: The single source of truth for which model and provider each LLM role and the embedder use — file format, precedence rules against environment variables, and the full env-var registry.
 resource: llm_config.yaml
 tags: [llm, config, yaml, provider, embedding, precedence]
-timestamp: 2026-08-28T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # llm_config.yaml — LLM and Embedding Configuration
@@ -13,7 +13,7 @@ timestamp: 2026-08-28T00:00:00Z
 and which provider each task uses.** The per-task model env vars in `.env.example` and
 package docs are *overrides* of the file, not the primary source. Loaded by
 [`ai.llm_config`](/packages/ai.md), which re-exports the provider/role resolution and
-precedence logic from [`agent_kit.config`](/packages/agent-kit.md) — this page
+precedence logic from `agent_kit.config` — this page
 documents the contract regardless of which module a caller imports it from.
 
 Swapping a task's model is a YAML edit. **Adding** a task needs both an entry
@@ -71,7 +71,7 @@ embedding:
 | Section | Purpose |
 |---|---|
 | `version` | Must equal `1` — the only version this build understands. Load fails otherwise. |
-| `providers` | Named hosts. `kind` is a `llm_core.ProviderKind` — `openai_compatible`, `gemini` or `none` — the client implementation dispatched on. `api_key_env` names the environment variable holding that host's key, and is **required for every kind except `none`**, which has no host to send one to. `openai_compatible` also requires `base_url`: there is no built-in default, and a host missing either raises `llm_core.MissingCredentialError` at construction. |
+| `providers` | Named hosts. `kind` is an `agent_kit.llm.ProviderKind` — `openai_compatible`, `gemini` or `none` — the client implementation dispatched on. `api_key_env` names the environment variable holding that host's key, and is **required for every kind except `none`**, which has no host to send one to. `openai_compatible` also requires `base_url`: there is no built-in default, and a host missing either raises `agent_kit.llm.MissingCredentialError` at construction. |
 | `defaults` | Inherited by every role that omits the field: `provider`, `temperature`, `max_tokens`, `stream_usage`. |
 | `roles` | One entry per task. `model` is required; `provider`/`temperature`/`max_tokens`/`stream_usage` are optional per-role overrides of `defaults`. |
 
@@ -135,7 +135,7 @@ Highest wins first:
 1. **Environment variable**
 2. **The role's own entry** (or `embedding:` for the embedder)
 3. **`defaults`**
-4. **The field default on `llm_core.LLMConfig`**
+4. **The field default on `agent_kit.llm.LLMConfig`**
 
 This is the **opposite** of pydantic-settings' native ordering, where an explicit
 init keyword argument beats an environment variable. The loader achieves the reversal
@@ -189,15 +189,14 @@ hand-registered, via `ai.llm_config.role_model_env_var`.
 
 Add `provider: <name>` under that role, where `<name>` is a key declared under
 `providers:`. A second `openai_compatible` host needs no new provider class — only a
-new `providers:` entry naming its `base_url` and `api_key_env` (see
-[llm-core](/packages/llm-core.md)). Loading fails with a clear message if the name
-is not declared.
+new `providers:` entry naming its `base_url` and `api_key_env`. Loading fails with a
+clear message if the name is not declared.
 
 ## Running with no LLM
 
 `kind: none` declares a provider that is configured to not exist. It resolves and
 constructs with no `base_url` and no `api_key_env`, and raises
-`llm_core.LLMDisabledError` if anything calls it. That ordering is the whole point: a
+`agent_kit.llm.LLMDisabledError` if anything calls it. That ordering is the whole point: a
 process whose LLM steps are switched off starts normally instead of dying on a
 credential it will never use, which is otherwise what happens — every worker builds
 its provider in `subscribe()`, before the first message.
@@ -248,7 +247,7 @@ See [live testing](/playbooks/live-testing.md) for the commands.
 | `LLM_MAX_TOKENS` | Every role | Overrides `max_tokens`. |
 | `LLM_STREAM_USAGE` | Every role | Overrides `stream_usage` — turn off only if a host rejects the streaming-usage request parameter; it fails the whole call. |
 | `LLM_BASE_URL` | Every role + embedding | Overrides the resolved provider's `base_url`. There is no built-in default any more — an `openai_compatible` provider with neither this nor a YAML `base_url` refuses to start (`MissingCredentialError`). |
-| `LLM_API_KEY` | Every role + embedding | Host-agnostic key override. When unset, the key comes from whichever variable the resolved provider's `api_key_env` names (`BERGET_API_KEY`/`GEMINI_API_KEY` today) — `llm_core.LLMConfig` itself carries only the one `api_key` field, not a named field per host. |
+| `LLM_API_KEY` | Every role + embedding | Host-agnostic key override. When unset, the key comes from whichever variable the resolved provider's `api_key_env` names (`BERGET_API_KEY`/`GEMINI_API_KEY` today) — `agent_kit.llm.LLMConfig` itself carries only the one `api_key` field, not a named field per host. |
 | `BERGET_API_KEY`, `GEMINI_API_KEY` | Named provider | The normal source of a provider's key — named per-provider by `providers.<name>.api_key_env`, never read from the YAML. These are ordinary vendor-named env vars; nothing about them is special-cased in code beyond the `api_key_env` indirection. |
 | `EMBEDDING_PROVIDER` | Embedding | Overrides `embedding.provider`. Takes an `EmbeddingBackend` **kind** (`openai_compatible` or `local`) rather than a `providers:` name — setting it to a host name like `berget` is not valid. |
 | `EMBEDDING_MODEL` | Embedding | Overrides `embedding.model`. |

@@ -3,7 +3,7 @@ type: Concept
 title: Testing Strategy
 description: The backend's two-level (unit + integration) testing approach — what to test, what to mock, how the split is enforced, the separate database integration tests run against — plus the frontend suite and the two tests that check the contract across the language boundary.
 tags: [testing, pytest, strategy]
-timestamp: 2026-08-16T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # Testing Strategy
@@ -107,17 +107,17 @@ Every package gets unit tests. Mock at the interface boundary — the abstractio
 - GCS/storage → mock the storage interface
 - Pub/Sub/queue → mock the queue interface
 
-**LLM/embedding provider unit tests never make live calls.** `GeminiProvider` tests
-mock the `google-genai` SDK client (`test_gemini_mapping.py`); `OpenAiCompatibleProvider`
-and `OpenAiCompatibleEmbeddingProvider` tests mock `openai.AsyncOpenAI` the same way
-(`test_openai_compatible_mapping.py`, `test_openai_compatible_embedding_provider.py`) —
-construct the provider, then patch `llm_core._clients.get_async_openai` (each module
-imports it by name, so patch it at the accessor in that module, e.g.
-`_openai_compatible.get_async_openai`) to return a `MagicMock()`, and assert on the
-mapped request/response shape. There is no `provider._client` to replace: a provider
-looks its client up per call, bound to the running loop, rather than holding one built
-at construction — see [loop-bound
-clients](/packages/llm-core.md#loop-bound-clients-_clientspy). Real API calls to Berget
+**LLM/embedding provider unit tests never make live calls.** `OpenAiCompatibleEmbeddingProvider`
+tests mock `openai.AsyncOpenAI` (`test_openai_compatible_embedding_provider.py`) —
+construct the provider, then patch `get_async_openai` at the accessor in the module under
+test, e.g. `ai.providers.openai_compatible_embeddings.get_async_openai`, to return a
+`MagicMock()`, and assert on the mapped request/response shape. There is no
+`provider._client` to replace: a provider looks its client up per call, bound to the
+running loop, rather than holding one built at construction — see [worker
+patterns](/pipeline/worker-patterns.md) for why a worker must release it before its
+event loop closes. The generate-side LLM providers (`GeminiProvider`,
+`OpenAiCompatibleProvider`) are supplied by the external `agent-kit` package and are
+tested there, not in this repo. Real API calls to Berget
 or Gemini never happen in unit tests. Composition roots that construct real providers at
 startup (`api/main.py`'s `_lifespan`, worker `__main__.py`/factory functions) need a
 dummy `BERGET_API_KEY` in the test environment for construction to succeed — see the

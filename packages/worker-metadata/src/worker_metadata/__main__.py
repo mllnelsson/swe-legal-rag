@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai import install_file_tracing, close_llm_clients, worker_trace_scope
 from ai.providers.roles import LLMRole, create_llm_provider
 from ai.services import extract_metadata as _ai_extract_metadata
-from llm_core import LLMProvider
+from agent_kit.llm import LLMProvider
 from shared.config import get_settings
 from shared.logging_config import configure_logging
 from shared.queue import create_queue_publisher

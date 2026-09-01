@@ -30,7 +30,7 @@ from agents.chat import (
     VocabularyValue,
 )
 from ai.embedding import EmbeddingProvider
-from llm_core import LLMProvider
+from agent_kit.llm import LLMProvider
 from shared.dtos.document_entity import DocumentEntityDetail
 from shared.dtos.search import DocumentFacets, DocumentFilter, FacetValue
 from shared.enums import ChunkSection, EntityType

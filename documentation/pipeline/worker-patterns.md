@@ -3,7 +3,7 @@ type: Concept
 title: Worker Architecture Patterns
 description: The conventions every subscriber worker shares — the run_pipeline_step task envelope, its per-step progress logging, the subscribe/serve startup split, injected trace scopes and teardown, and the commit-before-publish invariant.
 tags: [pipeline, workers, task-envelope, patterns, logging]
-timestamp: 2026-08-08T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # Worker Architecture Patterns
@@ -130,23 +130,27 @@ loop for one unit of work, which is why `worker_crawl.__main__` disposes after i
 **`teardown`, a `StepTeardown` (`Callable[[], Awaitable[None]]`), releases whatever else
 a worker pooled against the message's loop, in the same `finally` as
 `dispose_async_engine` and before it closes.** An `AsyncOpenAI` client's `httpx`
-connection pool has exactly the same per-loop binding as the asyncpg engine, so a worker
-that makes LLM calls must release it the same way; `shared` must not depend on
-[llm-core](/packages/llm-core.md), so it cannot call that release itself and takes it
-injected instead, the same reason `scope` is injected below. The four LLM-calling
-workers — chunk, embed, extract, metadata — pass `ai.close_llm_clients`; download and
-parse make no LLM calls and pass no `teardown`, same as they pass no `scope`. See [loop-bound
-clients](/packages/llm-core.md#loop-bound-clients-_clientspy).
+connection pool has exactly the same per-loop binding as the asyncpg engine: `agent_kit`
+fetches the shared client fresh from `agent_kit.llm.get_async_openai()` per call, bound
+to whichever loop is running it, rather than holding one built at import time, so a
+worker that makes LLM calls must release that client before its `asyncio.run()` loop
+closes — the same obligation `dispose_async_engine` satisfies for the asyncpg engine.
+`shared` must not depend on the external `agent-kit` package, so it cannot call that
+release itself and takes it injected instead, the same reason `scope` is injected below.
+The four LLM-calling workers — chunk, embed, extract, metadata — pass
+`ai.close_llm_clients`; download and parse make no LLM calls and pass no `teardown`,
+same as they pass no `scope`.
 
 ## Trace scope injection
 
 `scope`, `subscribe_step`'s other keyword, is a `MessageScope` — a context manager
 factory entered around `asyncio.run()`, not inside the coroutine, so a `ContextVar` it
 sets is inherited by the loop (`asyncio.Runner` copies the current context when it
-builds the loop). `shared` must not depend on `llm-core`, so `shared.worker` cannot
-supply a tracing implementation itself; each worker that makes LLM calls passes
-`ai.worker_trace_scope(NAME)`, which enters `llm_core.trace_context` keyed on the
-message's `document_id`/`task_id` and the worker's own name as `source`. worker-download
+builds the loop). `shared` must not depend on the external `agent-kit` package, so
+`shared.worker` cannot supply a tracing implementation itself; each worker that makes
+LLM calls passes `ai.worker_trace_scope(NAME)`, which enters `agent_kit.llm.trace_context`
+keyed on the message's `document_id`/`task_id` and the worker's own name as `source`.
+worker-download
 and worker-parse make no LLM calls and pass no `scope`. See
 [LLM Observability](/observability.md) for the wiring invariant this satisfies.
 

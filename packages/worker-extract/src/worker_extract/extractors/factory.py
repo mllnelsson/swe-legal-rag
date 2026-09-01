@@ -5,7 +5,7 @@ from functools import partial
 
 from ai.dtos import EntityResult, ExtractedReference
 from ai.providers.roles import LLMRole, create_llm_provider, llm_role_is_disabled
-from llm_core import LLMDisabledError
+from agent_kit.llm import LLMDisabledError
 from shared.segmentation import DocumentSegments
 from worker_extract.config import ExtractStrategyMode, get_extract_settings
 from worker_extract.entities import deduplicate_entities

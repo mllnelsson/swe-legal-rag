@@ -5,20 +5,16 @@ requires-python = ">=3.12"
 dependencies = [
     "shared",
     "ai",
-    # Imported directly for `tool_loop`, `ToolDefinition` and the loop's error
-    # types, which reach past `ai`. Declared rather than left to resolve through
-    # it — same reasoning as `api`.
-    "llm-core",
-    # The generic orchestrator, synthesis and context store the chat agent is a
-    # thin configuration of. Imported directly for the same reason as llm-core.
+    # The agent core, imported directly (it reaches past `ai`): `agent_kit.llm`
+    # for `tool_loop`, `ToolDefinition` and the loop's error types, plus the
+    # generic orchestrator, synthesis and context store the chat agent configures.
     "agent-kit",
 ]
 
 [tool.uv.sources]
 shared = { workspace = true }
 ai = { workspace = true }
-llm-core = { workspace = true }
-agent-kit = { workspace = true }
+agent-kit = { git = "ssh://git@github.com/mllnelsson/agent-kit.git", tag = "v0.1.0" }
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]

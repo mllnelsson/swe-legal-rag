@@ -3,7 +3,7 @@ type: Concept
 title: Conversational Agent
 description: The agent behind the chat endpoint — a GLM plan step that either replies directly or hands a research plan to an executor tool loop over the deterministic retrieval tool set (openai/gpt-oss-120b, one terminal tool `answer`); two sub-agents on the same model, one that counts and one that selects citable passages from a decision rather than summarising it; and a streamed GLM writing call that marks each claim with the passage handle it rests on.
 tags: [retrieval, agent, tool-loop, sse, synthesis, scratchpad]
-timestamp: 2026-08-31T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # Conversational Agent
@@ -38,9 +38,8 @@ run_chat_agent(request, toolset)
        → sources(empty) → token(whole) → done
 ```
 
-`run_chat_agent` is a configuration of
-[`agent_kit.run_agent`](/packages/agent-kit.md#run_agent-plan--execute--synthesize):
-the domain-free orchestrator owns the plan → execute → synthesize control flow,
+`run_chat_agent` is a configuration of `agent_kit.run_agent`: the domain-free
+orchestrator owns the plan → execute → synthesize control flow,
 the tracing scopes and the error funnel, while this package supplies the
 Swedish prompts, the six tools, and the translation from the orchestrator's
 generic event stream onto the wire events above.
@@ -170,17 +169,17 @@ stay distinct:
 | `answer` called with no passages | "Jag hittade inget i besluten…" — no synthesis call |
 | Executor loop exhausted | A terminal `ErrorEvent`, no `done` |
 
-The executor loop itself names only `answer` as a [terminal
-tool](/packages/llm-core.md); a loop ending with no tool call there is the
+The executor loop itself names only `answer` as a terminal tool; a loop ending
+with no tool call there is the
 executor writing prose despite holding a plan — rare, and not a second direct
 reply, since the plan step already owns that. It gathered no evidence, so it
 falls to the evidence gate below like any empty-handed loop.
 
 ### The terminal `answer` tool is the reranking
 
-`llm_core.tool_loop` normally returns when the model stops calling tools, which
+`agent_kit.llm.tool_loop` normally returns when the model stops calling tools, which
 makes termination incidental and the final assistant message throwaway prose.
-Naming `answer` a [terminal tool](/packages/llm-core.md) makes the ending
+Naming `answer` a terminal tool makes the ending
 deliberate and the handoff machine-readable — and the selection *is* the
 reranking: the agent names which passages carry the answer as a tool call, not
 as a separate LLM round-trip. The rerank step the previous chat pipeline had was
@@ -215,8 +214,8 @@ sees it as one `tool_result` with `status: "refused"`.
 `Sökord` classification, published verbatim by the facets, so filtering on one
 uses a value the caller was handed rather than a guess.
 
-This is a policy refusal, distinct from the one [`tool_loop`
-itself](/packages/llm-core.md) returns when a call names an argument a tool
+This is a policy refusal, distinct from the one `agent_kit.llm.tool_loop`
+itself returns when a call names an argument a tool
 does not accept — both arrive as an ordinary `tool_result` with
 `status: "refused"`, but the grounding refusal is authored here, in
 `_tools.py`, and the argument-name one is authored in the loop before any
@@ -309,8 +308,7 @@ event](/api/chat-endpoint.md#event-sources).
 
 ## Working memory: the scratchpad
 
-`agents.chat._tools.ChatScratchpad` — a
-[`llm_core.Scratchpad`](/packages/llm-core.md#scratchpad-working-memory) typed
+`agents.chat._tools.ChatScratchpad` — an `agent_kit.llm.Scratchpad` typed
 over this agent's evidence — is the single place a turn's gathered evidence
 lives, addressed by handle: decisions under `d1, d2, …`, passages under
 `c1, c2, …`, readings under `r1, r2, …`, the last tabular answer under the
@@ -336,8 +334,7 @@ of every turn — per-turn control, not memory, so they are never persisted with
 the pad.
 
 The executor's `tool_loop` is given the pad, and every iteration pins its
-[rendered board](/packages/llm-core.md#scratchpad-working-memory) — `key
-preview` per line — in front of the history as an ephemeral system message,
+rendered board — `key preview` per line — in front of the history as an ephemeral system message,
 refreshed each pass rather than appended, so the model always sees everything
 gathered so far without the heavy values being re-sent. Synthesis reads the
 pad directly: `_synthesis_request` recalls the selected passages, the
@@ -353,8 +350,8 @@ values, which only the executor recalls by handle. It is `{}` on a
 conversation's first turn.
 
 `run_chat_agent` wires the whole pad up as both the evidence the executors
-write and the object [`agent_kit.run_agent`](/packages/agent-kit.md#scratchpad-persistence-cross-turn-recall)
-persists: when `context_store` and `request.conversation_id` are both set,
+write and the object `agent_kit.run_agent` persists: when `context_store` and
+`request.conversation_id` are both set,
 `run_agent` restores the pad from the store before the plan call, and — after
 a direct reply or after synthesis completes on a researched turn — persists
 the whole pad via `chat_scratchpad_codec(cap=settings.chat_agent_max_carried_entries)`

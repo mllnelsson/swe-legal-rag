@@ -11,7 +11,7 @@ import logging
 
 from ai import LLMRole, agent_run_scope, create_llm_provider, interaction_scope
 from ai.prompts import TEXT_TO_SQL, render, render_tool_index
-from llm_core import (
+from agent_kit.llm import (
     LLMProvider,
     MaxIterationsError,
     Message,

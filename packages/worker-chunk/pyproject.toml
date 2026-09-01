@@ -5,11 +5,15 @@ requires-python = ">=3.12"
 dependencies = [
     "shared",
     "ai",
+    # Imported directly for `agent_kit.llm.LLMProvider`; declared rather than
+    # left to resolve transitively through `ai`.
+    "agent-kit",
 ]
 
 [tool.uv.sources]
 shared = { workspace = true }
 ai = { workspace = true }
+agent-kit = { git = "ssh://git@github.com/mllnelsson/agent-kit.git", tag = "v0.1.0" }
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]

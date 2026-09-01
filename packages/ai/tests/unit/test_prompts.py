@@ -16,7 +16,7 @@ from ai.prompts import (
     render,
     render_tool_index,
 )
-from llm_core import Role, ToolDefinition
+from agent_kit.llm import Role, ToolDefinition
 
 _PLACEHOLDER_RE = re.compile(r"\{[a-z_]+\}")
 
@@ -366,7 +366,7 @@ class TestChatPlan:
 class TestRenderToolIndex:
     """The generated tool list. It replaced a hand-written one that had drifted
     from the schemas — naming a `filter` argument `search_decisions` does not
-    have — which `llm_core.tool_loop` cannot repair from as cheaply as a wrong
+    have — which `agent_kit.llm.tool_loop` cannot repair from as cheaply as a wrong
     value, because it calls executors by keyword."""
 
     def test_required_arguments_are_marked_and_optional_ones_are_not(self):

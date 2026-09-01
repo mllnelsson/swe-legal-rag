@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
-from llm_core import (
+from agent_kit.llm import (
     LLMProvider,
     LLMResponse,
     generate,

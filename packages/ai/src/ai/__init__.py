@@ -1,4 +1,4 @@
-from llm_core import trace_context
+from agent_kit.llm import trace_context
 
 from ai._observability import LLMTraceConfig, install_file_tracing
 from ai._tracing_scope import agent_run_scope, interaction_scope

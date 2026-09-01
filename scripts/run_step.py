@@ -404,7 +404,7 @@ async def _run_step(
                     ),
                     next_topic=_next_topic(PipelineStep.CHUNK),
                     # Named explicitly: omitting it falls through to
-                    # `llm_core.LLMConfig()`, which reads the process-wide
+                    # `agent_kit.llm.LLMConfig()`, which reads the process-wide
                     # LLM_MODEL and so summarises with a different model than
                     # worker-chunk does — the point of hand-testing a step is
                     # that it runs what the worker runs.

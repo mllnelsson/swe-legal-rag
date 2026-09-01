@@ -4,7 +4,7 @@ title: SQL Agent Endpoint (POST /api/sql)
 description: The POST /api/sql text-to-SQL contract — a Swedish question in, the generated read-only query and its rows out, never an interpreted answer — plus the caller's obligation to surface the query, the never-500s refusal semantics, and the X-Interaction-Id correlation header.
 resource: POST /api/sql
 tags: [api, sql, agent, text-to-sql, llm]
-timestamp: 2026-08-13T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # SQL Agent Endpoint (`POST /api/sql`)
@@ -127,7 +127,7 @@ turn that asked for it rather than under an id of its own. See
 
 ## Observability
 
-Traced with `source="agents.sql"`, `prompt="TEXT_TO_SQL"`. `llm_core.tool_loop` already
+Traced with `source="agents.sql"`, `prompt="TEXT_TO_SQL"`. `agent_kit.llm.tool_loop` already
 emits one trace record per iteration, so no additional wiring happens inside the agent —
 but the route itself resolves the interaction id (above) and opens the `interaction_scope`
 around the call to `run_sql_agent`, which also opens its own `agent_run_scope`, minted

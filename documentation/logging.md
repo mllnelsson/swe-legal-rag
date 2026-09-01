@@ -3,7 +3,7 @@ type: Concept
 title: Application Logging
 description: What every process in this repo writes to stdout — the one LOG_LEVEL knob, the shared format, the API's per-request envelope and its route metadata, and the previews-not-payloads rule that keeps prompts out of the log.
 tags: [logging, observability, api, operations]
-timestamp: 2026-08-20T00:00:00Z
+timestamp: 2026-09-01T00:00:00Z
 ---
 
 # Application Logging
@@ -74,7 +74,7 @@ line and nowhere else — once per request is enough, and the full value is what
 directory is named after.
 
 The id is put on the record by a `logging.Filter` reading the **trace** context
-(`llm_core.current_trace_context()`), not a ContextVar of its own. The API's access
+(`agent_kit.llm.current_trace_context()`), not a ContextVar of its own. The API's access
 middleware opens `ai.interaction_scope` around the whole request, so records from
 `agents` and `ai` — which know nothing about the API — are correlated too.
 

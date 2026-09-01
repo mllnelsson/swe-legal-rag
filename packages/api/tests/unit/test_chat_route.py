@@ -23,7 +23,7 @@ from agents.chat import (
 )
 from ai import SynthesizeRequest, interaction_scope, synthesize_answer
 from fastapi.testclient import TestClient
-from llm_core import (
+from agent_kit.llm import (
     LLMResponse,
     Message,
     Role,
